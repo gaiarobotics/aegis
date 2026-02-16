@@ -1,0 +1,280 @@
+"""Trust tier management for agent identity.
+
+Implements a progressive trust model where agents earn trust through
+clean interactions, age, and vouching from established peers.
+
+Tiers:
+    0 - Unknown: No trust established
+    1 - Attested: Score >= 15 (has valid attestation)
+    2 - Established: Score >= 50 and account age >= 3 days
+    3 - Vouched: 3+ vouchers from Tier 2+ agents
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import time
+from dataclasses import dataclass, field
+
+
+# Tier constants
+TIER_UNKNOWN = 0
+TIER_ATTESTED = 1
+TIER_ESTABLISHED = 2
+TIER_VOUCHED = 3
+
+# Thresholds
+TIER_1_SCORE = 15.0
+TIER_2_SCORE = 50.0
+TIER_2_AGE_DAYS = 3
+TIER_3_VOUCHERS = 3
+TIER_3_VOUCHER_MIN_TIER = 2
+
+# Scoring
+VOUCH_BONUS = 8.0
+DECAY_HALF_LIFE_DAYS = 14
+
+
+@dataclass
+class TrustRecord:
+    """Trust record for a single agent."""
+
+    agent_id: str
+    score: float = 0.0
+    tier: int = TIER_UNKNOWN
+    clean_interactions: int = 0
+    total_interactions: int = 0
+    last_interaction: float = 0.0
+    created: float = field(default_factory=time.time)
+    vouchers: list[str] = field(default_factory=list)
+    anomaly_count: int = 0
+
+
+class TrustManager:
+    """Manages trust scores and tiers for agents.
+
+    Args:
+        config: Optional configuration dict for overriding defaults.
+    """
+
+    def __init__(self, config: dict | None = None):
+        self._records: dict[str, TrustRecord] = {}
+        self._config = config or {}
+        self._compromised: set[str] = set()
+
+    def _ensure_record(self, agent_id: str) -> TrustRecord:
+        """Get or create a trust record for an agent."""
+        if agent_id not in self._records:
+            self._records[agent_id] = TrustRecord(agent_id=agent_id)
+        return self._records[agent_id]
+
+    def get_tier(self, agent_id: str) -> int:
+        """Get the current trust tier for an agent.
+
+        Args:
+            agent_id: The agent identifier.
+
+        Returns:
+            The trust tier (0-3).
+        """
+        if agent_id in self._compromised:
+            return TIER_UNKNOWN
+
+        if agent_id not in self._records:
+            return TIER_UNKNOWN
+
+        record = self._records[agent_id]
+        return self._compute_tier(record)
+
+    def _compute_tier(self, record: TrustRecord) -> int:
+        """Compute the tier for a trust record."""
+        if record.agent_id in self._compromised:
+            return TIER_UNKNOWN
+
+        # Check Tier 3: 3+ vouchers from Tier 2+ agents
+        qualified_vouchers = sum(
+            1 for v in record.vouchers
+            if v in self._records and self._compute_tier_without_vouch(self._records[v]) >= TIER_3_VOUCHER_MIN_TIER
+        )
+        if (
+            qualified_vouchers >= TIER_3_VOUCHERS
+            and record.score >= TIER_2_SCORE
+            and self._age_days(record) >= TIER_2_AGE_DAYS
+        ):
+            return TIER_VOUCHED
+
+        # Check Tier 2: score >= 50 and age >= 3 days
+        if record.score >= TIER_2_SCORE and self._age_days(record) >= TIER_2_AGE_DAYS:
+            return TIER_ESTABLISHED
+
+        # Check Tier 1: score >= 15
+        if record.score >= TIER_1_SCORE:
+            return TIER_ATTESTED
+
+        return TIER_UNKNOWN
+
+    def _compute_tier_without_vouch(self, record: TrustRecord) -> int:
+        """Compute tier without considering vouched status (to avoid recursion)."""
+        if record.agent_id in self._compromised:
+            return TIER_UNKNOWN
+        if record.score >= TIER_2_SCORE and self._age_days(record) >= TIER_2_AGE_DAYS:
+            return TIER_ESTABLISHED
+        if record.score >= TIER_1_SCORE:
+            return TIER_ATTESTED
+        return TIER_UNKNOWN
+
+    def _age_days(self, record: TrustRecord) -> float:
+        """Get the age of a record in days."""
+        return (time.time() - record.created) / 86400.0
+
+    def get_score(self, agent_id: str) -> float:
+        """Get the current trust score for an agent.
+
+        Args:
+            agent_id: The agent identifier.
+
+        Returns:
+            The trust score (>= 0.0).
+        """
+        if agent_id not in self._records:
+            return 0.0
+        return self._records[agent_id].score
+
+    def record_interaction(
+        self, agent_id: str, clean: bool = True, anomaly: bool = False
+    ) -> None:
+        """Record an interaction for an agent.
+
+        Clean interactions increase score logarithmically.
+        Anomalies apply exponential penalty.
+
+        Args:
+            agent_id: The agent identifier.
+            clean: Whether the interaction was clean.
+            anomaly: Whether an anomaly was detected.
+        """
+        record = self._ensure_record(agent_id)
+        record.total_interactions += 1
+        record.last_interaction = time.time()
+
+        if clean:
+            record.clean_interactions += 1
+            # Logarithmic growth: score increases by log(n+1) where n is
+            # clean interaction count. This means each additional clean
+            # interaction contributes less.
+            n = record.clean_interactions
+            record.score = 5.0 * math.log(n + 1)
+
+        if anomaly:
+            record.anomaly_count += 1
+            # Exponential penalty: multiply score by decay factor
+            penalty_factor = 0.7  # 30% reduction per anomaly
+            record.score *= penalty_factor
+
+    def vouch(self, voucher_id: str, target_id: str) -> None:
+        """Register a vouch from one agent to another.
+
+        Only vouchers at Tier 2+ can vouch. Each voucher can only vouch
+        for a target once. Each vouch adds VOUCH_BONUS to the target's score.
+
+        Args:
+            voucher_id: The vouching agent's identifier.
+            target_id: The target agent's identifier.
+        """
+        # Check voucher qualification
+        if self.get_tier(voucher_id) < TIER_3_VOUCHER_MIN_TIER:
+            return
+
+        target = self._ensure_record(target_id)
+
+        # Prevent duplicate vouches
+        if voucher_id in target.vouchers:
+            return
+
+        target.vouchers.append(voucher_id)
+        target.score += VOUCH_BONUS
+
+    def report_compromise(self, agent_id: str) -> None:
+        """Report an agent as compromised. Immediately drops to Tier 0 with score 0.
+
+        Args:
+            agent_id: The compromised agent's identifier.
+        """
+        self._compromised.add(agent_id)
+        if agent_id in self._records:
+            self._records[agent_id].score = 0.0
+            self._records[agent_id].tier = TIER_UNKNOWN
+
+    def set_operator_delegation(self, agent_id: str, bonus: float) -> None:
+        """Apply an operator-delegated trust bonus.
+
+        Args:
+            agent_id: The agent identifier.
+            bonus: The bonus to add to the score.
+        """
+        record = self._ensure_record(agent_id)
+        record.score += bonus
+
+    def apply_decay(self) -> None:
+        """Apply time-based decay to all trust scores.
+
+        Uses a 14-day half-life, applied daily.
+        The daily decay factor is 2^(-1/14).
+        """
+        daily_factor = math.pow(0.5, 1.0 / DECAY_HALF_LIFE_DAYS)
+        for record in self._records.values():
+            record.score *= daily_factor
+
+    def save(self, path: str) -> None:
+        """Save trust data to a JSON file.
+
+        Args:
+            path: File path to save to.
+        """
+        data = {}
+        for agent_id, record in self._records.items():
+            data[agent_id] = {
+                "agent_id": record.agent_id,
+                "score": record.score,
+                "tier": record.tier,
+                "clean_interactions": record.clean_interactions,
+                "total_interactions": record.total_interactions,
+                "last_interaction": record.last_interaction,
+                "created": record.created,
+                "vouchers": record.vouchers,
+                "anomaly_count": record.anomaly_count,
+            }
+        with open(path, "w") as f:
+            json.dump(
+                {"records": data, "compromised": list(self._compromised)},
+                f,
+                indent=2,
+            )
+
+    def load(self, path: str) -> None:
+        """Load trust data from a JSON file.
+
+        Args:
+            path: File path to load from.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+        """
+        with open(path) as f:
+            raw = json.load(f)
+
+        self._compromised = set(raw.get("compromised", []))
+        self._records.clear()
+        for agent_id, rec_data in raw.get("records", {}).items():
+            self._records[agent_id] = TrustRecord(
+                agent_id=rec_data["agent_id"],
+                score=rec_data["score"],
+                tier=rec_data.get("tier", TIER_UNKNOWN),
+                clean_interactions=rec_data["clean_interactions"],
+                total_interactions=rec_data["total_interactions"],
+                last_interaction=rec_data["last_interaction"],
+                created=rec_data["created"],
+                vouchers=rec_data.get("vouchers", []),
+                anomaly_count=rec_data.get("anomaly_count", 0),
+            )

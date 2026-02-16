@@ -82,3 +82,56 @@ class TestTelemetryLogger:
             assert not log_path.exists() or log_path.read_text().strip() == ""
         finally:
             killswitch.deactivate()
+
+
+class TestNestedRedaction:
+    def test_redact_nested_dict(self, tmp_path):
+        log_path = tmp_path / ".aegis" / "telemetry.jsonl"
+        logger = TelemetryLogger(log_path=str(log_path))
+        logger.log_event(
+            "test",
+            outer={"inner": {"secret": "sk-nested1234567890abcdef"}},
+        )
+        event = json.loads(log_path.read_text().strip())
+        dumped = json.dumps(event)
+        assert "sk-nested" not in dumped
+        assert "[REDACTED]" in dumped
+
+    def test_redact_list_values(self, tmp_path):
+        log_path = tmp_path / ".aegis" / "telemetry.jsonl"
+        logger = TelemetryLogger(log_path=str(log_path))
+        logger.log_event(
+            "test",
+            keys=["clean", "sk-listsecret1234567890abcdef", "also clean"],
+        )
+        event = json.loads(log_path.read_text().strip())
+        dumped = json.dumps(event)
+        assert "sk-listsecret" not in dumped
+        assert "[REDACTED]" in dumped
+        assert "clean" in dumped
+
+    def test_redact_mixed_nested(self, tmp_path):
+        log_path = tmp_path / ".aegis" / "telemetry.jsonl"
+        logger = TelemetryLogger(log_path=str(log_path))
+        logger.log_event(
+            "test",
+            data={
+                "items": [
+                    {"token": "key-abcdef1234567890xyz"},
+                    {"token": "safe-value"},
+                ],
+            },
+        )
+        event = json.loads(log_path.read_text().strip())
+        dumped = json.dumps(event)
+        assert "key-abcdef" not in dumped
+        assert "safe-value" in dumped
+
+    def test_redact_non_string_values_unchanged(self, tmp_path):
+        log_path = tmp_path / ".aegis" / "telemetry.jsonl"
+        logger = TelemetryLogger(log_path=str(log_path))
+        logger.log_event("test", count=42, enabled=True, ratio=0.5)
+        event = json.loads(log_path.read_text().strip())
+        assert event["data"]["count"] == 42
+        assert event["data"]["enabled"] is True
+        assert event["data"]["ratio"] == 0.5

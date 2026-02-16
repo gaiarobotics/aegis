@@ -125,3 +125,27 @@ class TestRecoveryQuarantine:
         result = q.auto_quarantine(nk_verdict=nk_verdict)
         assert result is False
         assert q.is_quarantined() is False
+
+    def test_custom_drift_sigma_threshold_high(self):
+        """Custom high threshold should allow drift that default would quarantine."""
+        q = RecoveryQuarantine(config={"drift_sigma_threshold": 5.0})
+
+        drift_result = MagicMock()
+        drift_result.is_drifting = True
+        drift_result.max_sigma = 4.5  # above default 3.0 but below custom 5.0
+
+        result = q.auto_quarantine(drift_result=drift_result)
+        assert result is False
+        assert q.is_quarantined() is False
+
+    def test_custom_drift_sigma_threshold_low(self):
+        """Custom low threshold should quarantine drift that default would allow."""
+        q = RecoveryQuarantine(config={"drift_sigma_threshold": 1.5})
+
+        drift_result = MagicMock()
+        drift_result.is_drifting = True
+        drift_result.max_sigma = 2.0  # below default 3.0 but above custom 1.5
+
+        result = q.auto_quarantine(drift_result=drift_result)
+        assert result is True
+        assert q.is_quarantined() is True

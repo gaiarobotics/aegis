@@ -144,3 +144,103 @@ class TestVerifyAttestation:
         import dataclasses
         tampered = dataclasses.replace(att, signature=b"tampered")
         assert verify_attestation(tampered, kp.public_key) is False
+
+
+class TestUnsupportedKeyType:
+    def test_generate_unsupported_key_type_raises(self):
+        with pytest.raises(ValueError, match="Unsupported key type"):
+            generate_keypair(key_type="rsa-2048")
+
+    def test_create_attestation_unsupported_key_type_raises(self):
+        kp = KeyPair(public_key=b"fake", private_key=b"fake", key_type="unknown")
+        with pytest.raises(ValueError, match="Unsupported key type"):
+            create_attestation(
+                keypair=kp,
+                operator_id="op",
+                model="m",
+                system_prompt="prompt",
+                capabilities=[],
+            )
+
+    def test_verify_unsupported_key_type_returns_false(self):
+        kp = generate_keypair()
+        att = create_attestation(
+            keypair=kp,
+            operator_id="op",
+            model="m",
+            system_prompt="prompt",
+            capabilities=[],
+        )
+        import dataclasses
+        unknown_att = dataclasses.replace(att, key_type="unknown")
+        assert verify_attestation(unknown_att, kp.public_key) is False
+
+
+class TestEd25519Paths:
+    """Test Ed25519 paths with mocking (cryptography package may not be installed)."""
+
+    def test_generate_ed25519_without_cryptography_raises(self):
+        """If cryptography is not installed, Ed25519 keygen should raise ValueError."""
+        import unittest.mock as mock
+
+        # Mock the import to fail
+        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+        def mock_import(name, *args, **kwargs):
+            if "cryptography" in name:
+                raise ImportError("mocked")
+            return original_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=mock_import):
+            with pytest.raises(ValueError, match="cryptography"):
+                generate_keypair(key_type="ed25519")
+
+    def test_create_attestation_ed25519_without_cryptography_raises(self):
+        """If cryptography is not installed, Ed25519 signing should raise ValueError."""
+        import unittest.mock as mock
+
+        kp = KeyPair(
+            public_key=b"fake_pub_key_32bytesxxxxxxxxxx",
+            private_key=b"fake_priv_key_32bytesxxxxxxxxx",
+            key_type="ed25519",
+        )
+
+        def mock_import(name, *args, **kwargs):
+            if "cryptography" in name:
+                raise ImportError("mocked")
+            return __import__(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=mock_import):
+            with pytest.raises(ValueError, match="cryptography"):
+                create_attestation(
+                    keypair=kp,
+                    operator_id="op",
+                    model="m",
+                    system_prompt="prompt",
+                    capabilities=[],
+                )
+
+    def test_verify_attestation_ed25519_without_cryptography_raises(self):
+        """If cryptography is not installed, Ed25519 verification should raise ValueError."""
+        import dataclasses
+        import unittest.mock as mock
+
+        kp = generate_keypair()
+        att = create_attestation(
+            keypair=kp,
+            operator_id="op",
+            model="m",
+            system_prompt="prompt",
+            capabilities=[],
+        )
+        # Change key_type to ed25519
+        ed_att = dataclasses.replace(att, key_type="ed25519")
+
+        def mock_import(name, *args, **kwargs):
+            if "cryptography" in name:
+                raise ImportError("mocked")
+            return __import__(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=mock_import):
+            with pytest.raises(ValueError, match="cryptography"):
+                verify_attestation(ed_att, kp.public_key)

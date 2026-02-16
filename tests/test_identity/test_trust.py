@@ -221,3 +221,56 @@ class TestPersistence:
         tm = TrustManager()
         with pytest.raises(FileNotFoundError):
             tm.load("/tmp/nonexistent_trust_data.json")
+
+    def test_compromised_set_persists(self):
+        """Compromised agents should survive save/load round-trip."""
+        tm = TrustManager()
+        for _ in range(10):
+            tm.record_interaction("agent-good", clean=True)
+            tm.record_interaction("agent-bad", clean=True)
+        tm.report_compromise("agent-bad")
+
+        assert tm.get_score("agent-bad") == 0.0
+        assert tm.get_tier("agent-bad") == 0
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+
+        try:
+            tm.save(path)
+            tm2 = TrustManager()
+            tm2.load(path)
+            # Compromised status should persist
+            assert tm2.get_tier("agent-bad") == 0
+            assert "agent-bad" in tm2._compromised
+            # Good agent should be unaffected
+            assert tm2.get_score("agent-good") > 0
+        finally:
+            os.unlink(path)
+
+    def test_save_and_load_with_vouchers(self):
+        """Vouchers should survive save/load round-trip."""
+        tm = TrustManager()
+        # Create established agents (Tier 2+)
+        for agent in ["v1", "v2", "v3"]:
+            rec = tm._ensure_record(agent)
+            rec.score = 60.0
+            rec.created = time.time() - 86400 * 10  # 10 days old
+
+        # Vouch for target
+        for _ in range(20):
+            tm.record_interaction("target", clean=True)
+        tm.vouch("v1", "target")
+        tm.vouch("v2", "target")
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+
+        try:
+            tm.save(path)
+            tm2 = TrustManager()
+            tm2.load(path)
+            assert "v1" in tm2._records["target"].vouchers
+            assert "v2" in tm2._records["target"].vouchers
+        finally:
+            os.unlink(path)

@@ -57,3 +57,24 @@ class TestTopLevelAPI:
         client = MockClient()
         wrapped = shield.wrap(client)
         assert isinstance(wrapped, WrappedClient)
+
+
+class TestWrapKwargs:
+    def test_wrap_with_modules(self):
+        client = MockClient()
+        wrapped = aegis.wrap(client, modules=["scanner"])
+        assert isinstance(wrapped, WrappedClient)
+
+    def test_wrap_with_policy(self, tmp_path):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("mode: enforce\n")
+        client = MockClient()
+        wrapped = aegis.wrap(client, policy=str(config_file))
+        assert isinstance(wrapped, WrappedClient)
+
+    def test_wrap_with_config(self):
+        from aegis.core.config import AegisConfig
+        cfg = AegisConfig(mode="enforce")
+        client = MockClient()
+        wrapped = aegis.wrap(client, config=cfg)
+        assert isinstance(wrapped, WrappedClient)

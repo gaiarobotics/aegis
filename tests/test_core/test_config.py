@@ -132,3 +132,82 @@ class TestModuleEnabled:
     def test_unknown_module_disabled(self):
         cfg = AegisConfig()
         assert cfg.is_module_enabled("nonexistent") is False
+
+
+class TestDeepMerge:
+    def test_deep_merge_preserves_unset_keys(self, tmp_path):
+        yaml_content = "scanner:\n  sensitivity: 0.9\n"
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text(yaml_content)
+        cfg = load_config(str(config_file))
+        # sensitivity overridden
+        assert cfg.scanner["sensitivity"] == 0.9
+        # other scanner defaults preserved
+        assert cfg.scanner["pattern_matching"] is True
+        assert cfg.scanner["confidence_threshold"] == 0.7
+        assert cfg.scanner["signatures"]["use_bundled"] is True
+
+    def test_deep_merge_nested_dict(self, tmp_path):
+        yaml_content = "scanner:\n  signatures:\n    remote_feed_enabled: true\n"
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text(yaml_content)
+        cfg = load_config(str(config_file))
+        # Overridden nested key
+        assert cfg.scanner["signatures"]["remote_feed_enabled"] is True
+        # Other nested defaults preserved
+        assert cfg.scanner["signatures"]["use_bundled"] is True
+        assert cfg.scanner["signatures"]["additional_files"] == []
+
+    def test_deep_merge_broker_budgets(self, tmp_path):
+        yaml_content = "broker:\n  budgets:\n    max_write_tool_calls: 50\n"
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text(yaml_content)
+        cfg = load_config(str(config_file))
+        assert cfg.broker["budgets"]["max_write_tool_calls"] == 50
+        # Other budget defaults preserved
+        assert cfg.broker["budgets"]["max_posts_messages"] == 5
+        assert cfg.broker["default_posture"] == "deny_write"
+
+
+class TestAllEnvVarOverrides:
+    def test_killswitch_override_true(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("killswitch: false\n")
+        monkeypatch.setenv("AEGIS_KILLSWITCH", "true")
+        cfg = load_config(str(config_file))
+        assert cfg.killswitch is True
+
+    def test_killswitch_override_false(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("killswitch: true\n")
+        monkeypatch.setenv("AEGIS_KILLSWITCH", "no")
+        cfg = load_config(str(config_file))
+        assert cfg.killswitch is False
+
+    def test_scanner_confidence_threshold_override(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("scanner:\n  confidence_threshold: 0.7\n")
+        monkeypatch.setenv("AEGIS_SCANNER_CONFIDENCE_THRESHOLD", "0.85")
+        cfg = load_config(str(config_file))
+        assert cfg.scanner["confidence_threshold"] == 0.85
+
+    def test_broker_default_posture_override(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("broker:\n  default_posture: deny_write\n")
+        monkeypatch.setenv("AEGIS_BROKER_DEFAULT_POSTURE", "allow_all")
+        cfg = load_config(str(config_file))
+        assert cfg.broker["default_posture"] == "allow_all"
+
+    def test_behavior_drift_threshold_override(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("behavior:\n  drift_threshold: 2.5\n")
+        monkeypatch.setenv("AEGIS_BEHAVIOR_DRIFT_THRESHOLD", "4.0")
+        cfg = load_config(str(config_file))
+        assert cfg.behavior["drift_threshold"] == 4.0
+
+    def test_behavior_window_size_override(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("behavior:\n  window_size: 100\n")
+        monkeypatch.setenv("AEGIS_BEHAVIOR_WINDOW_SIZE", "200")
+        cfg = load_config(str(config_file))
+        assert cfg.behavior["window_size"] == 200

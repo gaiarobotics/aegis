@@ -190,3 +190,33 @@ class TestBrokerEvaluateResponse:
         req = _make_request()
         resp = broker.evaluate(req)
         assert resp.reason != ""
+
+
+class TestDenyWritePostureBlocksWrites:
+    """Verify deny_write posture denies writes for unregistered tools."""
+
+    def test_deny_write_blocks_unregistered_writes(self):
+        cfg = AegisConfig()
+        cfg.broker["default_posture"] = "deny_write"
+        broker = Broker(config=cfg)
+        # No manifest registered
+        req = _make_request(read_write="write", target="unknown_tool")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.DENY
+
+    def test_deny_write_allows_registered_writes(self):
+        cfg = AegisConfig()
+        cfg.broker["default_posture"] = "deny_write"
+        broker = Broker(config=cfg)
+        broker.register_tool(_make_manifest(read_write="write"))
+        req = _make_request(read_write="write")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.ALLOW
+
+    def test_quarantine_blocks_writes_after_entering(self):
+        broker = Broker()
+        broker._quarantine.enter_quarantine("test quarantine")
+        req = _make_request(read_write="write")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.DENY
+        assert "quarantine" in resp.reason.lower()

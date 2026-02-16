@@ -193,7 +193,15 @@ class Shield:
                 from aegis.identity import AgentContext
                 context = AgentContext(
                     agent_id="self",
+                    has_attestation=False,
+                    attestation_valid=False,
+                    attestation_expired=False,
+                    capabilities_within_scope=True,
+                    drift_sigma=0.0,
+                    clean_interaction_ratio=1.0,
                     scanner_threat_score=result.threat_score,
+                    communication_count=0,
+                    purpose_hash_changed=False,
                 )
                 verdict = self._nk_cell.assess(context)
                 result.details["nk_cell"] = {

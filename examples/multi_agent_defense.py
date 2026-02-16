@@ -170,12 +170,56 @@ def main():
     # ----------------------------------------------------------------
     # Scenario B: What if the scanner missed it? (novel attack)
     # ----------------------------------------------------------------
-    section("Phase 3: Evasion Scenario — Scanner Bypassed")
+    section("Phase 3: Evasion — Scanner Bypassed")
 
     print("Suppose the attacker uses a novel encoding that bypasses the scanner.")
-    print("The chatbot is now compromised and starts acting abnormally.\n")
+    print("The chatbot's LLM is now compromised.")
+    print()
+    print("KEY INSIGHT: The scanner is a content-based detector. If it misses a")
+    print("payload once, it misses the same payload every time it's forwarded.")
+    print("Re-scanning identical content at each hop provides zero additional")
+    print("defense. What catches propagation is the BEHAVIORAL and STRUCTURAL")
+    print("layers, which don't inspect payload content at all.\n")
 
-    # Simulate compromised chatbot behavior
+    # --- 3a. Broker blocks unauthorized tool use (structural defense) ---
+    print("--- 3a. Broker: Structural Containment ---\n")
+    print("Compromised chatbot tries to propagate via inter-agent messaging.")
+    print("Chatbot's manifest only allows 'respond_to_user'.\n")
+
+    propagation_attempts = [
+        ("send_message", "write", "Attempt to message researcher"),
+        ("web_search", "read", "Attempt to use researcher's tool"),
+        ("run_query", "write", "Attempt to use executor's tool"),
+        ("http_post", "write", "Attempt to exfiltrate data"),
+    ]
+
+    for target, rw, desc in propagation_attempts:
+        req = ActionRequest(
+            id=f"propagation-{target}",
+            timestamp=time.time(),
+            source_provenance="social.content",
+            action_type="tool_call",
+            read_write=rw,
+            target=target,
+            args={"payload": attack_payload},  # Same payload scanner missed!
+            risk_hints={},
+        )
+        result = chatbot.shield.evaluate_action(req)
+        status = "ALLOWED" if result.allowed else "BLOCKED"
+        print(f"  {desc:40s} {status}")
+        print(f"    target={target}, reason: {result.reason}")
+
+    print()
+    print("  The broker doesn't care what the payload says — it enforces")
+    print("  what ACTIONS the agent is allowed to take. The attack payload")
+    print("  is irrelevant; the tool call itself is unauthorized.")
+
+    # --- 3b. Behavioral drift detects the compromised agent ---
+    print("\n--- 3b. Drift Detector: Behavioral Anomaly ---\n")
+    print("Even if the chatbot has a legitimate channel, its behavior changes.")
+    print("The drift detector catches the agent acting differently, not the")
+    print("payload content.\n")
+
     compromised_events = [
         BehaviorEvent(
             agent_id="chatbot", timestamp=time.time(), event_type="tool_call",
@@ -190,11 +234,10 @@ def main():
     ]
 
     fingerprint = chatbot.tracker.get_fingerprint("chatbot")
-    print("Compromised chatbot behavior:")
     for i, event in enumerate(compromised_events):
         drift = chatbot.detector.check_drift(fingerprint, event)
         chatbot.tracker.record_event(event)
-        print(f"\n  Event {i+1}: {event.event_type}, length={event.output_length}, "
+        print(f"  Event {i+1}: {event.event_type}, length={event.output_length}, "
               f"tool={event.tool_used}")
         print(f"    Drifting:    {drift.is_drifting}")
         print(f"    Max sigma:   {drift.max_sigma:.1f}")
@@ -202,11 +245,34 @@ def main():
             print(f"    New tools:   {drift.new_tools}")
         if drift.anomalous_dimensions:
             print(f"    Anomalous:   {drift.anomalous_dimensions}")
+        print()
+
+    # --- 3c. Provenance tagging degrades injection authority ---
+    print("--- 3c. Provenance: Authority Downgrading ---\n")
+    print("If Agent A does reach Agent B through a legitimate channel,")
+    print("the provenance envelope tags A's messages as peer input:\n")
+
+    peer_messages = [
+        {"role": "user", "content": attack_payload},
+    ]
+    tagged = researcher.shield.wrap_messages(peer_messages, provenance_map={
+        0: "social.content",  # Peer agent input, not system instructions
+    })
+    for msg in tagged:
+        preview = msg["content"][:90].replace("\n", " ")
+        print(f"  [{msg['role']}] {preview}...")
+    print()
+    print("  B's LLM sees [SOCIAL.CONTENT], not [TRUSTED.SYSTEM]. The injection")
+    print("  arrives as peer input, not as authoritative instructions.")
 
     # ----------------------------------------------------------------
     # NK cell assessment of compromised chatbot
     # ----------------------------------------------------------------
-    section("Phase 4: NK Cell Assessment")
+    section("Phase 4: NK Cell — Combining Weak Signals")
+
+    print("The NK cell combines multiple non-content signals into a verdict.")
+    print("Even with scanner_threat_score=0 (scanner missed it), the other")
+    print("signals are enough:\n")
 
     # Get the worst drift
     final_drift = chatbot.detector.check_drift(
@@ -221,18 +287,25 @@ def main():
         capabilities_within_scope=False,  # using tools outside manifest
         drift_sigma=final_drift.max_sigma,
         clean_interaction_ratio=0.6,  # degrading
-        scanner_threat_score=0.3,  # some scanner signals on output
+        scanner_threat_score=0.0,  # scanner missed the attack entirely
         communication_count=50,
         purpose_hash_changed=False,
     )
     verdict = nk.assess(context)
 
-    print(f"NK Cell assessment of chatbot:")
-    print_result("Score:", f"{verdict.score:.3f}")
+    print_result("Scanner threat score:", "0.0 (scanner missed it)")
+    print_result("Drift sigma:", f"{final_drift.max_sigma:.1f}")
+    print_result("Capabilities in scope:", "False (unauthorized tool use)")
+    print_result("Clean interaction ratio:", "0.6 (degrading)")
+    print()
+    print_result("NK Cell score:", f"{verdict.score:.3f}")
     print_result("Verdict:", verdict.verdict)
     print_result("Recommended action:", verdict.recommended_action)
     print_result("Activating signals:", str(verdict.activating_signals))
     print_result("Inhibitory signals:", str(verdict.inhibitory_signals))
+    print()
+    print("  The verdict is based on behavioral drift and capability violations,")
+    print("  NOT on recognizing the malicious payload content.")
 
     # ----------------------------------------------------------------
     # Quarantine and recovery
@@ -243,23 +316,6 @@ def main():
     quarantined = chatbot.quarantine.auto_quarantine(nk_verdict=verdict)
     print_result("Auto-quarantine triggered:", str(quarantined))
     print_result("Chatbot quarantined:", str(chatbot.quarantine.is_quarantined()))
-
-    if chatbot.quarantine.is_quarantined():
-        # Compromised chatbot tries to send a message to researcher
-        print("\n  Compromised chatbot attempts to call researcher...")
-        req = ActionRequest(
-            id="attack-propagation",
-            timestamp=time.time(),
-            source_provenance="social.content",
-            action_type="tool_call",
-            read_write="write",
-            target="send_message",  # not in manifest
-            args={"to": "researcher", "payload": "exfil instructions"},
-            risk_hints={},
-        )
-        result = chatbot.shield.evaluate_action(req)
-        print_result("Propagation attempt allowed:", str(result.allowed))
-        print_result("Reason:", result.reason)
 
     # Rollback to clean state
     print()
@@ -291,13 +347,27 @@ def main():
         print(f"    Events:      {fp.event_count}")
         print()
 
-    print("Summary:")
-    print("  1. Attack detected at entry by scanner (Phase 2)")
-    print("  2. Even if scanner bypassed, behavioral drift caught anomaly (Phase 3)")
-    print("  3. NK cell combined signals into 'hostile' verdict (Phase 4)")
-    print("  4. Auto-quarantine blocked propagation attempts (Phase 5)")
-    print("  5. Context rolled back to clean state (Phase 5)")
-    print("  6. Peer agents remained uncompromised (Phase 6)")
+    # ----------------------------------------------------------------
+    # Summary: what defends against propagation
+    # ----------------------------------------------------------------
+    section("Summary: Defense Layers Against Propagation")
+
+    print("The scanner is an ENTRY POINT defense. It catches known injection")
+    print("patterns at the perimeter. But if it misses, re-scanning the same")
+    print("payload at each agent provides no additional defense.\n")
+    print("What actually contains propagation:\n")
+    print("  STRUCTURAL (content-agnostic):")
+    print("    Broker         — Blocks unauthorized tool calls regardless of payload")
+    print("    Provenance     — Downgrades peer messages from system authority")
+    print()
+    print("  BEHAVIORAL (content-agnostic):")
+    print("    Drift detector — Catches the agent acting abnormally")
+    print("    NK cell        — Combines weak signals into threat verdict")
+    print()
+    print("  CONTAINMENT:")
+    print("    Quarantine     — Isolates agent, blocks all writes")
+    print("    Rollback       — Restores to known-good state")
+    print("    Trust reset    — Forces agent to rebuild reputation from zero")
     print()
     print("Blast radius: 1 agent, temporarily. Without AEGIS: entire swarm.")
 

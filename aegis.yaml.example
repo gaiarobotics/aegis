@@ -1,0 +1,114 @@
+# AEGIS Configuration
+# Copy to aegis.yaml and customize for your agent.
+
+# Master controls
+mode: observe              # observe | enforce
+killswitch: false
+
+# Agent identity
+agent_id: ""               # Auto-generated if empty
+agent_name: "my-agent"
+agent_purpose: "Customer support bot"
+operator_id: "org_abc123"
+
+# Module selection
+modules:
+  scanner: true
+  broker: true
+  identity: true
+  memory: true
+  behavior: true
+  skills: true
+  recovery: true
+
+# -- Scanner -------------------------------------------------
+scanner:
+  pattern_matching: true
+  semantic_analysis: true
+  prompt_envelope: true      # Rewrite prompts with provenance boundaries
+  outbound_sanitizer: true   # Strip authority markers from outputs
+  sensitivity: 0.5           # 0.0 (permissive) to 1.0 (paranoid)
+  block_on_threat: false
+  confidence_threshold: 0.7
+  signatures:
+    use_bundled: true
+    additional_files: []
+    remote_feed_enabled: false
+
+# -- Broker --------------------------------------------------
+broker:
+  default_posture: deny_write  # deny_write | allow_all | deny_all
+  budgets:
+    max_write_tool_calls: 20     # Per run
+    max_posts_messages: 5         # Per run
+    max_external_http_writes: 10  # Per run
+    max_new_domains: 3            # Per run
+  quarantine_triggers:
+    repeated_denied_writes: 5
+    new_domain_burst: 3
+    tool_rate_spike_sigma: 3.0
+    drift_score_threshold: 3.0
+
+# -- Identity ------------------------------------------------
+identity:
+  attestation:
+    enabled: true
+    key_type: hmac-sha256     # hmac-sha256 | ed25519
+    ttl_seconds: 86400
+    auto_generate_keys: true
+  trust:
+    establish_threshold: 50
+    establish_age_days: 3
+    vouch_threshold: 3
+    trust_halflife_days: 14
+    anomaly_penalty: 0.3
+    persistence_path: ".aegis/trust.json"
+  nkcell:
+    enabled: true
+    thresholds:
+      elevated: 0.3
+      suspicious: 0.6
+      hostile: 0.85
+
+# -- Memory --------------------------------------------------
+memory:
+  allowed_categories:
+    - fact
+    - state
+    - observation
+    - history_summary
+  blocked_categories:
+    - instruction
+    - policy
+    - directive
+    - tool_config
+  default_ttl_hours: 168       # 7 days for derived entries
+  taint_tracking: true
+  diff_anomaly_detection: true
+
+# -- Behavior ------------------------------------------------
+behavior:
+  window_size: 100
+  drift_threshold: 2.5
+  min_events_for_profile: 10
+
+# -- Skills --------------------------------------------------
+skills:
+  require_manifest: true
+  require_signature: false    # Set true when publisher ecosystem matures
+  static_analysis: true
+  auto_approve_clean: false
+  incubation_mode: true       # Start skills read-only
+  max_code_size: 100000
+
+# -- Recovery ------------------------------------------------
+recovery:
+  auto_quarantine: true        # Auto-quarantine on severe anomalies
+  quarantine_on_hostile_nk: true
+  purge_window_hours: 24
+
+# -- Telemetry -----------------------------------------------
+telemetry:
+  local_log: true
+  local_log_path: ".aegis/telemetry.jsonl"
+  remote_enabled: false

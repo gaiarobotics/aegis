@@ -29,7 +29,8 @@ broker = []
 identity = ["cryptography>=41.0"]
 memory = []
 skills = []
-all = ["aegis-shield[broker,identity,memory,skills]"]
+ml = ["llm-guard>=0.3.14"]
+all = ["aegis-shield[broker,identity,memory,skills,ml]"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

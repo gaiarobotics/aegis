@@ -8,6 +8,7 @@ from typing import Any, Optional
 from aegis.core import killswitch
 from aegis.core.config import AegisConfig
 from aegis.scanner.envelope import PromptEnvelope
+from aegis.scanner.llm_guard import LLMGuardAdapter, LLMGuardResult
 from aegis.scanner.pattern_matcher import PatternMatcher, ThreatMatch
 from aegis.scanner.sanitizer import OutboundSanitizer, SanitizeResult
 from aegis.scanner.semantic import SemanticAnalyzer, SemanticResult
@@ -20,6 +21,7 @@ class ScanResult:
 
     matches: list[ThreatMatch] = field(default_factory=list)
     semantic_result: Optional[SemanticResult] = None
+    llm_guard_result: Optional[LLMGuardResult] = None
     threat_score: float = 0.0
     is_threat: bool = False
 
@@ -63,6 +65,12 @@ class Scanner:
         # Init outbound sanitizer
         self._sanitizer = OutboundSanitizer(config=scanner_cfg)
 
+        # Init LLM Guard adapter (optional ML-based scanning)
+        llm_guard_cfg = scanner_cfg.get("llm_guard", {})
+        self._llm_guard: Optional[LLMGuardAdapter] = None
+        if llm_guard_cfg.get("enabled", False):
+            self._llm_guard = LLMGuardAdapter(config=llm_guard_cfg)
+
         # Threat threshold from config
         self._confidence_threshold = scanner_cfg.get("confidence_threshold", 0.7)
 
@@ -81,6 +89,7 @@ class Scanner:
 
         matches: list[ThreatMatch] = []
         semantic_result: Optional[SemanticResult] = None
+        llm_guard_result: Optional[LLMGuardResult] = None
 
         # Pattern matching
         if self._pattern_matcher is not None:
@@ -90,13 +99,18 @@ class Scanner:
         if self._semantic_analyzer is not None:
             semantic_result = self._semantic_analyzer.analyze(text)
 
+        # LLM Guard ML-based scanning
+        if self._llm_guard is not None:
+            llm_guard_result = self._llm_guard.scan(text)
+
         # Compute combined threat score
-        threat_score = self._compute_threat_score(matches, semantic_result)
+        threat_score = self._compute_threat_score(matches, semantic_result, llm_guard_result)
         is_threat = threat_score >= self._confidence_threshold
 
         return ScanResult(
             matches=matches,
             semantic_result=semantic_result,
+            llm_guard_result=llm_guard_result,
             threat_score=round(threat_score, 4),
             is_threat=is_threat,
         )
@@ -131,25 +145,50 @@ class Scanner:
         self,
         matches: list[ThreatMatch],
         semantic_result: Optional[SemanticResult],
+        llm_guard_result: Optional[LLMGuardResult] = None,
     ) -> float:
-        """Compute a combined threat score from pattern matches and semantic analysis."""
-        scores: list[float] = []
+        """Compute a combined threat score from all detection tiers.
+
+        Tiers:
+            1. Pattern matching (regex signatures)
+            2. Semantic analysis (heuristics)
+            3. LLM Guard (ML classifiers, optional)
+
+        ML scores are weighted higher when present because transformer-based
+        classifiers are more accurate than pattern/heuristic approaches.
+        """
+        heuristic_scores: list[float] = []
+        ml_score: float | None = None
 
         if matches:
             max_match_confidence = max(m.confidence for m in matches)
-            scores.append(max_match_confidence)
+            heuristic_scores.append(max_match_confidence)
 
         if semantic_result and semantic_result.aggregate_score > 0:
-            scores.append(semantic_result.aggregate_score)
+            heuristic_scores.append(semantic_result.aggregate_score)
 
-        if not scores:
+        if llm_guard_result and llm_guard_result.aggregate_score > 0:
+            ml_score = llm_guard_result.aggregate_score
+
+        # No signals at all
+        if not heuristic_scores and ml_score is None:
             return 0.0
 
-        # Combined: take the max and boost slightly if both sources agree
-        max_score = max(scores)
-        if len(scores) > 1:
-            avg_score = sum(scores) / len(scores)
-            combined = max_score * 0.7 + avg_score * 0.3
-            return min(combined, 1.0)
+        # ML-only
+        if not heuristic_scores and ml_score is not None:
+            return ml_score
 
-        return max_score
+        # Heuristic-only (original logic)
+        heuristic_max = max(heuristic_scores) if heuristic_scores else 0.0
+        if ml_score is None:
+            if len(heuristic_scores) > 1:
+                avg = sum(heuristic_scores) / len(heuristic_scores)
+                return min(heuristic_max * 0.7 + avg * 0.3, 1.0)
+            return heuristic_max
+
+        # Both ML and heuristic — ML gets higher weight
+        combined = ml_score * 0.6 + heuristic_max * 0.4
+        # Boost when both tiers agree the input is threatening
+        if ml_score > 0.5 and heuristic_max > 0.5:
+            combined = min(combined + 0.1, 1.0)
+        return min(combined, 1.0)

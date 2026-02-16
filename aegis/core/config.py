@@ -34,6 +34,25 @@ _DEFAULT_SCANNER = {
         "additional_files": [],
         "remote_feed_enabled": False,
     },
+    "llm_guard": {
+        "enabled": False,
+        "prompt_injection": {
+            "enabled": True,
+            "threshold": 0.5,
+            "model": None,
+        },
+        "toxicity": {
+            "enabled": False,
+            "threshold": 0.7,
+            "model": None,
+        },
+        "ban_topics": {
+            "enabled": False,
+            "topics": [],
+            "threshold": 0.5,
+            "model": None,
+        },
+    },
 }
 
 _DEFAULT_BROKER = {

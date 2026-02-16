@@ -90,8 +90,10 @@ class Shield:
         self._memory_guard = None
         self._recovery_quarantine = None
         self._context_rollback = None
+        self._coordination_client = None
 
         self._init_modules()
+        self._init_coordination()
 
     def _init_modules(self) -> None:
         """Instantiate enabled modules with graceful degradation."""
@@ -139,6 +141,54 @@ class Shield:
                 self._context_rollback = ContextRollback()
             except Exception:
                 pass
+
+    def _init_coordination(self) -> None:
+        """Initialize coordination client if enabled."""
+        coord_cfg = self._config.coordination
+        if not coord_cfg.get("enabled", False):
+            return
+        try:
+            from aegis.coordination.client import CoordinationClient
+            from aegis.identity.attestation import generate_keypair
+
+            key_type = self._config.identity.get("attestation", {}).get(
+                "key_type", "hmac-sha256"
+            )
+            keypair = generate_keypair(key_type)
+
+            self._coordination_client = CoordinationClient(
+                config=coord_cfg,
+                agent_id=self._config.agent_id,
+                operator_id=self._config.operator_id,
+                keypair=keypair,
+            )
+
+            # Wire compromise callback
+            if self._trust_manager is not None:
+                self._trust_manager.set_compromise_callback(
+                    self._on_compromise_reported
+                )
+
+            self._coordination_client.start()
+        except Exception:
+            self._coordination_client = None
+
+    def _on_compromise_reported(self, agent_id: str) -> None:
+        """Callback from TrustManager.report_compromise()."""
+        if self._coordination_client is None:
+            return
+        try:
+            nk_info = {}
+            if self._nk_cell is not None:
+                nk_info = {"nk_score": 1.0, "nk_verdict": "hostile"}
+            self._coordination_client.send_compromise_report(
+                compromised_agent_id=agent_id,
+                source="trust_manager",
+                nk_score=nk_info.get("nk_score", 0.0),
+                nk_verdict=nk_info.get("nk_verdict", ""),
+            )
+        except Exception:
+            pass
 
     @property
     def config(self) -> AegisConfig:
@@ -228,6 +278,31 @@ class Shield:
                     self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
                 except Exception:
                     pass
+
+        # Coordination reporting
+        if self._coordination_client is not None:
+            try:
+                if result.is_threat:
+                    scanner_info = result.details.get("scanner", {})
+                    nk_info = result.details.get("nk_cell", {})
+                    self._coordination_client.send_threat_event(
+                        threat_score=result.threat_score,
+                        is_threat=True,
+                        scanner_match_count=scanner_info.get("matches", 0),
+                        nk_score=nk_info.get("score", 0.0),
+                        nk_verdict=nk_info.get("verdict", ""),
+                    )
+                    # If NK cell flagged hostile, also send compromise report
+                    nk_verdict = result.details.get("nk_cell", {}).get("verdict", "")
+                    if nk_verdict == "hostile":
+                        self._coordination_client.send_compromise_report(
+                            compromised_agent_id=self._config.agent_id,
+                            source="nk_cell",
+                            nk_score=nk_info.get("score", 0.0),
+                            nk_verdict=nk_verdict,
+                        )
+            except Exception:
+                pass
 
         # Log telemetry
         self._telemetry.log_event(

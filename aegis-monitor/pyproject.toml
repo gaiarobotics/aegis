@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-monitor"
+version = "0.1.0"
+description = "AEGIS monitoring dashboard — agent graph visualization, R0 estimation, and attack strain clustering"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Gaia Robotics"}]
+keywords = ["ai", "security", "monitoring", "agents", "dashboard"]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "networkx>=3.0",
+    "numpy>=1.24",
+    "websockets>=12.0",
+    "aegis-shield>=0.1.0",
+]
+
+[project.optional-dependencies]
+ml = [
+    "sentence-transformers>=2.6",
+    "umap-learn>=0.5",
+    "hdbscan>=0.8",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "httpx>=0.27",
+    "ruff>=0.4.0",
+]
+all = ["aegis-monitor[ml,dev]"]
+
+[tool.setuptools.packages.find]
+include = ["monitor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 99

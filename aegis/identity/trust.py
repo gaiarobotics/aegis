@@ -62,6 +62,15 @@ class TrustManager:
         self._records: dict[str, TrustRecord] = {}
         self._config = config or {}
         self._compromised: set[str] = set()
+        self._compromise_callback = None
+
+    def set_compromise_callback(self, callback) -> None:
+        """Register a callback invoked on ``report_compromise()``.
+
+        The callback receives ``(agent_id: str)`` and is wrapped in
+        try/except so that failures never disrupt trust management.
+        """
+        self._compromise_callback = callback
 
     def _ensure_record(self, agent_id: str) -> TrustRecord:
         """Get or create a trust record for an agent."""
@@ -205,6 +214,12 @@ class TrustManager:
         if agent_id in self._records:
             self._records[agent_id].score = 0.0
             self._records[agent_id].tier = TIER_UNKNOWN
+
+        if self._compromise_callback is not None:
+            try:
+                self._compromise_callback(agent_id)
+            except Exception:
+                pass
 
     def set_operator_delegation(self, agent_id: str, bonus: float) -> None:
         """Apply an operator-delegated trust bonus.

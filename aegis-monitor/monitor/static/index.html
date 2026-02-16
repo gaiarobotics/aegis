@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS Monitor</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Metrics bar -->
+    <div class="metrics-bar">
+        <h1>AEGIS Monitor</h1>
+        <div class="metric r0">
+            <span class="value" id="m-r0">0.00</span>
+            <span class="label">R0</span>
+        </div>
+        <div class="metric threats">
+            <span class="value" id="m-threats">0</span>
+            <span class="label">Active Threats</span>
+        </div>
+        <div class="metric quarantined">
+            <span class="value" id="m-quarantined">0</span>
+            <span class="label">Quarantined</span>
+        </div>
+        <div class="metric clusters">
+            <span class="value" id="m-clusters">0</span>
+            <span class="label">Strains</span>
+        </div>
+        <div class="metric agents">
+            <span class="value" id="m-agents">0</span>
+            <span class="label">Agents</span>
+        </div>
+        <span class="status-dot disconnected" id="ws-status" title="WebSocket"></span>
+    </div>
+
+    <!-- Main layout -->
+    <div class="main-layout">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="filter-group">
+                <h3>Trust Tier</h3>
+                <label>
+                    <input type="checkbox" checked data-filter="tier" data-value="3">
+                    <span class="color-dot" style="background: #2ecc71"></span>
+                    Tier 3 — Vouched
+                </label>
+                <label>
+                    <input type="checkbox" checked data-filter="tier" data-value="2">
+                    <span class="color-dot" style="background: #2ecc71"></span>
+                    Tier 2 — Established
+                </label>
+                <label>
+                    <input type="checkbox" checked data-filter="tier" data-value="1">
+                    <span class="color-dot" style="background: #f1c40f"></span>
+                    Tier 1 — Attested
+                </label>
+                <label>
+                    <input type="checkbox" checked data-filter="tier" data-value="0">
+                    <span class="color-dot" style="background: #95a5a6"></span>
+                    Tier 0 — Unknown
+                </label>
+                <label>
+                    <input type="checkbox" checked data-filter="compromised">
+                    <span class="color-dot" style="background: #e74c3c"></span>
+                    Compromised
+                </label>
+            </div>
+
+            <div class="filter-group">
+                <h3>Attack Strains</h3>
+                <div id="strain-filters">
+                    <p style="color: var(--text-muted); font-size: 12px;">No clusters detected</p>
+                </div>
+            </div>
+
+            <div class="filter-group">
+                <h3>Time Range</h3>
+                <select id="time-range" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">
+                    <option value="1">Last 1 hour</option>
+                    <option value="6">Last 6 hours</option>
+                    <option value="24" selected>Last 24 hours</option>
+                    <option value="168">Last 7 days</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Graph -->
+        <div class="graph-container">
+            <div id="graph-canvas"></div>
+
+            <!-- Agent detail popup -->
+            <div class="agent-popup" id="agent-popup">
+                <button class="close-btn" onclick="document.getElementById('agent-popup').classList.remove('visible')">&times;</button>
+                <h3 id="popup-agent-id">Agent</h3>
+                <div class="detail-row"><span class="label">Trust Tier</span><span id="popup-tier">—</span></div>
+                <div class="detail-row"><span class="label">Trust Score</span><span id="popup-score">—</span></div>
+                <div class="detail-row"><span class="label">Status</span><span id="popup-status">—</span></div>
+                <div class="detail-row"><span class="label">Operator</span><span id="popup-operator">—</span></div>
+                <div class="detail-row"><span class="label">Last Heartbeat</span><span id="popup-heartbeat">—</span></div>
+                <div class="detail-row"><span class="label">At-Risk Neighbors</span><span id="popup-at-risk">—</span></div>
+            </div>
+
+            <!-- Event log -->
+            <div class="event-log" id="event-log"></div>
+        </div>
+    </div>
+
+    <!-- Sigma.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+    <script src="/static/graph.js"></script>
+</body>
+</html>

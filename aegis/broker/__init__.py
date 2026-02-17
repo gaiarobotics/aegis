@@ -2,5 +2,6 @@
 
 from aegis.broker.actions import ActionDecision, ActionRequest, ActionResponse
 from aegis.broker.broker import Broker
+from aegis.broker.manifests import ToolManifest
 
-__all__ = ["ActionDecision", "ActionRequest", "ActionResponse", "Broker"]
+__all__ = ["ActionDecision", "ActionRequest", "ActionResponse", "Broker", "ToolManifest"]

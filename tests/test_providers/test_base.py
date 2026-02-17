@@ -1,6 +1,6 @@
 """Tests for AEGIS base provider wrapper."""
 
-from aegis.providers.base import BaseWrapper, WrappedClient
+from aegis.providers.base import BaseWrapper, WrappedClient, _InterceptProxy, _extract_user_text
 from aegis.shield import Shield
 
 
@@ -128,3 +128,92 @@ class TestBaseWrapperKillswitch:
         })()
         result = wrapper.evaluate_action(mock_req)
         assert result["allowed"] is True
+
+
+class TestExtractUserText:
+    def test_string_content(self):
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello there!"},
+        ]
+        assert _extract_user_text(messages) == "Hello there!"
+
+    def test_block_content(self):
+        messages = [
+            {"role": "user", "content": [
+                {"type": "text", "text": "Part one."},
+                {"type": "image", "source": {}},
+                {"type": "text", "text": "Part two."},
+            ]},
+        ]
+        assert _extract_user_text(messages) == "Part one.\nPart two."
+
+    def test_no_user_messages(self):
+        messages = [{"role": "system", "content": "Hello"}]
+        assert _extract_user_text(messages) == ""
+
+    def test_multiple_user_messages(self):
+        messages = [
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "Reply"},
+            {"role": "user", "content": "Second"},
+        ]
+        assert _extract_user_text(messages) == "First\nSecond"
+
+    def test_empty_messages(self):
+        assert _extract_user_text([]) == ""
+
+
+class TestInterceptProxy:
+    def test_callable_intercept(self):
+        """Terminal callable in the map is returned directly."""
+        called_with = []
+        fn = lambda *a, **kw: called_with.append((a, kw)) or "intercepted"
+
+        class Target:
+            pass
+
+        proxy = _InterceptProxy(Target(), {"create": fn})
+        result = proxy.create("arg1", key="val")
+        assert result == "intercepted"
+        assert called_with[0] == (("arg1",), {"key": "val"})
+
+    def test_nested_intercept(self):
+        """Dict entries chain into sub-proxies."""
+        called_with = []
+        fn = lambda **kw: called_with.append(kw) or "done"
+
+        class Inner:
+            pass
+
+        class Target:
+            messages = Inner()
+
+        proxy = _InterceptProxy(Target(), {"messages": {"create": fn}})
+        result = proxy.messages.create(model="test")
+        assert result == "done"
+        assert called_with[0] == {"model": "test"}
+
+    def test_fallthrough_attribute(self):
+        """Attributes not in the map delegate to the target."""
+        class Target:
+            name = "real"
+
+        proxy = _InterceptProxy(Target(), {"create": lambda: None})
+        assert proxy.name == "real"
+
+    def test_wrapped_client_intercept_map(self):
+        """WrappedClient uses intercept_map for known names."""
+        captured = []
+        fn = lambda **kw: captured.append(kw) or "result"
+
+        class Client:
+            name = "original"
+
+        wrapped = WrappedClient(
+            client=Client(),
+            shield=None,
+            intercept_map={"create": fn},
+        )
+        assert wrapped.create(prompt="test") == "result"
+        assert wrapped.name == "original"  # falls through

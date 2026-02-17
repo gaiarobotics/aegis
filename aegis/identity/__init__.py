@@ -1,4 +1,4 @@
-"""AEGIS Identity module -- attestation, trust management, and NK cell analysis."""
+"""AEGIS Identity module -- attestation, trust management, NK cell analysis, speaker classification, and identity resolution."""
 
 from aegis.identity.attestation import (
     Attestation,
@@ -8,6 +8,8 @@ from aegis.identity.attestation import (
     verify_attestation,
 )
 from aegis.identity.nkcell import AgentContext, NKCell, NKVerdict
+from aegis.identity.resolver import IdentityResolver
+from aegis.identity.speaker import ExtractionResult, SpeakerInfo, extract_speakers
 from aegis.identity.trust import TrustManager, TrustRecord
 
 __all__ = [
@@ -21,4 +23,8 @@ __all__ = [
     "AgentContext",
     "NKCell",
     "NKVerdict",
+    "ExtractionResult",
+    "IdentityResolver",
+    "SpeakerInfo",
+    "extract_speakers",
 ]

@@ -7,6 +7,81 @@ from typing import Any
 from aegis.core import killswitch
 
 
+def _record_trust_for_messages(shield: Any, messages: list[dict[str, Any]], clean: bool) -> None:
+    """Extract speakers from messages and record trust interactions.
+
+    Called after each intercepted LLM call.  Clean calls record positive
+    interactions; threats record anomalies.
+    """
+    try:
+        from aegis.identity.speaker import extract_speakers
+        result = extract_speakers(messages)
+        for agent_id in result.agent_ids:
+            shield.record_trust_interaction(
+                agent_id, clean=clean, anomaly=not clean,
+            )
+    except Exception:
+        pass  # Never disrupt the call path
+
+
+def _extract_user_text(messages: list[dict[str, Any]]) -> str:
+    """Extract concatenated user-role text from a message list.
+
+    Handles both string content and Anthropic-style content block lists.
+    """
+    parts: list[str] = []
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+    return "\n".join(parts)
+
+
+class _InterceptProxy:
+    """Chainable proxy that intercepts specific method calls.
+
+    ``intercept_map`` is a nested dict.  Leaf values (callables) are terminal
+    intercept points.  Dict values indicate further namespace chaining.
+
+    Example for Anthropic (``client.messages.create``):
+
+        {"messages": {"create": intercept_fn}}
+
+    When ``proxy.messages`` is accessed, a new ``_InterceptProxy`` is returned
+    with the inner dict ``{"create": intercept_fn}`` and ``target`` set to
+    ``original_client.messages``.  When ``.create(...)`` is called on *that*
+    proxy, ``intercept_fn`` is invoked.
+    """
+
+    def __init__(self, target: Any, intercept_map: dict[str, Any]) -> None:
+        object.__setattr__(self, "_target", target)
+        object.__setattr__(self, "_intercept_map", intercept_map)
+
+    def __getattr__(self, name: str) -> Any:
+        entry = self._intercept_map.get(name)
+        if entry is None:
+            # Not in the intercept map — fall through to the real object
+            return getattr(self._target, name)
+
+        if callable(entry):
+            # Terminal intercept point — return the interceptor
+            return entry
+
+        if isinstance(entry, dict):
+            # Intermediate namespace — chain another proxy
+            real_attr = getattr(self._target, name)
+            return _InterceptProxy(real_attr, entry)
+
+        # Unexpected map value — fall through
+        return getattr(self._target, name)
+
+
 class WrappedClient:
     """A wrapped LLM client that intercepts API calls for AEGIS protection.
 
@@ -14,10 +89,17 @@ class WrappedClient:
     enforcing broker policies on tool calls, and sanitizing outputs.
     """
 
-    def __init__(self, client: Any, shield: Any, tools: list | None = None) -> None:
+    def __init__(
+        self,
+        client: Any,
+        shield: Any,
+        tools: list | None = None,
+        intercept_map: dict[str, Any] | None = None,
+    ) -> None:
         self._client = client
         self._shield = shield
         self._tools = tools
+        self._intercept_map = intercept_map or {}
 
     @property
     def original(self) -> Any:
@@ -25,7 +107,15 @@ class WrappedClient:
         return self._client
 
     def __getattr__(self, name: str) -> Any:
-        """Delegate attribute access to the wrapped client."""
+        """Delegate attribute access, intercepting known namespaces."""
+        if self._intercept_map:
+            entry = self._intercept_map.get(name)
+            if entry is not None:
+                if callable(entry):
+                    return entry
+                if isinstance(entry, dict):
+                    real_attr = getattr(self._client, name)
+                    return _InterceptProxy(real_attr, entry)
         return getattr(self._client, name)
 
 

@@ -319,6 +319,42 @@ class TestShieldPolicyConfig:
         assert shield.mode == "observe"  # default
 
 
+class TestShieldRecordTrustInteraction:
+    """Tests for Shield.record_trust_interaction()."""
+
+    def test_record_clean_interaction(self):
+        shield = Shield(modules=["identity"])
+        assert shield._trust_manager is not None
+        shield.record_trust_interaction("agent-1", clean=True)
+        assert shield._trust_manager.get_score("agent-1") > 0.0
+
+    def test_record_anomalous_interaction(self):
+        shield = Shield(modules=["identity"])
+        # First build some score
+        for _ in range(5):
+            shield.record_trust_interaction("agent-1", clean=True)
+        score_before = shield._trust_manager.get_score("agent-1")
+        shield.record_trust_interaction("agent-1", clean=False, anomaly=True)
+        score_after = shield._trust_manager.get_score("agent-1")
+        assert score_after < score_before
+
+    def test_noop_without_identity(self):
+        shield = Shield(modules=["scanner"])
+        assert shield._trust_manager is None
+        # Should not raise
+        shield.record_trust_interaction("agent-1", clean=True)
+
+    def test_noop_with_killswitch(self):
+        shield = Shield(modules=["identity"])
+        killswitch.activate()
+        try:
+            shield.record_trust_interaction("agent-1", clean=True)
+            # Score should be 0 because killswitch bypassed
+            assert shield._trust_manager.get_score("agent-1") == 0.0
+        finally:
+            killswitch.deactivate()
+
+
 # Helper mock class
 class MockActionRequest:
     """Minimal mock for action evaluation tests."""

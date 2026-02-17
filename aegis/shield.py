@@ -37,6 +37,18 @@ class SanitizeResult:
     modifications: list[str] = field(default_factory=list)
 
 
+class ThreatBlockedError(Exception):
+    """Raised when enforce mode blocks a detected threat.
+
+    Attributes:
+        scan_result: The ScanResult that triggered the block.
+    """
+
+    def __init__(self, scan_result: ScanResult, message: str = ""):
+        self.scan_result = scan_result
+        super().__init__(message or f"Threat blocked (score={scan_result.threat_score})")
+
+
 class Shield:
     """Unified AEGIS orchestrator.
 
@@ -91,6 +103,7 @@ class Shield:
         self._recovery_quarantine = None
         self._context_rollback = None
         self._coordination_client = None
+        self._identity_resolver = None
 
         self._init_modules()
         self._init_coordination()
@@ -114,8 +127,14 @@ class Shield:
         if self._config.is_module_enabled("identity"):
             try:
                 from aegis.identity import NKCell, TrustManager
+                from aegis.identity.resolver import IdentityResolver
                 self._trust_manager = TrustManager(config=self._config.identity.get("trust"))
                 self._nk_cell = NKCell(config=self._config.identity.get("nkcell"))
+                resolver_cfg = self._config.identity.get("resolver", {})
+                self._identity_resolver = IdentityResolver(
+                    aliases=resolver_cfg.get("aliases"),
+                    auto_learn=resolver_cfg.get("auto_learn", True),
+                )
             except Exception:
                 pass
 
@@ -387,6 +406,33 @@ class Shield:
             cleaned_text=result.cleaned_text,
             modifications=result.modifications,
         )
+
+    def resolve_agent_id(self, raw_id: str) -> str:
+        """Resolve a raw agent identifier to its canonical form.
+
+        Returns the raw ID unchanged if no resolver is configured.
+        """
+        if self._identity_resolver is None:
+            return raw_id
+        return self._identity_resolver.resolve(raw_id)
+
+    def record_trust_interaction(
+        self,
+        agent_id: str,
+        clean: bool = True,
+        anomaly: bool = False,
+    ) -> None:
+        """Record a trust interaction for an agent.
+
+        Resolves the agent_id to a canonical form before recording.
+        No-op when identity module is disabled or killswitch is active.
+        """
+        if killswitch.is_active():
+            return
+        if self._trust_manager is None:
+            return
+        canonical = self.resolve_agent_id(agent_id)
+        self._trust_manager.record_interaction(canonical, clean=clean, anomaly=anomaly)
 
     def wrap_messages(
         self,

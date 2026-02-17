@@ -2,7 +2,7 @@
 
 **Agent Epidemiological Guardian & Immune System**
 
-A drop-in security layer for LLM-powered agents. Detects prompt injections, contains compromised agents, and prevents cascading attacks across multi-agent systems.
+Protect your agent swarm with an immune system! A drop-in security layer for LLM-powered agents, optimized for safe(r) participation in multi-agent societies. Detects prompt injections, contains compromised agents, and prevents cascading attacks across multi-agent systems so you don't end up inadvertently authoring the first chapter of a sci-fi novel.
 
 ## Quick Start
 
@@ -16,14 +16,14 @@ import anthropic  # or openai, or any client with create()/generate()
 
 client = aegis.wrap(anthropic.Anthropic())
 
-# Use the client exactly as before — AEGIS scans automatically
+# Use the client exactly as before - AEGIS scans automatically
 response = client.messages.create(
     model="claude-sonnet-4-5-20250929",
     messages=[{"role": "user", "content": "What is 2+2?"}],
 )
 ```
 
-One line. No config needed. AEGIS auto-detects your provider, scans inputs for prompt injection, sanitizes outputs, and tracks agent trust — all transparently.
+One line. No config needed. AEGIS auto-detects your provider, scans inputs for prompt injection, sanitizes outputs, and tracks agent trust - all transparently.
 
 ## What It Does
 
@@ -43,7 +43,7 @@ AEGIS layers seven independent defense mechanisms so that bypassing any single o
 
 | Mode | Behavior |
 |------|----------|
-| `observe` (default) | Detects and logs threats, but never blocks — safe for evaluation |
+| `observe` (default) | Detects and logs threats, but never blocks - safe for evaluation |
 | `enforce` | Blocks detected threats by raising `ThreatBlockedError` |
 
 ```python
@@ -66,19 +66,21 @@ client = aegis.wrap(my_client, mode="enforce")
 
 ```bash
 pip install aegis-shield[identity]      # Ed25519 attestation
-pip install aegis-shield[ml]            # ML-based scanning (LLM Guard)
+pip install aegis-shield[ml]            # ML-based scanning (uses LLM Guard)
 pip install aegis-shield[coordination]  # Remote monitoring service
 pip install aegis-shield[all]           # Everything
 ```
 
 ## Documentation
 
-- **[Getting Started](docs/quickstart.md)** — Installation, usage, and progressive walkthrough of every feature
-- **[API Reference](docs/api-reference.md)** — Complete class/method/config reference
-- **[Monitor Quickstart](docs/quickstart-monitor.md)** — Set up the monitoring dashboard and connect agents
-- **[Security Rationale](docs/rationale.md)** — Why AEGIS exists, attack anatomy, defense-in-depth analysis
-- **[Comparison](docs/comparison.md)** — AEGIS vs Guardrails AI vs LLM Guard
-- **[Examples](examples/)** — Runnable code for every feature
+You can get started with a single line of code, but there's a lot more you can do with AEGIS:
+
+- **[Getting Started](docs/quickstart.md)** - Installation, usage, and progressive walkthrough of every feature
+- **[API Reference](docs/api-reference.md)** - Complete class/method/config reference
+- **[Monitor Quickstart](docs/quickstart-monitor.md)** - Set up the monitoring dashboard and connect agents
+- **[Security Rationale](docs/rationale.md)** - Why AEGIS exists, attack anatomy, defense-in-depth analysis
+- **[Comparison](docs/comparison.md)** - AEGIS vs Guardrails AI vs LLM Guard
+- **[Examples](examples/)** - Runnable code for every feature
 
 ## Requirements
 

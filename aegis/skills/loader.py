@@ -71,10 +71,35 @@ class SkillLoader:
                 skill_hash="",
             )
 
-        # Step 2: Compute SHA-256 hash of skill code
-        p = Path(path)
+        # Step 2: Resolve path and enforce containment
+        p = Path(path).resolve()
+        skills_base_dir = self._config.get("skills_base_dir")
+        if skills_base_dir is not None:
+            base = Path(skills_base_dir).resolve()
+            try:
+                p.relative_to(base)
+            except ValueError:
+                return LoadResult(
+                    approved=False,
+                    reason=f"Skill path {p} is outside allowed base directory {base}",
+                    incubation=False,
+                    skill_hash="",
+                )
+
         code = p.read_text(encoding="utf-8")
         skill_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+        # Step 2b: Verify hash against manifest
+        filename = p.name
+        if manifest.hashes:
+            expected_hash = manifest.hashes.get(filename)
+            if expected_hash is not None and expected_hash != skill_hash:
+                return LoadResult(
+                    approved=False,
+                    reason=f"Hash mismatch for {filename}: expected {expected_hash}, got {skill_hash}",
+                    incubation=False,
+                    skill_hash=skill_hash,
+                )
 
         # Step 3: Check hash cache
         if skill_hash in self._hash_cache:

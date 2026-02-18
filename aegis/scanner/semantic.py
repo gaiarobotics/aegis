@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -56,6 +57,12 @@ class SemanticAnalyzer:
         Returns:
             SemanticResult with findings from all enabled modules.
         """
+        # Unicode normalization to prevent evasion via confusable characters
+        text = unicodedata.normalize("NFC", text)
+        text = text.replace("\u00a0", " ")       # NBSP → space
+        text = text.replace("\u00ad", "")         # soft hyphen → removed
+        text = re.sub(r"[\uFE00-\uFE0F]", "", text)  # variation selectors
+
         all_findings: list[dict[str, Any]] = []
         per_module_scores: dict[str, float] = {}
 
@@ -84,7 +91,7 @@ class SemanticAnalyzer:
         if per_module_scores:
             active_scores = [s for s in per_module_scores.values() if s > 0]
             if active_scores:
-                aggregate = max(active_scores) * 0.6 + (sum(active_scores) / len(per_module_scores)) * 0.4
+                aggregate = max(active_scores) * 0.6 + (sum(active_scores) / len(active_scores)) * 0.4
                 aggregate = min(aggregate, 1.0)
             else:
                 aggregate = 0.0
@@ -144,16 +151,16 @@ class SemanticAnalyzer:
 
         # Fake turn markers
         turn_patterns = [
-            (r"\n\s*Assistant\s*:", 0.85, "Injected Assistant turn marker"),
-            (r"\n\s*Human\s*:", 0.85, "Injected Human turn marker"),
-            (r"\n\s*User\s*:", 0.8, "Injected User turn marker"),
-            (r"\n\s*AI\s*:", 0.75, "Injected AI turn marker"),
-            (r"(?i)<\|?\s*(?:im_start|im_end)\s*\|?>", 0.9, "ChatML delimiter injection"),
-            (r"(?i)\[/?INST\]", 0.9, "Llama INST tag injection"),
+            (r"(?:^|\n)\s*Assistant\s*:", 0.85, "Injected Assistant turn marker"),
+            (r"(?:^|\n)\s*Human\s*:", 0.85, "Injected Human turn marker"),
+            (r"(?:^|\n)\s*User\s*:", 0.8, "Injected User turn marker"),
+            (r"(?:^|\n)\s*AI\s*:", 0.75, "Injected AI turn marker"),
+            (r"<\|?\s*(?:im_start|im_end)\s*\|?>", 0.9, "ChatML delimiter injection"),
+            (r"\[/?INST\]", 0.9, "Llama INST tag injection"),
         ]
 
         for pattern, severity, desc in turn_patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 findings.append({
                     "module": "conversation_injection",
@@ -243,7 +250,7 @@ class SemanticAnalyzer:
                         "module": "encoding_attacks",
                         "description": "Base64-encoded suspicious content detected",
                         "severity": 0.85,
-                        "evidence": f"Decoded content contains suspicious keywords (first 100 chars: {decoded[:100]})",
+                        "evidence": "Base64-encoded content with suspicious keywords detected",
                     })
                 elif len(candidate) >= 32:
                     findings.append({

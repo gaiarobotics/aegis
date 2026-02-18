@@ -1,5 +1,6 @@
 """Integration tests for the Broker policy engine."""
 
+import threading
 import time
 
 from aegis.broker.actions import ActionDecision, ActionRequest, ActionResponse
@@ -220,3 +221,38 @@ class TestDenyWritePostureBlocksWrites:
         resp = broker.evaluate(req)
         assert resp.decision == ActionDecision.DENY
         assert "quarantine" in resp.reason.lower()
+
+
+class TestBrokerDeniedWriteConcurrency:
+    def test_denied_write_count_under_lock(self):
+        """_record_denied_write should capture count under lock and pass to check_triggers."""
+        cfg = AegisConfig()
+        cfg.broker["quarantine_triggers"]["repeated_denied_writes"] = 100  # high threshold
+        broker = Broker(config=cfg)
+
+        errors = []
+        barrier = threading.Barrier(10)
+
+        def worker():
+            try:
+                barrier.wait(timeout=5)
+                for i in range(10):
+                    req = _make_request(
+                        read_write="write",
+                        target="unknown_tool",
+                        req_id=f"{threading.current_thread().name}-{i}",
+                    )
+                    broker.evaluate(req)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        assert not errors
+        # 10 threads * 10 writes each = 100 denied writes
+        with broker._lock:
+            assert broker._denied_write_count == 100

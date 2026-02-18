@@ -52,6 +52,9 @@ def generate_keypair(key_type: str = "hmac-sha256") -> KeyPair:
         ValueError: If key_type is unsupported or required library is missing.
     """
     if key_type == "hmac-sha256":
+        # HMAC uses a symmetric shared secret — public_key and private_key
+        # hold the same value.  This is correct for HMAC-based auth: the
+        # "public key" is really the shared secret exchanged out-of-band.
         key = os.urandom(32)
         return KeyPair(public_key=key, private_key=key, key_type=key_type)
     elif key_type == "ed25519":
@@ -76,20 +79,29 @@ def generate_keypair(key_type: str = "hmac-sha256") -> KeyPair:
         raise ValueError(f"Unsupported key type: {key_type}")
 
 
+MAX_TTL_SECONDS = 7 * 24 * 3600  # 1 week
+
+
+def _esc(s: str) -> str:
+    """Escape backslash and pipe in a field before joining with ``|``."""
+    return s.replace("\\", "\\\\").replace("|", "\\|")
+
+
 def _canonical_repr(attestation: Attestation) -> bytes:
     """Build a canonical byte representation of an attestation for signing.
 
     The representation includes all fields except the signature itself.
+    Each field is escaped to prevent separator confusion.
     """
     parts = [
-        attestation.agent_id,
-        attestation.operator_id,
-        attestation.purpose_hash,
-        ",".join(attestation.declared_capabilities),
-        str(attestation.ttl),
-        attestation.nonce,
-        str(attestation.timestamp),
-        attestation.key_type,
+        _esc(attestation.agent_id),
+        _esc(attestation.operator_id),
+        _esc(attestation.purpose_hash),
+        _esc(",".join(attestation.declared_capabilities)),
+        _esc(str(attestation.ttl)),
+        _esc(attestation.nonce),
+        _esc(str(attestation.timestamp)),
+        _esc(attestation.key_type),
     ]
     return "|".join(parts).encode("utf-8")
 
@@ -126,6 +138,7 @@ def create_attestation(
     Returns:
         A signed Attestation instance.
     """
+    ttl_seconds = min(ttl_seconds, MAX_TTL_SECONDS)
     purpose_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
     nonce = str(uuid.uuid4())
     timestamp = time.time()
@@ -160,6 +173,33 @@ def create_attestation(
 
     attestation.signature = signature
     return attestation
+
+
+class AttestationVerifier:
+    """Verifies attestations with nonce replay protection.
+
+    Maintains a bounded set of seen nonces to prevent replay attacks.
+    """
+
+    def __init__(self, max_nonce_cache: int = 100_000) -> None:
+        self._seen_nonces: set[str] = set()
+        self._max_cache = max_nonce_cache
+
+    def verify(self, attestation: Attestation, public_key: bytes) -> bool:
+        """Verify an attestation, rejecting replayed nonces.
+
+        Returns False if the nonce has been seen before, the signature
+        is invalid, or the attestation has expired.
+        """
+        if attestation.nonce in self._seen_nonces:
+            return False
+        result = verify_attestation(attestation, public_key)
+        if result:
+            if len(self._seen_nonces) >= self._max_cache:
+                # Evict a random nonce to keep cache bounded
+                self._seen_nonces.pop()
+            self._seen_nonces.add(attestation.nonce)
+        return result
 
 
 def verify_attestation(attestation: Attestation, public_key: bytes) -> bool:

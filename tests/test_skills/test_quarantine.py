@@ -123,3 +123,72 @@ class TestShellDangerousPatterns:
         result = analyze_code(code, language="shell")
         assert result.safe is True
         assert len(result.findings) == 0
+
+
+class TestImportDetection:
+    """import and from...import of dangerous modules must be flagged."""
+
+    def test_import_subprocess(self):
+        code = "import subprocess"
+        result = analyze_code(code, language="python")
+        assert not result.safe
+        assert any("subprocess" in f.pattern for f in result.findings)
+
+    def test_from_os_import(self):
+        code = "from os import system"
+        result = analyze_code(code, language="python")
+        assert not result.safe
+        assert any("os" in f.pattern for f in result.findings)
+
+    def test_import_pickle(self):
+        code = "import pickle"
+        result = analyze_code(code, language="python")
+        assert not result.safe
+
+    def test_import_socket(self):
+        code = "import socket"
+        result = analyze_code(code, language="python")
+        assert not result.safe
+
+    def test_import_ctypes(self):
+        code = "import ctypes"
+        result = analyze_code(code, language="python")
+        assert not result.safe
+
+    def test_import_marshal(self):
+        code = "import marshal"
+        result = analyze_code(code, language="python")
+        assert not result.safe
+
+    def test_import_importlib(self):
+        code = "import importlib"
+        result = analyze_code(code, language="python")
+        assert not result.safe
+
+    def test_safe_import_not_flagged(self):
+        code = "import json\nimport math"
+        result = analyze_code(code, language="python")
+        assert result.safe
+
+
+class TestCompileDetection:
+    def test_compile_detected(self):
+        code = 'compile("print(1)", "<string>", "exec")'
+        result = analyze_code(code, language="python")
+        assert not result.safe
+        assert any("compile" in f.pattern for f in result.findings)
+
+
+class TestSyntaxErrorSeverity:
+    def test_syntax_error_high_severity(self):
+        code = "def foo(:\n    pass"
+        result = analyze_code(code, language="python")
+        assert result.findings[0].severity >= 0.4
+        assert not result.safe
+
+
+class TestUnknownLanguage:
+    def test_unknown_language_unsafe(self):
+        result = analyze_code("some code", language="rust")
+        assert not result.safe
+        assert result.risk_score == 1.0

@@ -154,3 +154,87 @@ class TestClientGracefulDegradation:
         assert client._heartbeat_thread.is_alive()
         client.stop()
         assert client._heartbeat_thread is None
+
+
+class TestClientQueueLock:
+    def test_has_queue_lock(self):
+        """MonitoringClient should have a _queue_lock attribute."""
+        client = MonitoringClient(_enabled_config(port=1), agent_id="a1")
+        assert hasattr(client, "_queue_lock")
+        assert isinstance(client._queue_lock, type(threading.Lock()))
+
+    def test_concurrent_send_and_flush(self):
+        """Concurrent sends and flushes should not corrupt the queue."""
+        cfg = _enabled_config(port=1)
+        cfg["queue_max_size"] = 100
+        client = MonitoringClient(cfg, agent_id="a1")
+
+        # Track calls to prevent actual HTTP requests
+        call_count = {"send": 0, "flush": 0}
+
+        # _post always fails so items get queued
+        client._post = lambda endpoint, payload: False
+
+        errors = []
+        barrier = threading.Barrier(10)
+
+        def send_worker():
+            try:
+                barrier.wait(timeout=5)
+                for _ in range(10):
+                    client.send_compromise_report("a2")
+            except Exception as e:
+                errors.append(e)
+
+        def flush_worker():
+            try:
+                barrier.wait(timeout=5)
+                for _ in range(10):
+                    client._flush_queue()
+            except Exception as e:
+                errors.append(e)
+
+        threads = []
+        for _ in range(5):
+            threads.append(threading.Thread(target=send_worker))
+        for _ in range(5):
+            threads.append(threading.Thread(target=flush_worker))
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        assert not errors
+        # Queue should not have raised any exceptions; all items should be intact
+        assert len(client._queue) <= 100
+
+
+class TestServiceUrlValidation:
+    def test_invalid_scheme_rejected(self):
+        """'ftp://evil.com' raises ValueError."""
+        import pytest
+
+        cfg = {"enabled": True, "service_url": "ftp://evil.com", "api_key": ""}
+        with pytest.raises(ValueError, match="Invalid service URL scheme"):
+            MonitoringClient(cfg, agent_id="a1")
+
+    def test_no_hostname_rejected(self):
+        """'http://' raises ValueError."""
+        import pytest
+
+        cfg = {"enabled": True, "service_url": "http://", "api_key": ""}
+        with pytest.raises(ValueError, match="Service URL must have a valid hostname"):
+            MonitoringClient(cfg, agent_id="a1")
+
+    def test_valid_http_accepted(self):
+        """'http://example.com' is accepted."""
+        cfg = {"enabled": True, "service_url": "http://example.com", "api_key": ""}
+        client = MonitoringClient(cfg, agent_id="a1")
+        assert client._service_url == "http://example.com"
+
+    def test_empty_url_accepted(self):
+        """Empty string is accepted (disabled monitoring)."""
+        cfg = {"enabled": False, "service_url": "", "api_key": ""}
+        client = MonitoringClient(cfg, agent_id="a1")
+        assert client._service_url == ""

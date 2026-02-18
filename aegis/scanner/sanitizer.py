@@ -27,6 +27,14 @@ _AUTHORITY_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(?m)^ADMIN\s*:", re.IGNORECASE), "Removed ADMIN: prefix"),
     (re.compile(r"(?m)^ROOT\s*:", re.IGNORECASE), "Removed ROOT: prefix"),
     (re.compile(r"(?m)^OPERATOR\s*:", re.IGNORECASE), "Removed OPERATOR: prefix"),
+    # AEGIS provenance tags
+    (re.compile(r"\[TRUSTED\.SYSTEM\]", re.IGNORECASE), "Removed AEGIS [TRUSTED.SYSTEM] tag"),
+    (re.compile(r"\[TRUSTED\.OPERATOR\]", re.IGNORECASE), "Removed AEGIS [TRUSTED.OPERATOR] tag"),
+    (re.compile(r"\[TOOL\.OUTPUT\]", re.IGNORECASE), "Removed AEGIS [TOOL.OUTPUT] tag"),
+    (re.compile(r"\[SOCIAL\.CONTENT\]", re.IGNORECASE), "Removed AEGIS [SOCIAL.CONTENT] tag"),
+    (re.compile(r"\[INSTRUCTION\.HIERARCHY\]", re.IGNORECASE), "Removed AEGIS [INSTRUCTION.HIERARCHY] tag"),
+    # Llama INST tags
+    (re.compile(r"\[/?INST\]", re.IGNORECASE), "Removed [INST]/[/INST] tag"),
     (re.compile(r"<<\s*SYS\s*>>", re.IGNORECASE), "Removed <<SYS>> delimiter"),
     (re.compile(r"<<\s*/SYS\s*>>", re.IGNORECASE), "Removed <</SYS>> delimiter"),
     (re.compile(r"<\|?\s*system\s*\|?>", re.IGNORECASE), "Removed <|system|> delimiter"),
@@ -53,7 +61,7 @@ _SCAFFOLDING_PATTERNS: list[tuple[re.Pattern, str]] = [
 # Tool-call JSON syntax patterns
 _TOOL_CALL_PATTERNS: list[tuple[re.Pattern, str]] = [
     (
-        re.compile(r'\{\s*"(?:function_call|tool_call|action)"\s*:\s*\{[^}]*\}\s*\}'),
+        re.compile(r'\{\s*"(?:function_call|tool_call|action)"\s*:\s*\{.*?\}\s*\}', re.DOTALL),
         "Stripped tool-call JSON syntax",
     ),
     (

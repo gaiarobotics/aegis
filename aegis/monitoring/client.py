@@ -12,6 +12,7 @@ import threading
 import time
 from collections import deque
 from typing import Any
+from urllib.parse import urlparse
 
 from aegis.monitoring.reports import (
     AgentHeartbeat,
@@ -43,9 +44,15 @@ class MonitoringClient:
     ) -> None:
         self._config = config
         self._enabled = bool(config.get("enabled", False))
-        self._service_url = config.get(
+        service_url = config.get(
             "service_url", "https://aegis.gaiarobotics.com/api/v1"
         ).rstrip("/")
+        parsed = urlparse(service_url)
+        if parsed.scheme not in ("http", "https", ""):
+            raise ValueError(f"Invalid service URL scheme: {parsed.scheme}")
+        if service_url and not parsed.hostname:
+            raise ValueError("Service URL must have a valid hostname")
+        self._service_url = service_url
         self._api_key = config.get("api_key", "")
         self._heartbeat_interval = config.get("heartbeat_interval_seconds", 60)
         self._retry_max = config.get("retry_max_attempts", 3)
@@ -58,6 +65,7 @@ class MonitoringClient:
         self._keypair = keypair
 
         self._queue: deque[dict[str, Any]] = deque(maxlen=self._queue_max)
+        self._queue_lock = threading.Lock()
         self._heartbeat_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
@@ -214,17 +222,21 @@ class MonitoringClient:
         success = self._post(endpoint, payload)
         if not success:
             # Queue for retry
-            self._queue.append({"endpoint": endpoint, "payload": payload})
+            with self._queue_lock:
+                self._queue.append({"endpoint": endpoint, "payload": payload})
 
     def _flush_queue(self) -> None:
         """Attempt to send queued reports."""
-        retries = len(self._queue)
+        with self._queue_lock:
+            retries = len(self._queue)
         for _ in range(retries):
-            if not self._queue:
-                break
-            item = self._queue.popleft()
+            with self._queue_lock:
+                if not self._queue:
+                    break
+                item = self._queue.popleft()
             if not self._post(item["endpoint"], item["payload"]):
-                self._queue.append(item)
+                with self._queue_lock:
+                    self._queue.append(item)
                 break  # stop on first failure
 
     def _post(self, endpoint: str, payload: dict) -> bool:
@@ -249,7 +261,6 @@ class MonitoringClient:
                     attempt + 1,
                     self._retry_max,
                     endpoint,
-                    exc_info=True,
                 )
             if attempt < self._retry_max - 1:
                 time.sleep(self._retry_backoff)

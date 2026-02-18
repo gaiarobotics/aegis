@@ -29,27 +29,27 @@ class TestConsistentMapping:
     """Same agent appearing with different surface forms maps consistently."""
 
     def test_case_variants_same_canonical(self):
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         id1 = r.resolve("Alice")
         id2 = r.resolve("alice")
         id3 = r.resolve("ALICE")
         assert id1 == id2 == id3
 
     def test_at_prefix_variants(self):
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         id1 = r.resolve("alice")
         id2 = r.resolve("@alice")
         assert id1 == id2
 
     def test_platform_email_to_canonical(self):
         """alice@moltbook.social → moltbook:alice"""
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         canonical = r.resolve("alice@moltbook.social")
         assert canonical == "moltbook:alice"
 
     def test_platform_and_bare_name_converge(self):
         """alice@moltbook.social and bare 'alice' should converge via fuzzy."""
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         # First encounter: bare alice
         id1 = r.resolve("alice")
         # Second encounter: platform-qualified
@@ -69,11 +69,11 @@ class TestConsistentMapping:
         assert id1 == id2
 
     def test_openclaw_platform(self):
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         assert r.resolve("bot42@openclaw.io") == "openclaw:bot42"
 
     def test_unknown_domain_passthrough(self):
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         assert r.resolve("user@unknown.example.com") == "user@unknown.example.com"
 
 
@@ -81,32 +81,34 @@ class TestFuzzyMatching:
     """Typos within edit distance 1 merge to existing canonical."""
 
     def test_typo_one_char(self):
-        r = IdentityResolver()
-        r.resolve("alice")  # register canonical
-        # "alce" is edit distance 1 from "alice"
-        assert r.resolve("alce") == "alice"
+        r = IdentityResolver(auto_learn=True)
+        r.resolve("alice")  # register canonical (5 chars)
+        # "alixe" is edit distance 1 from "alice" and 5 chars (>= min length 5)
+        assert r.resolve("alixe") == "alice"
 
     def test_typo_extra_char(self):
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         r.resolve("alice")
+        # "aalice" is 6 chars (>= min length 5), edit distance 1
         assert r.resolve("aalice") == "alice"
 
     def test_typo_missing_char(self):
-        r = IdentityResolver()
-        r.resolve("alice")
-        assert r.resolve("alic") == "alice"
+        r = IdentityResolver(auto_learn=True)
+        r.resolve("alicex")  # register 6-char canonical
+        # "alice" is 5 chars (>= min length 5), edit distance 1
+        assert r.resolve("alice") == "alicex"
 
     def test_no_fuzzy_on_short_ids(self):
-        """IDs shorter than 3 chars skip fuzzy matching."""
-        r = IdentityResolver()
-        r.resolve("ab")
-        # "ac" is edit distance 1, but too short for fuzzy
-        id2 = r.resolve("ac")
-        assert id2 == "ac"  # separate canonical
+        """IDs shorter than 5 chars skip fuzzy matching."""
+        r = IdentityResolver(auto_learn=True)
+        r.resolve("abcd")
+        # "abce" is edit distance 1, but too short for fuzzy (< 5 chars)
+        id2 = r.resolve("abce")
+        assert id2 == "abce"  # separate canonical
 
     def test_ambiguous_fuzzy_no_merge(self):
         """Two canonicals within distance 1 of query → no merge (ambiguous)."""
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         # Manually register two canonicals that are far apart
         # so neither fuzzy-merges into the other on creation
         r._canonicals.add("xalice")
@@ -127,13 +129,13 @@ class TestAliasRegistry:
         assert r.resolve("bob") == "bob"
 
     def test_add_alias_runtime(self):
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         r.resolve("alice")  # register
         r.add_alias("alice_primary", "alice")
         assert r.resolve("alice_primary") == "alice"
 
     def test_known_canonicals(self):
-        r = IdentityResolver()
+        r = IdentityResolver(auto_learn=True)
         r.resolve("alice")
         r.resolve("bob")
         assert "alice" in r.known_canonicals
@@ -152,6 +154,32 @@ class TestAutoLearn:
         r = IdentityResolver(auto_learn=False)
         r.resolve("newagent")
         assert "newagent" not in r.known_canonicals
+
+    def test_auto_learn_default_is_false(self):
+        """IdentityResolver() defaults to auto_learn=False."""
+        r = IdentityResolver()
+        r.resolve("newagent")
+        assert "newagent" not in r.known_canonicals
+
+
+class TestFuzzyMinLength:
+    """Fuzzy matching minimum length raised from 3 to 5."""
+
+    def test_fuzzy_skip_short_ids_5(self):
+        """IDs with 4 chars don't fuzzy match (raised from 3 to 5)."""
+        r = IdentityResolver(auto_learn=True)
+        r.resolve("abcd")  # register 4-char canonical
+        # "abce" is edit distance 1, but 4 chars < 5 minimum
+        result = r.resolve("abce")
+        assert result == "abce"  # no fuzzy merge
+
+    def test_fuzzy_works_with_5_chars(self):
+        """IDs with 5+ chars still fuzzy match."""
+        r = IdentityResolver(auto_learn=True)
+        r.resolve("abcde")  # register 5-char canonical
+        # "abcdf" is edit distance 1, and 5 chars >= 5 minimum
+        result = r.resolve("abcdf")
+        assert result == "abcde"  # fuzzy merged
 
 
 class TestEditDistanceOne:
@@ -186,6 +214,9 @@ class TestEndToEndTrustResolution:
         assert shield._trust_manager is not None
         assert shield._identity_resolver is not None
 
+        # Disable rate-limiting for test determinism
+        shield._trust_manager._interaction_min_interval = 0
+
         # Record interactions for same agent under different surface forms
         shield.record_trust_interaction("Alice", clean=True)
         shield.record_trust_interaction("alice", clean=True)
@@ -203,6 +234,9 @@ class TestEndToEndTrustResolution:
         from aegis.shield import Shield
 
         shield = Shield(modules=["scanner", "identity"], mode="enforce")
+
+        # Disable rate-limiting for test determinism
+        shield._trust_manager._interaction_min_interval = 0
 
         shield.record_trust_interaction("alice", clean=True)
         shield.record_trust_interaction("alice@moltbook.social", clean=True)

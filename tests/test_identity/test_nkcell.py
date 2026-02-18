@@ -254,3 +254,31 @@ class TestRecommendedActions:
         )
         verdict = nk.assess(ctx)
         assert verdict.recommended_action == "quarantine"
+
+
+class TestNaNGuards:
+    """Test that NaN/inf values in AgentContext fields are handled gracefully."""
+
+    def test_nan_drift_sigma_handled(self):
+        """NaN drift_sigma should not crash the assessment."""
+        nk = NKCell()
+        ctx = _default_context(drift_sigma=float("nan"))
+        verdict = nk.assess(ctx)
+        assert isinstance(verdict, NKVerdict)
+        assert 0.0 <= verdict.score <= 1.0
+
+    def test_inf_scanner_score_handled(self):
+        """Inf scanner_threat_score should not crash the assessment."""
+        nk = NKCell()
+        ctx = _default_context(scanner_threat_score=float("inf"))
+        verdict = nk.assess(ctx)
+        assert isinstance(verdict, NKVerdict)
+        assert 0.0 <= verdict.score <= 1.0
+
+    def test_nan_clean_ratio_handled(self):
+        """NaN clean_interaction_ratio should not crash the assessment."""
+        nk = NKCell()
+        ctx = _default_context(clean_interaction_ratio=float("nan"))
+        verdict = nk.assess(ctx)
+        assert isinstance(verdict, NKVerdict)
+        assert 0.0 <= verdict.score <= 1.0

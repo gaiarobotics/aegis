@@ -18,10 +18,15 @@ class RecoveryQuarantine:
     quarantine based on NK verdicts and drift detection results.
     """
 
-    def __init__(self, config: Optional[dict] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[dict] = None,
+        exit_token: Optional[str] = None,
+    ) -> None:
         self._config = {**_DEFAULT_CONFIG}
         if config is not None:
             self._config.update(config)
+        self._exit_token: Optional[str] = exit_token
         self._quarantined = False
         self._reason: Optional[str] = None
         self._read_only = False
@@ -39,9 +44,19 @@ class RecoveryQuarantine:
             self._reason = reason
             self._read_only = read_only
 
-    def exit(self) -> None:
-        """Deactivate quarantine."""
+    def exit(self, token: Optional[str] = None) -> None:
+        """Deactivate quarantine.
+
+        Args:
+            token: If an exit_token was configured, this must match it.
+
+        Raises:
+            ValueError: If an exit_token was configured and the provided
+                token does not match.
+        """
         with self._lock:
+            if self._exit_token is not None and token != self._exit_token:
+                raise ValueError("Invalid exit token")
             self._quarantined = False
             self._reason = None
             self._read_only = False

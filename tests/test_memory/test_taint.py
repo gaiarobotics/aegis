@@ -78,3 +78,48 @@ class TestTaintTracker:
         te = TaintedEntry(entry=entry, provenance="tool_output", tainted=True)
         assert te.tainted is True
         assert te.provenance == "tool_output"
+
+
+class TestEntryIdKey:
+    """Tests that TaintTracker uses entry_id (not id()) as registry key."""
+
+    def _make_entry(self, **overrides) -> MemoryEntry:
+        defaults = dict(
+            key="user_name",
+            value="Alice",
+            category="fact",
+            provenance="user",
+            ttl=None,
+            timestamp=time.time(),
+        )
+        defaults.update(overrides)
+        return MemoryEntry(**defaults)
+
+    def test_entry_id_used_as_registry_key(self):
+        """Verify taint uses entry_id, not id()."""
+        tracker = TaintTracker()
+        entry = self._make_entry()
+        tracker.tag(entry, provenance="tool_output")
+
+        # The registry key should be the entry_id string
+        assert entry.entry_id in tracker._registry
+        assert tracker.is_tainted(entry) is True
+        assert tracker.get_provenance(entry) == "tool_output"
+
+    def test_entry_id_survives_copy(self):
+        """After copying an entry, taint is still found by entry_id."""
+        import copy
+
+        tracker = TaintTracker()
+        entry = self._make_entry()
+        tracker.tag(entry, provenance="tool_output")
+
+        # Copy the entry — id() changes but entry_id stays the same
+        copied = copy.copy(entry)
+        assert copied is not entry
+        assert copied.entry_id == entry.entry_id
+        assert id(copied) != id(entry)
+
+        # Taint should still be found via entry_id
+        assert tracker.is_tainted(copied) is True
+        assert tracker.get_provenance(copied) == "tool_output"

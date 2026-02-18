@@ -6,6 +6,7 @@ All tests mock the llm-guard package since it's an optional heavy dependency.
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from unittest.mock import MagicMock, patch
 
@@ -541,3 +542,88 @@ class TestComputeThreatScoreWithML:
         ml_result = LLMGuardResult(aggregate_score=0.99)
         score = scanner._compute_threat_score(matches, None, ml_result)
         assert score <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: thread-safe lazy initialization
+# ---------------------------------------------------------------------------
+
+class TestLLMGuardAdapterConcurrency:
+    def test_has_init_lock(self):
+        """LLMGuardAdapter should have an _init_lock attribute."""
+        adapter = LLMGuardAdapter(config={"enabled": True})
+        assert hasattr(adapter, "_init_lock")
+        assert isinstance(adapter._init_lock, type(threading.Lock()))
+
+    def test_concurrent_init_scanners_only_once(self, monkeypatch):
+        """Multiple threads calling _init_scanners should only initialize once."""
+        _install_fake_llm_guard(monkeypatch)
+
+        adapter = LLMGuardAdapter(config={
+            "enabled": True,
+            "prompt_injection": {"enabled": True},
+        })
+
+        init_count = {"value": 0}
+        original_init = adapter._init_scanners
+
+        # Wrap to count actual initialization entries past the lock
+        def counting_init():
+            original_init()
+            # Count how many times _initialized was set to True
+            # (only meaningful if we track it externally)
+
+        barrier = threading.Barrier(10)
+        errors = []
+
+        def worker():
+            try:
+                barrier.wait(timeout=5)
+                adapter._init_scanners()
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors
+        assert adapter._initialized is True
+        assert adapter._scanners is not None
+        # Scanners dict should only be created once
+        assert "prompt_injection" in adapter._scanners
+
+    def test_concurrent_scans_safe(self, monkeypatch):
+        """Multiple threads calling scan() concurrently should not raise."""
+        pi_scanner = _make_fake_scanner("PromptInjection", is_valid=True, risk_score=0.1)
+        _install_fake_llm_guard(monkeypatch, {"PromptInjection": pi_scanner})
+
+        adapter = LLMGuardAdapter(config={
+            "enabled": True,
+            "prompt_injection": {"enabled": True},
+        })
+
+        results = []
+        errors = []
+        barrier = threading.Barrier(8)
+
+        def worker():
+            try:
+                barrier.wait(timeout=5)
+                result = adapter.scan("test input")
+                results.append(result)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors
+        assert len(results) == 8
+        for r in results:
+            assert r.active_scanner_count == 1

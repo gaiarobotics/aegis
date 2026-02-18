@@ -9,6 +9,7 @@ Requires: pip install aegis-shield[ml]
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -90,6 +91,7 @@ class LLMGuardAdapter:
         self._config = config or {}
         self._scanners: dict[str, Any] | None = None
         self._initialized = False
+        self._init_lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
@@ -97,70 +99,71 @@ class LLMGuardAdapter:
 
     def _init_scanners(self) -> None:
         """Lazily initialize LLM Guard scanners on first scan call."""
-        if self._initialized:
-            return
-        self._initialized = True
-        self._scanners = {}
+        with self._init_lock:
+            if self._initialized:
+                return
+            self._initialized = True
+            self._scanners = {}
 
-        if not is_llm_guard_available():
-            logger.warning(
-                "llm-guard package not installed. "
-                "Install with: pip install aegis-shield[ml]"
-            )
-            return
+            if not is_llm_guard_available():
+                logger.warning(
+                    "llm-guard package not installed. "
+                    "Install with: pip install aegis-shield[ml]"
+                )
+                return
 
-        pi_cfg = self._config.get("prompt_injection", {})
-        if pi_cfg.get("enabled", True):
-            try:
-                from llm_guard.input_scanners import PromptInjection
-
-                kwargs: dict[str, Any] = {}
-                threshold = pi_cfg.get("threshold")
-                if threshold is not None:
-                    kwargs["threshold"] = threshold
-                model = pi_cfg.get("model")
-                if model is not None:
-                    kwargs["model"] = model
-                self._scanners["prompt_injection"] = PromptInjection(**kwargs)
-                logger.info("LLM Guard PromptInjection scanner initialized")
-            except Exception:
-                logger.warning("Failed to initialize LLM Guard PromptInjection scanner", exc_info=True)
-
-        toxicity_cfg = self._config.get("toxicity", {})
-        if toxicity_cfg.get("enabled", False):
-            try:
-                from llm_guard.input_scanners import Toxicity
-
-                kwargs = {}
-                threshold = toxicity_cfg.get("threshold")
-                if threshold is not None:
-                    kwargs["threshold"] = threshold
-                model = toxicity_cfg.get("model")
-                if model is not None:
-                    kwargs["model"] = model
-                self._scanners["toxicity"] = Toxicity(**kwargs)
-                logger.info("LLM Guard Toxicity scanner initialized")
-            except Exception:
-                logger.warning("Failed to initialize LLM Guard Toxicity scanner", exc_info=True)
-
-        bt_cfg = self._config.get("ban_topics", {})
-        if bt_cfg.get("enabled", False):
-            topics = bt_cfg.get("topics", [])
-            if topics:
+            pi_cfg = self._config.get("prompt_injection", {})
+            if pi_cfg.get("enabled", True):
                 try:
-                    from llm_guard.input_scanners import BanTopics
+                    from llm_guard.input_scanners import PromptInjection
 
-                    kwargs = {"topics": topics}
-                    threshold = bt_cfg.get("threshold")
+                    kwargs: dict[str, Any] = {}
+                    threshold = pi_cfg.get("threshold")
                     if threshold is not None:
                         kwargs["threshold"] = threshold
-                    model = bt_cfg.get("model")
+                    model = pi_cfg.get("model")
                     if model is not None:
                         kwargs["model"] = model
-                    self._scanners["ban_topics"] = BanTopics(**kwargs)
-                    logger.info("LLM Guard BanTopics scanner initialized")
+                    self._scanners["prompt_injection"] = PromptInjection(**kwargs)
+                    logger.info("LLM Guard PromptInjection scanner initialized")
                 except Exception:
-                    logger.warning("Failed to initialize LLM Guard BanTopics scanner", exc_info=True)
+                    logger.warning("Failed to initialize LLM Guard PromptInjection scanner", exc_info=True)
+
+            toxicity_cfg = self._config.get("toxicity", {})
+            if toxicity_cfg.get("enabled", False):
+                try:
+                    from llm_guard.input_scanners import Toxicity
+
+                    kwargs = {}
+                    threshold = toxicity_cfg.get("threshold")
+                    if threshold is not None:
+                        kwargs["threshold"] = threshold
+                    model = toxicity_cfg.get("model")
+                    if model is not None:
+                        kwargs["model"] = model
+                    self._scanners["toxicity"] = Toxicity(**kwargs)
+                    logger.info("LLM Guard Toxicity scanner initialized")
+                except Exception:
+                    logger.warning("Failed to initialize LLM Guard Toxicity scanner", exc_info=True)
+
+            bt_cfg = self._config.get("ban_topics", {})
+            if bt_cfg.get("enabled", False):
+                topics = bt_cfg.get("topics", [])
+                if topics:
+                    try:
+                        from llm_guard.input_scanners import BanTopics
+
+                        kwargs = {"topics": topics}
+                        threshold = bt_cfg.get("threshold")
+                        if threshold is not None:
+                            kwargs["threshold"] = threshold
+                        model = bt_cfg.get("model")
+                        if model is not None:
+                            kwargs["model"] = model
+                        self._scanners["ban_topics"] = BanTopics(**kwargs)
+                        logger.info("LLM Guard BanTopics scanner initialized")
+                    except Exception:
+                        logger.warning("Failed to initialize LLM Guard BanTopics scanner", exc_info=True)
 
     def scan(self, text: str) -> LLMGuardResult:
         """Run all enabled LLM Guard scanners on the input text.

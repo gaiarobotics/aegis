@@ -19,6 +19,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+# Regex for validating agent IDs: starts with a word char, then up to 127
+# word-chars / hyphens / dots / @ / colons.  Rejects shell metacharacters,
+# SQL fragments, and excessively long identifiers.
+_VALID_AGENT_ID = re.compile(r"^[\w][\w\-\.@:]{0,127}$")
+
 
 @dataclass
 class SpeakerInfo:
@@ -68,9 +73,12 @@ def _extract_metadata(msg: dict[str, Any]) -> SpeakerInfo | None:
     for fld in _METADATA_FIELDS:
         val = msg.get(fld)
         if isinstance(val, str) and val.strip():
+            agent_id = val.strip()
+            if not _VALID_AGENT_ID.match(agent_id):
+                continue
             return SpeakerInfo(
-                agent_id=val.strip(),
-                confidence=1.0,
+                agent_id=agent_id,
+                confidence=0.85,
                 tier=0,
                 source_field=fld,
             )

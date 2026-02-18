@@ -183,7 +183,11 @@ class Scanner:
         if ml_score is None:
             if len(heuristic_scores) > 1:
                 avg = sum(heuristic_scores) / len(heuristic_scores)
-                return min(heuristic_max * 0.7 + avg * 0.3, 1.0)
+                combined = min(heuristic_max * 0.7 + avg * 0.3, 1.0)
+                # Boost when multiple heuristic detectors agree
+                if all(s > 0.5 for s in heuristic_scores):
+                    combined = min(combined + 0.05, 1.0)
+                return combined
             return heuristic_max
 
         # Both ML and heuristic — ML gets higher weight

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,17 +28,25 @@ class DriftDetector:
         self._threshold: float = config.get("drift_threshold", 2.5)
 
     def check_drift(
-        self, fingerprint: BehaviorFingerprint, event: BehaviorEvent
+        self,
+        fingerprint: BehaviorFingerprint,
+        event: BehaviorEvent,
+        baseline: BehaviorFingerprint | None = None,
     ) -> DriftResult:
         """Check if a new event drifts from the established fingerprint.
 
         Computes per-dimension z-scores and flags anomalies beyond the threshold.
+
+        If *baseline* is provided (e.g. an anchor fingerprint), it is used as
+        the reference instead of *fingerprint* for drift comparison.
         """
+        ref = baseline if baseline is not None else fingerprint
+
         per_dimension_scores: dict[str, float] = {}
         anomalous_dimensions: list[str] = []
         new_tools: list[str] = []
 
-        dims = fingerprint.dimensions
+        dims = ref.dimensions
 
         # --- output_length z-score ---
         ol = dims.get("output_length", {"mean": 0.0, "std": 0.0})
@@ -49,20 +58,17 @@ class DriftDetector:
         if ol_sigma > self._threshold:
             anomalous_dimensions.append("output_length")
 
-        # --- content_type ratio z-score ---
-        # Check if the event's content_type ratio deviates from established ratios
+        # --- content_type ratio z-score (Bernoulli) ---
         cr = dims.get("content_ratios", {})
-        event_ct = event.content_type
-        # Expected ratio for this content type (0 if never seen)
-        expected_ratio = cr.get(event_ct, 0.0)
-        # For a single event, the "value" is 1.0 (this event is 100% that type)
-        # The deviation is |1.0 - expected_ratio|; we normalize roughly
-        # We use a simple approach: if the content_type is new (ratio 0), flag it
-        if expected_ratio == 0.0 and len(cr) > 0:
-            ct_sigma = self._threshold + 1.0  # force flag
-        else:
-            # Not anomalous for content type alone
-            ct_sigma = 0.0
+        current_cr = fingerprint.dimensions.get("content_ratios", {})
+        ct_sigma = 0.0
+        if cr:
+            # Compare text_ratio between current fingerprint and baseline
+            baseline_text_ratio = cr.get("text", 0.0)
+            current_text_ratio = current_cr.get("text", 0.0)
+            p = baseline_text_ratio
+            std = math.sqrt(p * (1 - p)) if 0 < p < 1 else 0.01
+            ct_sigma = abs(current_text_ratio - p) / std if std > 0 else 0.0
         per_dimension_scores["content_ratios"] = ct_sigma
         if ct_sigma > self._threshold:
             anomalous_dimensions.append("content_ratios")
@@ -72,6 +78,23 @@ class DriftDetector:
         if event.tool_used is not None:
             if event.tool_used not in td:
                 new_tools.append(event.tool_used)
+
+        # --- tool distribution ratio z-score ---
+        current_td = fingerprint.dimensions.get("tool_distribution", {})
+        sample_count = fingerprint.event_count
+        td_sigma = 0.0
+        for tool, current_ratio in current_td.items():
+            if tool in td:
+                baseline_ratio = td[tool]
+                p = baseline_ratio
+                n = max(sample_count, 1)
+                std = math.sqrt(p * (1 - p) / n) if 0 < p < 1 else 0.01
+                sigma = abs(current_ratio - p) / std if std > 0 else 0.0
+                if sigma > td_sigma:
+                    td_sigma = sigma
+        per_dimension_scores["tool_distribution"] = td_sigma
+        if td_sigma > self._threshold:
+            anomalous_dimensions.append("tool_distribution")
 
         # --- is_drifting ---
         max_sigma = max(per_dimension_scores.values()) if per_dimension_scores else 0.0

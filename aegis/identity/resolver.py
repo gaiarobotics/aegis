@@ -43,13 +43,13 @@ class IdentityResolver:
         aliases: Optional initial alias mapping ``{raw: canonical}``.
         auto_learn: If True, the first normalized form seen for a new
             canonical root becomes the canonical, and subsequent variants
-            are auto-aliased.  Defaults to True.
+            are auto-aliased.  Defaults to False.
     """
 
     def __init__(
         self,
         aliases: dict[str, str] | None = None,
-        auto_learn: bool = True,
+        auto_learn: bool = False,
     ) -> None:
         # canonical → canonical (identity), raw_variant → canonical
         self._aliases: dict[str, str] = {}
@@ -155,7 +155,7 @@ class IdentityResolver:
         Only matches if exactly one canonical is within distance 1,
         to avoid ambiguous merges.
         """
-        if len(normalized) < 3:
+        if len(normalized) < 5:
             # Too short for reliable fuzzy matching
             return None
 

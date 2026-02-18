@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +17,7 @@ class MemoryEntry:
     provenance: str
     ttl: int | None  # hours
     timestamp: float
+    entry_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
 @dataclass

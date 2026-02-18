@@ -6,13 +6,13 @@ from aegis.skills.loader import LoadResult, SkillLoader
 from aegis.skills.manifest import SkillManifest
 
 
-def _make_manifest(name="test-skill", version="1.0.0"):
+def _make_manifest(name="test-skill", version="1.0.0", hashes=None):
     """Helper to build a valid SkillManifest."""
     return SkillManifest(
         name=name,
         version=version,
         publisher="test-pub",
-        hashes={"main.py": "placeholder"},
+        hashes=hashes if hashes is not None else {"skill.py": "placeholder"},
         signature=None,
         capabilities={
             "network": False,
@@ -157,3 +157,71 @@ class TestIncubationMode:
         result = loader.load_skill(str(skill_file), manifest)
 
         assert result.incubation is False
+
+
+class TestPathContainment:
+    def test_path_outside_base_rejected(self, tmp_path):
+        """Skills outside the skills_base_dir should be rejected."""
+        import os
+        import tempfile
+        code = "def safe():\n    return 1\n"
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write(code)
+            outside_path = f.name
+
+        base_dir = str(tmp_path / "skills")
+        (tmp_path / "skills").mkdir()
+        config = {"skills_base_dir": base_dir}
+        loader = SkillLoader(config=config)
+        result = loader.load_skill(outside_path, _make_manifest())
+        assert result.approved is False
+        assert "outside" in result.reason.lower()
+        os.unlink(outside_path)
+
+    def test_path_inside_base_accepted(self, tmp_path):
+        """Skills inside the skills_base_dir should be accepted."""
+        code = "def safe():\n    return 1\n"
+        base_dir = tmp_path / "skills"
+        base_dir.mkdir()
+        skill_file = base_dir / "main.py"
+        skill_file.write_text(code)
+
+        config = {"skills_base_dir": str(base_dir)}
+        loader = SkillLoader(config=config)
+        result = loader.load_skill(str(skill_file), _make_manifest())
+        assert result.approved is True
+
+
+class TestHashVerificationInLoader:
+    def test_hash_mismatch_rejected(self, tmp_path):
+        """Skill file with hash mismatch should be rejected."""
+        code = "def safe():\n    return 1\n"
+        skill_file = tmp_path / "main.py"
+        skill_file.write_text(code)
+
+        manifest = SkillManifest(
+            name="test-skill", version="1.0.0", publisher="pub",
+            hashes={"main.py": "wrong_hash_value"},
+            signature=None, capabilities={}, secrets=[], budgets=None, sandbox=True,
+        )
+        loader = SkillLoader()
+        result = loader.load_skill(str(skill_file), manifest)
+        assert result.approved is False
+        assert "hash mismatch" in result.reason.lower()
+
+    def test_hash_match_accepted(self, tmp_path):
+        """Skill file with correct hash should be accepted."""
+        import hashlib
+        code = "def safe():\n    return 1\n"
+        expected_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        skill_file = tmp_path / "main.py"
+        skill_file.write_text(code)
+
+        manifest = SkillManifest(
+            name="test-skill", version="1.0.0", publisher="pub",
+            hashes={"main.py": expected_hash},
+            signature=None, capabilities={}, secrets=[], budgets=None, sandbox=True,
+        )
+        loader = SkillLoader()
+        result = loader.load_skill(str(skill_file), manifest)
+        assert result.approved is True

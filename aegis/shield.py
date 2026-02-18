@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from aegis.core import killswitch
 from aegis.core.config import AegisConfig, load_config
 from aegis.core.telemetry import TelemetryLogger
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -115,14 +118,14 @@ class Shield:
                 from aegis.scanner import Scanner
                 self._scanner = Scanner(config=self._config)
             except Exception:
-                pass
+                logger.debug("Scanner module init failed", exc_info=True)
 
         if self._config.is_module_enabled("broker"):
             try:
                 from aegis.broker import Broker
                 self._broker = Broker(config=self._config)
             except Exception:
-                pass
+                logger.debug("Broker module init failed", exc_info=True)
 
         if self._config.is_module_enabled("identity"):
             try:
@@ -136,7 +139,7 @@ class Shield:
                     auto_learn=resolver_cfg.get("auto_learn", True),
                 )
             except Exception:
-                pass
+                logger.debug("Identity module init failed", exc_info=True)
 
         if self._config.is_module_enabled("behavior"):
             try:
@@ -144,14 +147,14 @@ class Shield:
                 self._behavior_tracker = BehaviorTracker(config=self._config.behavior)
                 self._drift_detector = DriftDetector(config=self._config.behavior)
             except Exception:
-                pass
+                logger.debug("Behavior module init failed", exc_info=True)
 
         if self._config.is_module_enabled("memory"):
             try:
                 from aegis.memory import MemoryGuard
                 self._memory_guard = MemoryGuard(config=self._config.memory, scanner=self._scanner)
             except Exception:
-                pass
+                logger.debug("Memory module init failed", exc_info=True)
 
         if self._config.is_module_enabled("recovery"):
             try:
@@ -159,7 +162,7 @@ class Shield:
                 self._recovery_quarantine = RecoveryQuarantine(config=self._config.recovery)
                 self._context_rollback = ContextRollback()
             except Exception:
-                pass
+                logger.debug("Recovery module init failed", exc_info=True)
 
     def _init_monitoring(self) -> None:
         """Initialize monitoring client if enabled."""
@@ -190,6 +193,7 @@ class Shield:
 
             self._monitoring_client.start()
         except Exception:
+            logger.debug("Monitoring client init failed", exc_info=True)
             self._monitoring_client = None
 
     def _on_compromise_reported(self, agent_id: str) -> None:
@@ -207,7 +211,7 @@ class Shield:
                 nk_verdict=nk_info.get("nk_verdict", ""),
             )
         except Exception:
-            pass
+            logger.debug("Compromise report sending failed", exc_info=True)
 
     @property
     def config(self) -> AegisConfig:
@@ -281,7 +285,7 @@ class Shield:
                 if verdict.verdict == "hostile":
                     result.is_threat = True
             except Exception:
-                pass
+                logger.debug("NK cell assessment failed", exc_info=True)
 
         # Step 3: Recovery auto-quarantine check
         if self._recovery_quarantine is not None and result.is_threat:
@@ -296,7 +300,7 @@ class Shield:
                     )
                     self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
                 except Exception:
-                    pass
+                    logger.debug("Recovery auto-quarantine failed", exc_info=True)
 
         # Monitoring reporting
         if self._monitoring_client is not None:
@@ -321,7 +325,7 @@ class Shield:
                             nk_verdict=nk_verdict,
                         )
             except Exception:
-                pass
+                logger.debug("Monitoring threat event reporting failed", exc_info=True)
 
         # Log telemetry
         self._telemetry.log_event(
@@ -353,7 +357,7 @@ class Shield:
                     getattr(action_request, "source_provenance", None) or "unknown"
                 )
             except Exception:
-                pass
+                logger.debug("Trust tier lookup failed", exc_info=True)
 
         response = self._broker.evaluate(action_request, trust_tier=trust_tier)
 
@@ -455,8 +459,17 @@ class Shield:
         """Wrap an LLM client with AEGIS protection.
 
         Returns a wrapped client that intercepts API calls for scanning,
-        action brokering, and output sanitization.
+        action brokering, and output sanitization.  Automatically selects
+        the appropriate provider wrapper based on the client's module.
         """
-        from aegis.providers.base import BaseWrapper
-        wrapper = BaseWrapper(shield=self)
+        client_module = type(client).__module__ or ""
+        if "anthropic" in client_module:
+            from aegis.providers.anthropic import AnthropicWrapper
+            wrapper = AnthropicWrapper(shield=self)
+        elif "openai" in client_module:
+            from aegis.providers.openai import OpenAIWrapper
+            wrapper = OpenAIWrapper(shield=self)
+        else:
+            from aegis.providers.generic import GenericWrapper
+            wrapper = GenericWrapper(shield=self)
         return wrapper.wrap(client, tools=tools)

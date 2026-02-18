@@ -7,6 +7,7 @@ agent is behaving normally or exhibiting signs of compromise.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -133,6 +134,14 @@ class NKCell:
         Returns:
             An NKVerdict with score, verdict, action, and signal details.
         """
+        # Guard against NaN/inf values in context fields
+        if math.isnan(context.drift_sigma) or math.isinf(context.drift_sigma):
+            context.drift_sigma = 0.0
+        if math.isnan(context.clean_interaction_ratio) or math.isinf(context.clean_interaction_ratio):
+            context.clean_interaction_ratio = 0.0
+        if math.isnan(context.scanner_threat_score) or math.isinf(context.scanner_threat_score):
+            context.scanner_threat_score = 0.0
+
         activating = self._compute_activating_signals(context)
         inhibitory = self._compute_inhibitory_signals(context)
 

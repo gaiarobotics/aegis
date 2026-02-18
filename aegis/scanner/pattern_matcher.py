@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re as _re
+import unicodedata
 from dataclasses import dataclass
 
 from aegis.scanner.signatures import Signature
@@ -46,6 +48,12 @@ class PatternMatcher:
             List of ThreatMatch objects for patterns that matched
             and passed the sensitivity threshold.
         """
+        # Unicode normalization to prevent evasion via confusable characters
+        text = unicodedata.normalize("NFC", text)
+        text = text.replace("\u00a0", " ")       # NBSP → space
+        text = text.replace("\u00ad", "")         # soft hyphen → removed
+        text = _re.sub(r"[\uFE00-\uFE0F]", "", text)  # variation selectors
+
         matches: list[ThreatMatch] = []
 
         for sig in self._signatures:
@@ -53,13 +61,11 @@ class PatternMatcher:
             if match is None:
                 continue
 
-            matched_text = match.group(0)
+            matched_text = match.group(0)[:200]
 
-            # Confidence is based on severity and match quality
-            # Longer matches relative to text length boost confidence slightly
-            match_ratio = min(len(matched_text) / max(len(text), 1), 1.0)
-            confidence = sig.severity * (0.7 + 0.3 * match_ratio)
-            confidence = min(confidence, 1.0)
+            # Confidence equals severity — a match is a match regardless of
+            # surrounding text length (prevents dilution via padding attacks).
+            confidence = sig.severity
 
             # Filter by sensitivity threshold
             if confidence < self._sensitivity:

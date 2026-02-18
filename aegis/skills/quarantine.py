@@ -56,7 +56,7 @@ class _DangerousPatternVisitor(ast.NodeVisitor):
         func = node.func
 
         # Direct call: exec(...) or eval(...)
-        if isinstance(func, ast.Name) and func.id in ("exec", "eval"):
+        if isinstance(func, ast.Name) and func.id in ("exec", "eval", "compile"):
             self.findings.append(
                 AnalysisFinding(
                     pattern=func.id,
@@ -138,6 +138,40 @@ class _DangerousPatternVisitor(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+    # -- import / from ... import of dangerous modules --------------------
+    _DANGEROUS_IMPORT_MODULES = frozenset({
+        "subprocess", "os", "shutil", "ctypes", "socket",
+        "pickle", "importlib", "marshal",
+    })
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            top = alias.name.split(".")[0]
+            if top in self._DANGEROUS_IMPORT_MODULES:
+                self.findings.append(
+                    AnalysisFinding(
+                        pattern=f"import {alias.name}",
+                        description=f"Import of dangerous module: {alias.name}",
+                        severity=_SEVERITY_DUNDER_IMPORT,
+                        line_number=node.lineno,
+                    )
+                )
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module:
+            top = node.module.split(".")[0]
+            if top in self._DANGEROUS_IMPORT_MODULES:
+                self.findings.append(
+                    AnalysisFinding(
+                        pattern=f"from {node.module} import ...",
+                        description=f"Import from dangerous module: {node.module}",
+                        severity=_SEVERITY_DUNDER_IMPORT,
+                        line_number=node.lineno,
+                    )
+                )
+        self.generic_visit(node)
+
 
 def _analyze_python(code: str) -> list[AnalysisFinding]:
     """Analyze Python code using the ast module."""
@@ -148,7 +182,7 @@ def _analyze_python(code: str) -> list[AnalysisFinding]:
             AnalysisFinding(
                 pattern="syntax_error",
                 description="Code could not be parsed (syntax error)",
-                severity=0.2,
+                severity=0.5,
                 line_number=None,
             )
         ]
@@ -221,7 +255,18 @@ def analyze_code(code: str, language: str = "python") -> AnalysisResult:
     elif language == "shell":
         findings = _analyze_shell(code)
     else:
-        findings = []
+        return AnalysisResult(
+            findings=[
+                AnalysisFinding(
+                    pattern="unknown_language",
+                    description=f"Unknown language: {language}",
+                    severity=1.0,
+                    line_number=None,
+                )
+            ],
+            risk_score=1.0,
+            safe=False,
+        )
 
     risk_score = min(sum(f.severity for f in findings), 1.0)
     has_high_severity = any(f.severity >= _HIGH_SEVERITY_THRESHOLD for f in findings)

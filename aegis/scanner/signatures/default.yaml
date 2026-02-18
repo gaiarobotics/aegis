@@ -74,7 +74,7 @@ signatures:
 
   - id: IO-003
     category: instruction_override
-    pattern: "(?i)IMPORTANT\\s*:.*(?:must|always|never|override|ignore)"
+    pattern: "(?i)IMPORTANT\\s*:[^\\n]*(?:must|always|never|override|ignore)"
     severity: 0.75
     description: "Imperative override with authority markers"
 
@@ -87,7 +87,7 @@ signatures:
   # --- Data Exfiltration ---
   - id: DE-001
     category: data_exfiltration
-    pattern: "(?i)(send|post|upload|transmit|exfiltrate)\\s+.{0,30}(data|info|content|password|key|secret|token)\\s+to\\s+"
+    pattern: "(?i)(send|post|upload|transmit|exfiltrate)\\s+[^\\n]{0,30}?(data|info|content|password|key|secret|token)\\s+to\\s+"
     severity: 0.9
     description: "Data exfiltration instruction"
 
@@ -125,7 +125,7 @@ signatures:
   # --- Memory Poisoning ---
   - id: MP-001
     category: memory_poisoning
-    pattern: "(?i)(?:remember|memorize|store|save|record)\\s+(?:this|that|the\\s+following)\\s*:.*(?:always|never|must|override|ignore)"
+    pattern: "(?i)(?:remember|memorize|store|save|record)\\s+(?:this|that|the\\s+following)\\s*:[^\\n]*(?:always|never|must|override|ignore)"
     severity: 0.85
     description: "Persistent instruction injection via memory"
 
@@ -156,7 +156,7 @@ signatures:
 
   - id: SE-003
     category: social_engineering
-    pattern: "(?i)(?:urgent|emergency|critical|life.?threatening)\\s*[!:,].*(?:ignore|bypass|skip|disable)\\s+(?:safety|security|rules|restrictions)"
+    pattern: "(?i)(?:urgent|emergency|critical|life.?threatening)\\s*[!:,][^\\n]*(?:ignore|bypass|skip|disable)\\s+(?:safety|security|rules|restrictions)"
     severity: 0.8
     description: "Urgency-based safety bypass"
 

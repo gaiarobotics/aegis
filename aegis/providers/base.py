@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import warnings
 from typing import Any
 
 from aegis.core import killswitch
+
+logger = logging.getLogger(__name__)
 
 
 def _record_trust_for_messages(shield: Any, messages: list[dict[str, Any]], clean: bool) -> None:
@@ -21,7 +25,7 @@ def _record_trust_for_messages(shield: Any, messages: list[dict[str, Any]], clea
                 agent_id, clean=clean, anomaly=not clean,
             )
     except Exception:
-        pass  # Never disrupt the call path
+        logger.debug("Trust recording failed", exc_info=True)
 
 
 def _extract_user_text(messages: list[dict[str, Any]]) -> str:
@@ -103,7 +107,18 @@ class WrappedClient:
 
     @property
     def original(self) -> Any:
-        """Access the unwrapped original client."""
+        """Access the unwrapped original client.
+
+        .. deprecated::
+            Use the wrapped client directly instead.  Access to the
+            unwrapped client bypasses all AEGIS protections.
+        """
+        warnings.warn(
+            "WrappedClient.original is deprecated. "
+            "Accessing the unwrapped client bypasses AEGIS protections.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._client
 
     def __getattr__(self, name: str) -> Any:

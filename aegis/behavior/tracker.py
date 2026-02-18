@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +23,12 @@ class BehaviorEvent:
     content_type: str  # "text", "code", "url", "structured"
     target: str | None
 
+    def __post_init__(self):
+        if self.timestamp < 0:
+            raise ValueError("BehaviorEvent timestamp must be non-negative")
+        if self.output_length < 0:
+            raise ValueError("BehaviorEvent output_length must be non-negative")
+
 
 @dataclass
 class BehaviorFingerprint:
@@ -38,18 +45,58 @@ class BehaviorTracker:
     def __init__(self, config: dict[str, Any] | None = None):
         config = config or {}
         self._window_size: int = config.get("window_size", 100)
+        self._max_agents: int = config.get("max_tracked_agents", 10000)
+        self._anchor_window: int = config.get("anchor_window", 20)
         self._events: dict[str, deque[BehaviorEvent]] = {}
+        self._anchor_fingerprints: dict[str, BehaviorFingerprint] = {}
+        self._event_counts: dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def record_event(self, event: BehaviorEvent) -> None:
-        """Add an event to the per-agent rolling window."""
-        agent_id = event.agent_id
-        if agent_id not in self._events:
-            self._events[agent_id] = deque(maxlen=self._window_size)
-        self._events[agent_id].append(event)
+        """Add an event to the per-agent rolling window.
+
+        Events are rejected if the number of tracked agents has reached
+        ``max_tracked_agents`` and the event comes from a new agent.
+
+        After ``anchor_window`` events for an agent, the fingerprint is
+        frozen as an immutable anchor baseline.
+        """
+        with self._lock:
+            agent_id = event.agent_id
+            if agent_id not in self._events:
+                if len(self._events) >= self._max_agents:
+                    return
+                self._events[agent_id] = deque(maxlen=self._window_size)
+                self._event_counts[agent_id] = 0
+            self._events[agent_id].append(event)
+            self._event_counts[agent_id] = self._event_counts.get(agent_id, 0) + 1
+
+            # Freeze anchor after anchor_window events (only once)
+            if (
+                agent_id not in self._anchor_fingerprints
+                and self._event_counts[agent_id] >= self._anchor_window
+            ):
+                # Release lock temporarily to compute fingerprint
+                events_snapshot = list(self._events[agent_id])
+                # We need to compute the fingerprint without holding the lock,
+                # but since we're inside the lock, we compute inline.
+                anchor = self._compute_fingerprint(events_snapshot)
+                self._anchor_fingerprints[agent_id] = anchor
 
     def get_fingerprint(self, agent_id: str) -> BehaviorFingerprint:
         """Compute the current behavioral fingerprint for an agent."""
-        events = list(self._events.get(agent_id, []))
+        with self._lock:
+            events = list(self._events.get(agent_id, []))
+        return self._compute_fingerprint(events)
+
+    def get_anchor(self, agent_id: str) -> BehaviorFingerprint | None:
+        """Return the frozen anchor fingerprint for an agent, or None."""
+        with self._lock:
+            return self._anchor_fingerprints.get(agent_id)
+
+    @staticmethod
+    def _compute_fingerprint(events: list[BehaviorEvent]) -> BehaviorFingerprint:
+        """Compute a behavioral fingerprint from a list of events."""
         event_count = len(events)
 
         dimensions: dict[str, dict[str, Any]] = {}

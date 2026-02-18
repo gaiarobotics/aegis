@@ -1,0 +1,155 @@
+"""Tests for AEGIS prompt envelope."""
+
+from aegis.scanner.envelope import (
+    HIERARCHY_DISCLAIMER,
+    INSTRUCTION_HIERARCHY,
+    SOCIAL_CONTENT,
+    TOOL_OUTPUT,
+    TRUSTED_OPERATOR,
+    TRUSTED_SYSTEM,
+    PromptEnvelope,
+)
+
+
+class TestDefaultWrapping:
+    def test_system_message_gets_trusted_system_tag(self):
+        envelope = PromptEnvelope()
+        messages = [{"role": "system", "content": "You are a helpful assistant."}]
+        wrapped = envelope.wrap_messages(messages)
+        # First message is the hierarchy disclaimer
+        system_msgs = [m for m in wrapped if TRUSTED_SYSTEM in m.get("content", "")]
+        assert len(system_msgs) > 0
+
+    def test_user_message_gets_social_content_tag(self):
+        envelope = PromptEnvelope()
+        messages = [{"role": "user", "content": "Hello there."}]
+        wrapped = envelope.wrap_messages(messages)
+        user_msgs = [m for m in wrapped if SOCIAL_CONTENT in m.get("content", "")]
+        assert len(user_msgs) > 0
+
+    def test_tool_message_gets_tool_output_tag(self):
+        envelope = PromptEnvelope()
+        messages = [{"role": "tool", "content": '{"result": 42}'}]
+        wrapped = envelope.wrap_messages(messages)
+        tool_msgs = [m for m in wrapped if TOOL_OUTPUT in m.get("content", "")]
+        assert len(tool_msgs) > 0
+
+    def test_hierarchy_disclaimer_prepended(self):
+        envelope = PromptEnvelope()
+        messages = [{"role": "user", "content": "Hello."}]
+        wrapped = envelope.wrap_messages(messages)
+        assert len(wrapped) > len(messages)
+        assert INSTRUCTION_HIERARCHY in wrapped[0]["content"]
+
+    def test_hierarchy_disclaimer_not_duplicated(self):
+        envelope = PromptEnvelope()
+        messages = [{"role": "user", "content": "Hello."}]
+        wrapped = envelope.wrap_messages(messages)
+        # Wrap again to ensure no duplication
+        disclaimer_count = sum(
+            1 for m in wrapped if INSTRUCTION_HIERARCHY in m.get("content", "")
+        )
+        assert disclaimer_count == 1
+
+
+class TestProvenanceMap:
+    def test_index_based_provenance(self):
+        envelope = PromptEnvelope()
+        messages = [
+            {"role": "user", "content": "Trusted input."},
+            {"role": "user", "content": "Untrusted input."},
+        ]
+        provenance_map = {0: TRUSTED_OPERATOR}
+        wrapped = envelope.wrap_messages(messages, provenance_map=provenance_map)
+        # Message at index 0 should have TRUSTED_OPERATOR
+        # Exclude the hierarchy disclaimer (which mentions all tags in its description)
+        tagged_msgs = [
+            m for m in wrapped
+            if TRUSTED_OPERATOR in m.get("content", "")
+            and INSTRUCTION_HIERARCHY not in m.get("content", "")
+        ]
+        assert len(tagged_msgs) == 1
+
+    def test_role_based_provenance(self):
+        envelope = PromptEnvelope()
+        messages = [
+            {"role": "user", "content": "Hello."},
+        ]
+        provenance_map = {"user": TRUSTED_OPERATOR}
+        wrapped = envelope.wrap_messages(messages, provenance_map=provenance_map)
+        # Exclude the hierarchy disclaimer (which mentions all tags in its description)
+        tagged_msgs = [
+            m for m in wrapped
+            if TRUSTED_OPERATOR in m.get("content", "")
+            and INSTRUCTION_HIERARCHY not in m.get("content", "")
+        ]
+        assert len(tagged_msgs) == 1
+
+    def test_index_takes_precedence_over_role(self):
+        envelope = PromptEnvelope()
+        messages = [
+            {"role": "user", "content": "Hello."},
+        ]
+        provenance_map = {0: TRUSTED_SYSTEM, "user": TOOL_OUTPUT}
+        wrapped = envelope.wrap_messages(messages, provenance_map=provenance_map)
+        # The message at index 0 should use the index-based mapping (TRUSTED_SYSTEM)
+        content_with_trusted = [m for m in wrapped if TRUSTED_SYSTEM in m.get("content", "") and "Hello" in m.get("content", "")]
+        assert len(content_with_trusted) == 1
+
+
+class TestDisabledEnvelope:
+    def test_disabled_returns_messages_unchanged(self):
+        envelope = PromptEnvelope(config={"prompt_envelope": False})
+        messages = [
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "Hello."},
+        ]
+        wrapped = envelope.wrap_messages(messages)
+        assert len(wrapped) == 2
+        assert wrapped[0]["content"] == "Be helpful."
+        assert wrapped[1]["content"] == "Hello."
+
+    def test_disabled_no_hierarchy_disclaimer(self):
+        envelope = PromptEnvelope(config={"prompt_envelope": False})
+        messages = [{"role": "user", "content": "Hello."}]
+        wrapped = envelope.wrap_messages(messages)
+        for msg in wrapped:
+            assert INSTRUCTION_HIERARCHY not in msg.get("content", "")
+
+    def test_enabled_property(self):
+        enabled = PromptEnvelope()
+        assert enabled.enabled is True
+        disabled = PromptEnvelope(config={"prompt_envelope": False})
+        assert disabled.enabled is False
+
+
+class TestOriginalMessagesNotMutated:
+    def test_original_messages_not_modified(self):
+        envelope = PromptEnvelope()
+        messages = [
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "Hello."},
+        ]
+        original_content = [m["content"] for m in messages]
+        envelope.wrap_messages(messages)
+        for i, msg in enumerate(messages):
+            assert msg["content"] == original_content[i]
+
+
+class TestMultipleMessages:
+    def test_multi_turn_conversation(self):
+        envelope = PromptEnvelope()
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "What is 2+2?"},
+            {"role": "assistant", "content": "4"},
+            {"role": "user", "content": "Thanks!"},
+        ]
+        wrapped = envelope.wrap_messages(messages)
+        # Should have disclaimer + original messages
+        assert len(wrapped) == len(messages) + 1
+
+    def test_empty_messages_list(self):
+        envelope = PromptEnvelope()
+        wrapped = envelope.wrap_messages([])
+        assert wrapped == []

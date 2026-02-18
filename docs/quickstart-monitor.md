@@ -15,7 +15,7 @@ From the repository root, install both packages in development mode:
 
 ```bash
 # SDK (from repo root)
-pip install -e ".[coordination,dev]"
+pip install -e ".[monitoring,dev]"
 
 # Monitor (separate package)
 cd aegis-monitor
@@ -23,7 +23,7 @@ pip install -e ".[dev]"
 cd ..
 ```
 
-The `coordination` extra pulls in `httpx` for the SDK's HTTP client. The monitor's `[dev]` extra includes `pytest`, `httpx` (for tests), and the core deps (FastAPI, uvicorn, networkx, numpy, websockets).
+The `monitoring` extra pulls in `httpx` for the SDK's HTTP client. The monitor's `[dev]` extra includes `pytest`, `httpx` (for tests), and the core deps (FastAPI, uvicorn, networkx, numpy, websockets).
 
 If you want ML-based attack strain clustering, also install the ML extras:
 
@@ -69,27 +69,27 @@ When `api_keys` is empty (the default), the monitor runs in **open mode** — al
 
 ## 3. Connect an Agent
 
-Back in the repo root, enable coordination on an AEGIS-protected agent. There are three ways:
+Back in the repo root, enable monitoring on an AEGIS-protected agent. There are three ways:
 
 ### Option A: Environment variables (fastest)
 
 ```bash
-AEGIS_COORDINATION_ENABLED=true \
-AEGIS_COORDINATION_SERVICE_URL=http://localhost:8080/api/v1 \
-AEGIS_COORDINATION_API_KEY=my-secret-key \
+AEGIS_MONITORING_ENABLED=true \
+AEGIS_MONITORING_SERVICE_URL=http://localhost:8080/api/v1 \
+AEGIS_MONITORING_API_KEY=my-secret-key \
 python examples/multi_agent_defense.py
 ```
 
 ### Option B: Config file
 
-Add a `coordination` section to your `aegis.yaml`:
+Add a `monitoring` section to your `aegis.yaml`:
 
 ```yaml
 mode: enforce
 agent_id: chatbot-1
 operator_id: my-org
 
-coordination:
+monitoring:
   enabled: true
   service_url: "http://localhost:8080/api/v1"
   api_key: "my-secret-key"
@@ -115,9 +115,9 @@ cfg = AegisConfig(
     agent_id="researcher-1",
     operator_id="my-org",
 )
-cfg.coordination["enabled"] = True
-cfg.coordination["service_url"] = "http://localhost:8080/api/v1"
-cfg.coordination["api_key"] = "my-secret-key"
+cfg.monitoring["enabled"] = True
+cfg.monitoring["service_url"] = "http://localhost:8080/api/v1"
+cfg.monitoring["api_key"] = "my-secret-key"
 
 shield = Shield(config=cfg)
 # The shield automatically starts a background heartbeat thread
@@ -138,9 +138,9 @@ uvicorn monitor.app:app --port 8080
 
 **Terminal 2 — Agent network:**
 ```bash
-AEGIS_COORDINATION_ENABLED=true \
-AEGIS_COORDINATION_SERVICE_URL=http://localhost:8080/api/v1 \
-AEGIS_COORDINATION_API_KEY=test-key \
+AEGIS_MONITORING_ENABLED=true \
+AEGIS_MONITORING_SERVICE_URL=http://localhost:8080/api/v1 \
+AEGIS_MONITORING_API_KEY=test-key \
 python examples/multi_agent_defense.py
 ```
 
@@ -163,7 +163,7 @@ Click any node to see its trust tier, score, and at-risk neighbors.
 
 ## 5. What Gets Reported
 
-The coordination layer sends **metadata only** — no user content ever leaves the agent:
+The monitoring layer sends **metadata only** — no user content ever leaves the agent:
 
 | Report type | When sent | Fields |
 |---|---|---|

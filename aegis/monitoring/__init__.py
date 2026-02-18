@@ -1,7 +1,7 @@
-"""AEGIS coordination — opt-in reporting of trust and threat events."""
+"""AEGIS monitoring — opt-in reporting of trust and threat events."""
 
-from aegis.coordination.client import CoordinationClient
-from aegis.coordination.reports import (
+from aegis.monitoring.client import MonitoringClient
+from aegis.monitoring.reports import (
     AgentHeartbeat,
     CompromiseReport,
     ReportBase,
@@ -10,7 +10,7 @@ from aegis.coordination.reports import (
 )
 
 __all__ = [
-    "CoordinationClient",
+    "MonitoringClient",
     "ReportBase",
     "CompromiseReport",
     "TrustReport",

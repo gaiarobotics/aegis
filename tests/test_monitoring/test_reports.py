@@ -1,6 +1,6 @@
-"""Tests for coordination report data structures."""
+"""Tests for monitoring report data structures."""
 
-from aegis.coordination.reports import (
+from aegis.monitoring.reports import (
     AgentHeartbeat,
     CompromiseReport,
     ReportBase,

@@ -37,7 +37,7 @@ AEGIS layers seven independent defense mechanisms so that bypassing any single o
 | **Behavior** | Fingerprints agent behavior and detects drift from baseline |
 | **Memory** | Guards against memory poisoning with category restrictions and taint tracking |
 | **Recovery** | Auto-quarantines compromised agents and rolls back to known-good state |
-| **Coordination** | Optional reporting to a central monitoring service for network-wide visibility |
+| **Monitoring** | Optional reporting to a central monitoring service for network-wide visibility |
 
 ## Modes
 
@@ -67,7 +67,7 @@ client = aegis.wrap(my_client, mode="enforce")
 ```bash
 pip install aegis-shield[identity]      # Ed25519 attestation
 pip install aegis-shield[ml]            # ML-based scanning (uses LLM Guard)
-pip install aegis-shield[coordination]  # Remote monitoring service
+pip install aegis-shield[monitoring]    # Remote monitoring service
 pip install aegis-shield[all]           # Everything
 ```
 

@@ -17,8 +17,8 @@ pip install aegis-shield[identity]
 # ML-based scanning (transformer models)
 pip install aegis-shield[ml]
 
-# Remote coordination service
-pip install aegis-shield[coordination]
+# Remote monitoring service
+pip install aegis-shield[monitoring]
 
 # Everything
 pip install aegis-shield[all]
@@ -619,17 +619,17 @@ When enabled, ML classifiers run alongside regex and heuristic scanning. The fin
 
 </details>
 
-## Remote Coordination (Optional)
+## Remote Monitoring (Optional)
 
 For multi-agent deployments, AEGIS can report to a central monitoring service:
 
 ```bash
-pip install aegis-shield[coordination]
+pip install aegis-shield[monitoring]
 ```
 
 ```yaml
 # aegis.yaml
-coordination:
+monitoring:
   enabled: true
   service_url: "https://aegis.gaiarobotics.com/api/v1"  # or your self-hosted instance
   api_key: "your-api-key"

@@ -1,7 +1,7 @@
-"""Coordination client — opt-in reporting to a central AEGIS service.
+"""Monitoring client — opt-in reporting to a central AEGIS service.
 
 All methods are no-ops when ``enabled=False``.  All exceptions are caught
-silently so that coordination never disrupts the agent's primary work.
+silently so that monitoring never disrupts the agent's primary work.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import time
 from collections import deque
 from typing import Any
 
-from aegis.coordination.reports import (
+from aegis.monitoring.reports import (
     AgentHeartbeat,
     CompromiseReport,
     ReportBase,
@@ -24,11 +24,11 @@ from aegis.coordination.reports import (
 logger = logging.getLogger(__name__)
 
 
-class CoordinationClient:
-    """Non-blocking client that reports signed events to a coordination service.
+class MonitoringClient:
+    """Non-blocking client that reports signed events to a monitoring service.
 
     Args:
-        config: Coordination configuration dict (from ``AegisConfig.coordination``).
+        config: Monitoring configuration dict (from ``AegisConfig.monitoring``).
         agent_id: This agent's identifier.
         operator_id: The operator deploying this agent.
         keypair: Optional ``KeyPair`` for signing reports.
@@ -228,7 +228,7 @@ class CoordinationClient:
                 break  # stop on first failure
 
     def _post(self, endpoint: str, payload: dict) -> bool:
-        """POST JSON to the coordination service. Returns True on success."""
+        """POST JSON to the monitoring service. Returns True on success."""
         url = f"{self._service_url}{endpoint}"
         headers = {"Content-Type": "application/json"}
         if self._api_key:

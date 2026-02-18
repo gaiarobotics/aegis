@@ -1,4 +1,4 @@
-"""Coordination report data structures.
+"""Monitoring report data structures.
 
 Shared by the SDK client and monitor server.  Privacy guarantee is structural:
 no ``content`` or ``text`` fields exist in any report type.
@@ -15,7 +15,7 @@ from typing import Any
 
 @dataclass
 class ReportBase:
-    """Common fields for all coordination reports."""
+    """Common fields for all monitoring reports."""
 
     report_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str = ""

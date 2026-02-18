@@ -1,11 +1,11 @@
-"""Tests for the coordination client."""
+"""Tests for the monitoring client."""
 
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock, patch
 
-from aegis.coordination.client import CoordinationClient
+from aegis.monitoring.client import MonitoringClient
 from aegis.identity.attestation import generate_keypair
 
 
@@ -28,7 +28,7 @@ def _enabled_config(port=0):
 
 class TestDisabledClient:
     def test_noop_when_disabled(self):
-        client = CoordinationClient(_disabled_config(), agent_id="a1")
+        client = MonitoringClient(_disabled_config(), agent_id="a1")
         assert not client.enabled
         # These should all be no-ops (no exceptions)
         client.send_compromise_report("a2")
@@ -42,7 +42,7 @@ class TestDisabledClient:
 class TestClientSigning:
     def test_reports_are_signed(self):
         kp = generate_keypair("hmac-sha256")
-        client = CoordinationClient(
+        client = MonitoringClient(
             _enabled_config(port=1),
             agent_id="a1",
             operator_id="op1",
@@ -60,7 +60,7 @@ class TestClientSigning:
 
 class TestClientQueue:
     def test_queue_on_failure(self):
-        client = CoordinationClient(
+        client = MonitoringClient(
             _enabled_config(port=1),
             agent_id="a1",
         )
@@ -73,7 +73,7 @@ class TestClientQueue:
     def test_queue_max_size(self):
         cfg = _enabled_config(port=1)
         cfg["queue_max_size"] = 3
-        client = CoordinationClient(cfg, agent_id="a1")
+        client = MonitoringClient(cfg, agent_id="a1")
         client._post = lambda endpoint, payload: False
 
         for i in range(5):
@@ -81,7 +81,7 @@ class TestClientQueue:
         assert len(client._queue) == 3
 
     def test_flush_retries_queued(self):
-        client = CoordinationClient(
+        client = MonitoringClient(
             _enabled_config(port=1),
             agent_id="a1",
         )
@@ -118,7 +118,7 @@ class TestClientAuthHeader:
         thread.start()
 
         try:
-            client = CoordinationClient(
+            client = MonitoringClient(
                 _enabled_config(port=port),
                 agent_id="a1",
             )
@@ -136,7 +136,7 @@ class TestClientGracefulDegradation:
         cfg = _enabled_config(port=1)  # port 1 won't be listening
         cfg["retry_max_attempts"] = 1
         cfg["timeout_seconds"] = 1
-        client = CoordinationClient(cfg, agent_id="a1")
+        client = MonitoringClient(cfg, agent_id="a1")
         # Should not raise
         client.send_compromise_report("a2")
         client.send_trust_report("a2")
@@ -147,7 +147,7 @@ class TestClientGracefulDegradation:
         """Start and stop should work without errors."""
         cfg = _enabled_config(port=1)
         cfg["heartbeat_interval_seconds"] = 0.1
-        client = CoordinationClient(cfg, agent_id="a1")
+        client = MonitoringClient(cfg, agent_id="a1")
         client._post = lambda endpoint, payload: True
         client.start()
         assert client._heartbeat_thread is not None

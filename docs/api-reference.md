@@ -474,14 +474,14 @@ restored = rollback.rollback(snapshot_id)
 
 ---
 
-## Coordination
+## Monitoring
 
-### `CoordinationClient`
+### `MonitoringClient`
 
 ```python
-from aegis.coordination import CoordinationClient
+from aegis.monitoring import MonitoringClient
 
-client = CoordinationClient(
+client = MonitoringClient(
     config={"enabled": True, "service_url": "https://...", "api_key": "..."},
     agent_id="my-agent",
     operator_id="my-org",
@@ -614,7 +614,7 @@ recovery:
   quarantine_on_hostile_nk: true
   purge_window_hours: 24
 
-coordination:
+monitoring:
   enabled: false
   service_url: "https://aegis.gaiarobotics.com/api/v1"
   api_key: ""
@@ -640,6 +640,6 @@ telemetry:
 | `AEGIS_BROKER_DEFAULT_POSTURE` | `broker.default_posture` |
 | `AEGIS_BEHAVIOR_DRIFT_THRESHOLD` | `behavior.drift_threshold` |
 | `AEGIS_BEHAVIOR_WINDOW_SIZE` | `behavior.window_size` |
-| `AEGIS_COORDINATION_ENABLED` | `coordination.enabled` |
-| `AEGIS_COORDINATION_SERVICE_URL` | `coordination.service_url` |
-| `AEGIS_COORDINATION_API_KEY` | `coordination.api_key` |
+| `AEGIS_MONITORING_ENABLED` | `monitoring.enabled` |
+| `AEGIS_MONITORING_SERVICE_URL` | `monitoring.service_url` |
+| `AEGIS_MONITORING_API_KEY` | `monitoring.api_key` |

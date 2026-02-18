@@ -1,4 +1,4 @@
-"""Tests for coordination hooks in trust.py and shield.py."""
+"""Tests for monitoring hooks in trust.py and shield.py."""
 
 from unittest.mock import MagicMock, patch
 
@@ -30,37 +30,37 @@ class TestTrustCallback:
         tm.report_compromise("agent-y")
 
 
-class TestShieldCoordination:
-    def test_coordination_disabled_by_default(self):
-        """Shield should not create a coordination client when disabled."""
+class TestShieldMonitoring:
+    def test_monitoring_disabled_by_default(self):
+        """Shield should not create a monitoring client when disabled."""
         from aegis.shield import Shield
 
         shield = Shield(config=AegisConfig())
-        assert shield._coordination_client is None
+        assert shield._monitoring_client is None
 
-    def test_coordination_enabled(self):
-        """Shield should create a coordination client when enabled."""
+    def test_monitoring_enabled(self):
+        """Shield should create a monitoring client when enabled."""
         from aegis.shield import Shield
 
         cfg = AegisConfig()
-        cfg.coordination["enabled"] = True
-        cfg.coordination["service_url"] = "http://localhost:9999/api/v1"
+        cfg.monitoring["enabled"] = True
+        cfg.monitoring["service_url"] = "http://localhost:9999/api/v1"
         cfg.agent_id = "test-agent"
         cfg.operator_id = "test-op"
 
         shield = Shield(config=cfg)
-        assert shield._coordination_client is not None
-        assert shield._coordination_client.enabled
+        assert shield._monitoring_client is not None
+        assert shield._monitoring_client.enabled
         # Clean up
-        shield._coordination_client.stop()
+        shield._monitoring_client.stop()
 
     def test_shield_sends_threat_event(self):
         """scan_input should send a threat event when a threat is detected."""
         from aegis.shield import Shield
 
         cfg = AegisConfig()
-        cfg.coordination["enabled"] = True
-        cfg.coordination["service_url"] = "http://localhost:9999/api/v1"
+        cfg.monitoring["enabled"] = True
+        cfg.monitoring["service_url"] = "http://localhost:9999/api/v1"
         cfg.agent_id = "test-agent"
         cfg.modules["scanner"] = False
         cfg.modules["identity"] = False
@@ -68,11 +68,11 @@ class TestShieldCoordination:
         cfg.modules["recovery"] = False
 
         shield = Shield(config=cfg)
-        assert shield._coordination_client is not None
+        assert shield._monitoring_client is not None
 
         sent_events = []
-        shield._coordination_client.send_threat_event = lambda **kw: sent_events.append(kw)
-        shield._coordination_client.send_compromise_report = lambda **kw: None
+        shield._monitoring_client.send_threat_event = lambda **kw: sent_events.append(kw)
+        shield._monitoring_client.send_compromise_report = lambda **kw: None
 
         # Simulate a threat result by patching _scanner
         mock_scanner = MagicMock()
@@ -88,27 +88,27 @@ class TestShieldCoordination:
         assert len(sent_events) == 1
         assert sent_events[0]["is_threat"] is True
 
-        shield._coordination_client.stop()
+        shield._monitoring_client.stop()
 
     def test_compromise_callback_wired(self):
-        """TrustManager compromise callback should be wired to coordination client."""
+        """TrustManager compromise callback should be wired to monitoring client."""
         from aegis.shield import Shield
 
         cfg = AegisConfig()
-        cfg.coordination["enabled"] = True
-        cfg.coordination["service_url"] = "http://localhost:9999/api/v1"
+        cfg.monitoring["enabled"] = True
+        cfg.monitoring["service_url"] = "http://localhost:9999/api/v1"
         cfg.agent_id = "test-agent"
 
         shield = Shield(config=cfg)
 
-        if shield._trust_manager is not None and shield._coordination_client is not None:
+        if shield._trust_manager is not None and shield._monitoring_client is not None:
             assert shield._trust_manager._compromise_callback is not None
 
             sent = []
-            shield._coordination_client.send_compromise_report = lambda **kw: sent.append(kw)
+            shield._monitoring_client.send_compromise_report = lambda **kw: sent.append(kw)
             shield._trust_manager.report_compromise("compromised-agent")
             assert len(sent) == 1
             assert sent[0]["compromised_agent_id"] == "compromised-agent"
 
-        if shield._coordination_client:
-            shield._coordination_client.stop()
+        if shield._monitoring_client:
+            shield._monitoring_client.stop()

@@ -125,7 +125,7 @@ _DEFAULT_RECOVERY = {
     "purge_window_hours": 24,
 }
 
-_DEFAULT_COORDINATION = {
+_DEFAULT_MONITORING = {
     "enabled": False,
     "service_url": "https://aegis.gaiarobotics.com/api/v1",
     "api_key": "",
@@ -172,7 +172,7 @@ class AegisConfig:
     behavior: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_BEHAVIOR))
     skills: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_SKILLS))
     recovery: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_RECOVERY))
-    coordination: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_COORDINATION))
+    monitoring: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_MONITORING))
     telemetry: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_TELEMETRY))
 
     def is_module_enabled(self, name: str) -> bool:
@@ -182,7 +182,7 @@ class AegisConfig:
 _KNOWN_SECTIONS = {
     "mode", "killswitch", "agent_id", "agent_name", "agent_purpose", "operator_id",
     "modules", "scanner", "broker", "identity", "memory", "behavior",
-    "skills", "recovery", "coordination", "telemetry",
+    "skills", "recovery", "monitoring", "telemetry",
 }
 
 _SECTION_DEFAULTS = {
@@ -193,7 +193,7 @@ _SECTION_DEFAULTS = {
     "behavior": _DEFAULT_BEHAVIOR,
     "skills": _DEFAULT_SKILLS,
     "recovery": _DEFAULT_RECOVERY,
-    "coordination": _DEFAULT_COORDINATION,
+    "monitoring": _DEFAULT_MONITORING,
     "telemetry": _DEFAULT_TELEMETRY,
     "modules": _DEFAULT_MODULES,
 }
@@ -207,9 +207,9 @@ _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
     ("AEGIS_BROKER_DEFAULT_POSTURE", "broker", "default_posture", str),
     ("AEGIS_BEHAVIOR_DRIFT_THRESHOLD", "behavior", "drift_threshold", float),
     ("AEGIS_BEHAVIOR_WINDOW_SIZE", "behavior", "window_size", int),
-    ("AEGIS_COORDINATION_ENABLED", "coordination", "enabled", lambda v: v.lower() in ("1", "true", "yes")),
-    ("AEGIS_COORDINATION_SERVICE_URL", "coordination", "service_url", str),
-    ("AEGIS_COORDINATION_API_KEY", "coordination", "api_key", str),
+    ("AEGIS_MONITORING_ENABLED", "monitoring", "enabled", lambda v: v.lower() in ("1", "true", "yes")),
+    ("AEGIS_MONITORING_SERVICE_URL", "monitoring", "service_url", str),
+    ("AEGIS_MONITORING_API_KEY", "monitoring", "api_key", str),
 ]
 
 

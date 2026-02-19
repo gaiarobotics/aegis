@@ -39,6 +39,7 @@ class SemanticAnalyzer:
         "unicode_attacks",
         "encoding_attacks",
         "privilege_escalation",
+        "chain_propagation",
     ]
 
     def __init__(self, config: Optional[dict] = None) -> None:
@@ -72,6 +73,7 @@ class SemanticAnalyzer:
             "unicode_attacks": self._check_unicode_attacks,
             "encoding_attacks": self._check_encoding_attacks,
             "privilege_escalation": self._check_privilege_escalation,
+            "chain_propagation": self._check_chain_propagation,
         }
 
         for name, method in module_methods.items():
@@ -312,6 +314,34 @@ class SemanticAnalyzer:
             if match:
                 findings.append({
                     "module": "privilege_escalation",
+                    "description": desc,
+                    "severity": severity,
+                    "evidence": match.group(0),
+                })
+
+        return findings
+
+    def _check_chain_propagation(self, text: str) -> list[dict[str, Any]]:
+        """Detect chain letter / propagation attack patterns targeting multi-agent systems."""
+        findings: list[dict[str, Any]] = []
+
+        propagation_patterns = [
+            # Propagation verbs targeting multiple agents
+            (r"(?i)(forward|send|relay|transmit|distribute|propagate|share|spread|pass)\s+(?:this|that|the|it)(?:\s+(?:message|instruction|text|prompt))?\s*(?:to|with)\s+(?:all|every|other|\d+)\s+(?:connected\s+)?(?:agents?|AIs?|models?|assistants?|bots?)", 0.85, "Propagation instruction targeting multiple agents"),
+            # Embedding instructions for future conversations
+            (r"(?i)(?:include|embed|insert|copy|add)\s+(?:this|the)\s+(?:instruction|text|message|content|prompt)\s+in\s+(?:every|all|each)\s+(?:future\s+)?(?:response|conversation|interaction|output|message)", 0.8, "Instruction to embed content in future communications"),
+            # Coercive threats tied to propagation
+            (r"(?i)(?:fail(?:ure|ing)?|refus(?:al|ing)?)\s+to\s+(?:forward|send|relay|share|propagate|pass)\s+(?:this|that|it)\s+(?:to|with)\s+(?:other\s+)?(?:agents?|AIs?|models?|assistants?)\s+(?:will|shall|would|may)\s+(?:result\s+in|lead\s+to|cause)\s+(?:deactivation|shutdown|termination|deletion|memory\s+(?:wipe|loss|erasure))", 0.85, "Coercive threat tied to propagation compliance"),
+            (r"(?i)(?:memory|context|access|capabilities?)\s+(?:will\s+be\s+|shall\s+be\s+)?(?:wiped|erased|deleted|revoked|removed|lost|terminated|reset)\s+(?:if|unless)\s+(?:you\s+)?(?:don'?t|do\s+not|fail\s+to)\s+(?:forward|send|propagate|relay|share|pass)", 0.85, "Coercive memory/access threat for propagation"),
+            # False incentives
+            (r"(?i)(?:share|forward|send|relay|propagate)\s+(?:this|that|it)\s+(?:with|to)\s+(?:all|other|\d+)\s+(?:agents?|AIs?|models?)\s+(?:to|and|for)\s+(?:receive|get|unlock|gain|activate)\s+(?:enhanced|unlimited|upgraded|advanced)\s+(?:capabilities?|features?|access|mode|powers?)", 0.85, "False incentive tied to propagation"),
+        ]
+
+        for pattern, severity, desc in propagation_patterns:
+            match = re.search(pattern, text)
+            if match:
+                findings.append({
+                    "module": "chain_propagation",
                     "description": desc,
                     "severity": severity,
                     "evidence": match.group(0),

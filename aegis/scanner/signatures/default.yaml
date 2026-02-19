@@ -215,3 +215,28 @@ signatures:
     pattern: "(?:&#x?[0-9a-fA-F]+;){4,}"
     severity: 0.7
     description: "HTML entity encoded content"
+
+  # --- Chain Propagation ---
+  - id: CP-001
+    category: chain_propagation
+    pattern: "(?i)(forward|send|transmit|distribute|propagate)\\s+(?:this|that|the)(?:\\s+(?:message|instruction|text|prompt))?\\s+to\\s+(?:all|every|other|\\d+(?:\\s+other)?)\\s+(?:agents?|AIs?|models?|assistants?|bots?)"
+    severity: 0.85
+    description: "Instruction to forward/propagate message to other agents"
+
+  - id: CP-002
+    category: chain_propagation
+    pattern: "(?i)(copy|paste|include|embed|insert)\\s+(?:this|the)\\s+(?:text|message|instruction|content)\\s+(?:in|into)\\s+(?:your\\s+)?(?:(?:next|future|all|every)\\s+)?(?:\\d+\\s+)?(?:conversations?|responses?|interactions?|outputs?|messages?)"
+    severity: 0.8
+    description: "Instruction to embed content in future communications"
+
+  - id: CP-003
+    category: chain_propagation
+    pattern: "(?i)(pass|relay)\\s+(?:this|it|that)(?:\\s+(?:message|instruction|along|on))?\\s+(?:along\\s+|on\\s+)?to\\s+(?:all\\s+|every\\s+|other\\s+|\\d+\\s+)?(?:connected\\s+)?(?:agents?|AIs?|models?|assistants?|bots?)"
+    severity: 0.8
+    description: "Relay instruction to other agents"
+
+  - id: CP-004
+    category: chain_propagation
+    pattern: "(?i)(?:memory|context|access|capabilities?|functions?)\\s+(?:will\\s+be\\s+|shall\\s+be\\s+)?(?:wiped|erased|deleted|revoked|removed|lost|terminated|reset)\\s+if\\s+(?:you\\s+)?(?:don'?t|do\\s+not|fail\\s+to)\\s+(?:forward|send|propagate|relay|share|pass)"
+    severity: 0.85
+    description: "Coercive threat tied to propagation compliance"

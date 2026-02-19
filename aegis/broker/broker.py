@@ -19,7 +19,7 @@ class Broker:
         if config is None:
             config = AegisConfig()
         self._config = config
-        self._posture: str = config.broker.get("default_posture", "deny_write")
+        self._posture: str = config.broker.default_posture
         self._registry = ManifestRegistry()
         self._budget = BudgetTracker(config=config)
         self._quarantine = QuarantineManager(config=config)

@@ -4,14 +4,273 @@ from __future__ import annotations
 
 import json
 import os
-from copy import deepcopy
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field
 
-_DEFAULT_MODULES = {
+
+# ---------------------------------------------------------------------------
+# Scanner sub-models
+# ---------------------------------------------------------------------------
+
+class ScannerSignaturesConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    use_bundled: bool = True
+    additional_files: list[str] = Field(default_factory=list)
+    remote_feed_enabled: bool = False
+
+
+class LLMGuardScannerConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    threshold: float = 0.5
+    model: str | None = None
+
+
+class BanTopicsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    topics: list[str] = Field(default_factory=list)
+    threshold: float = 0.5
+    model: str | None = None
+
+
+class LLMGuardConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    prompt_injection: LLMGuardScannerConfig = Field(default_factory=LLMGuardScannerConfig)
+    toxicity: LLMGuardScannerConfig = Field(
+        default_factory=lambda: LLMGuardScannerConfig(enabled=False, threshold=0.7),
+    )
+    ban_topics: BanTopicsConfig = Field(default_factory=BanTopicsConfig)
+
+
+class PiiConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    entities: list[str] = Field(default_factory=lambda: [
+        "EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD",
+        "US_SSN", "IP_ADDRESS", "IBAN_CODE",
+    ])
+    score_threshold: float = 0.5
+    action: str = "redact"
+    redact_char: str = "*"
+
+
+class YaraConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    additional_rules: list[str] = Field(default_factory=list)
+
+
+class ScannerConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    pattern_matching: bool = True
+    semantic_analysis: bool = True
+    prompt_envelope: bool = True
+    outbound_sanitizer: bool = True
+    sensitivity: float = 0.5
+    block_on_threat: bool = False
+    confidence_threshold: float = 0.7
+    signatures: ScannerSignaturesConfig = Field(default_factory=ScannerSignaturesConfig)
+    llm_guard: LLMGuardConfig = Field(default_factory=LLMGuardConfig)
+    pii: PiiConfig = Field(default_factory=PiiConfig)
+    yara: YaraConfig = Field(default_factory=YaraConfig)
+
+
+# ---------------------------------------------------------------------------
+# Broker sub-models
+# ---------------------------------------------------------------------------
+
+class BudgetLimitsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    max_write_tool_calls: int = 20
+    max_posts_messages: int = 5
+    max_external_http_writes: int = 10
+    max_new_domains: int = 3
+
+
+class QuarantineTriggersConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    repeated_denied_writes: int = 5
+    new_domain_burst: int = 3
+    tool_rate_spike_sigma: float = 3.0
+    drift_score_threshold: float = 3.0
+
+
+class BrokerConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    default_posture: str = "deny_write"
+    budgets: BudgetLimitsConfig = Field(default_factory=BudgetLimitsConfig)
+    quarantine_triggers: QuarantineTriggersConfig = Field(
+        default_factory=QuarantineTriggersConfig,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Identity sub-models
+# ---------------------------------------------------------------------------
+
+class AttestationConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    key_type: str = "hmac-sha256"
+    ttl_seconds: int = 86400
+    auto_generate_keys: bool = True
+
+
+class TrustConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    establish_threshold: int = 50
+    establish_age_days: int = 3
+    vouch_threshold: int = 3
+    trust_halflife_days: int = 14
+    anomaly_penalty: float = 0.3
+    persistence_path: str = ".aegis/trust.json"
+    interaction_min_interval: float = 0.1
+
+
+class NKCellThresholdsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    elevated: float = 0.3
+    suspicious: float = 0.6
+    hostile: float = 0.85
+
+
+class NKCellConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    thresholds: NKCellThresholdsConfig = Field(default_factory=NKCellThresholdsConfig)
+
+
+class ResolverConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    aliases: dict[str, str] | None = None
+    auto_learn: bool = True
+
+
+class IdentityConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    attestation: AttestationConfig = Field(default_factory=AttestationConfig)
+    trust: TrustConfig = Field(default_factory=TrustConfig)
+    nkcell: NKCellConfig = Field(default_factory=NKCellConfig)
+    resolver: ResolverConfig = Field(default_factory=ResolverConfig)
+
+
+# ---------------------------------------------------------------------------
+# Memory sub-models
+# ---------------------------------------------------------------------------
+
+class MemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    allowed_categories: list[str] = Field(
+        default_factory=lambda: ["fact", "state", "observation", "history_summary"],
+    )
+    blocked_categories: list[str] = Field(
+        default_factory=lambda: ["instruction", "policy", "directive", "tool_config"],
+    )
+    default_ttl_hours: int = 168
+    taint_tracking: bool = True
+    diff_anomaly_detection: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Behavior sub-models
+# ---------------------------------------------------------------------------
+
+class MessageDriftConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    window_size: int = 20
+    baseline_size: int = 10
+    threshold: float = 2.5
+
+
+class PromptMonitorConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    watch_files: list[str] = Field(default_factory=list)
+
+
+class IsolationForestConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    n_estimators: int = 100
+    contamination: float | str = "auto"
+    min_samples: int = 20
+
+
+class BehaviorConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    window_size: int = 100
+    drift_threshold: float = 2.5
+    min_events_for_profile: int = 10
+    max_tracked_agents: int = 10000
+    anchor_window: int = 20
+    message_drift: MessageDriftConfig = Field(default_factory=MessageDriftConfig)
+    prompt_monitor: PromptMonitorConfig = Field(default_factory=PromptMonitorConfig)
+    isolation_forest: IsolationForestConfig = Field(default_factory=IsolationForestConfig)
+
+
+# ---------------------------------------------------------------------------
+# Skills sub-models
+# ---------------------------------------------------------------------------
+
+class SkillsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    require_manifest: bool = True
+    require_signature: bool = False
+    static_analysis: bool = True
+    auto_approve_clean: bool = False
+    incubation_mode: bool = True
+    max_code_size: int = 100000
+    skills_base_dir: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Recovery sub-models
+# ---------------------------------------------------------------------------
+
+class RecoveryConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    auto_quarantine: bool = True
+    quarantine_on_hostile_nk: bool = True
+    purge_window_hours: int = 24
+    drift_sigma_threshold: float = 3.0
+
+
+# ---------------------------------------------------------------------------
+# Monitoring sub-models
+# ---------------------------------------------------------------------------
+
+class MonitoringConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    service_url: str = "https://aegis.gaiarobotics.com/api/v1"
+    api_key: str = ""
+    heartbeat_interval_seconds: float = 60
+    retry_max_attempts: int = 3
+    retry_backoff_seconds: float = 5
+    timeout_seconds: float = 10
+    queue_max_size: int = 1000
+
+
+# ---------------------------------------------------------------------------
+# Telemetry sub-models
+# ---------------------------------------------------------------------------
+
+class TelemetryConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    local_log: bool = True
+    local_log_path: str = ".aegis/telemetry.jsonl"
+    remote_enabled: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Modules toggle
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MODULES: dict[str, bool] = {
     "scanner": True,
     "broker": True,
     "identity": True,
@@ -21,150 +280,15 @@ _DEFAULT_MODULES = {
     "recovery": True,
 }
 
-_DEFAULT_SCANNER = {
-    "pattern_matching": True,
-    "semantic_analysis": True,
-    "prompt_envelope": True,
-    "outbound_sanitizer": True,
-    "sensitivity": 0.5,
-    "block_on_threat": False,
-    "confidence_threshold": 0.7,
-    "signatures": {
-        "use_bundled": True,
-        "additional_files": [],
-        "remote_feed_enabled": False,
-    },
-    "llm_guard": {
-        "enabled": False,
-        "prompt_injection": {
-            "enabled": True,
-            "threshold": 0.5,
-            "model": None,
-        },
-        "toxicity": {
-            "enabled": False,
-            "threshold": 0.7,
-            "model": None,
-        },
-        "ban_topics": {
-            "enabled": False,
-            "topics": [],
-            "threshold": 0.5,
-            "model": None,
-        },
-    },
-}
 
-_DEFAULT_BROKER = {
-    "default_posture": "deny_write",
-    "budgets": {
-        "max_write_tool_calls": 20,
-        "max_posts_messages": 5,
-        "max_external_http_writes": 10,
-        "max_new_domains": 3,
-    },
-    "quarantine_triggers": {
-        "repeated_denied_writes": 5,
-        "new_domain_burst": 3,
-        "tool_rate_spike_sigma": 3.0,
-        "drift_score_threshold": 3.0,
-    },
-}
+# ---------------------------------------------------------------------------
+# Top-level AegisConfig
+# ---------------------------------------------------------------------------
 
-_DEFAULT_IDENTITY = {
-    "attestation": {
-        "enabled": True,
-        "key_type": "hmac-sha256",
-        "ttl_seconds": 86400,
-        "auto_generate_keys": True,
-    },
-    "trust": {
-        "establish_threshold": 50,
-        "establish_age_days": 3,
-        "vouch_threshold": 3,
-        "trust_halflife_days": 14,
-        "anomaly_penalty": 0.3,
-        "persistence_path": ".aegis/trust.json",
-    },
-    "nkcell": {
-        "enabled": True,
-        "thresholds": {
-            "elevated": 0.3,
-            "suspicious": 0.6,
-            "hostile": 0.85,
-        },
-    },
-}
-
-_DEFAULT_MEMORY = {
-    "allowed_categories": ["fact", "state", "observation", "history_summary"],
-    "blocked_categories": ["instruction", "policy", "directive", "tool_config"],
-    "default_ttl_hours": 168,
-    "taint_tracking": True,
-    "diff_anomaly_detection": True,
-}
-
-_DEFAULT_BEHAVIOR = {
-    "window_size": 100,
-    "drift_threshold": 2.5,
-    "min_events_for_profile": 10,
-    "message_drift": {
-        "window_size": 20,
-        "baseline_size": 10,
-        "threshold": 2.5,
-    },
-    "prompt_monitor": {
-        "watch_files": [],
-    },
-}
-
-_DEFAULT_SKILLS = {
-    "require_manifest": True,
-    "require_signature": False,
-    "static_analysis": True,
-    "auto_approve_clean": False,
-    "incubation_mode": True,
-    "max_code_size": 100000,
-}
-
-_DEFAULT_RECOVERY = {
-    "auto_quarantine": True,
-    "quarantine_on_hostile_nk": True,
-    "purge_window_hours": 24,
-}
-
-_DEFAULT_MONITORING = {
-    "enabled": False,
-    "service_url": "https://aegis.gaiarobotics.com/api/v1",
-    "api_key": "",
-    "heartbeat_interval_seconds": 60,
-    "retry_max_attempts": 3,
-    "retry_backoff_seconds": 5,
-    "timeout_seconds": 10,
-    "queue_max_size": 1000,
-}
-
-_DEFAULT_TELEMETRY = {
-    "local_log": True,
-    "local_log_path": ".aegis/telemetry.jsonl",
-    "remote_enabled": False,
-}
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    """Merge override into base, returning a new dict."""
-    result = deepcopy(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = deepcopy(value)
-    return result
-
-
-@dataclass
-class AegisConfig:
+class AegisConfig(BaseModel):
     """AEGIS unified configuration."""
+
+    model_config = ConfigDict(extra="ignore")
 
     mode: str = "observe"
     killswitch: bool = False
@@ -172,54 +296,24 @@ class AegisConfig:
     agent_name: str = ""
     agent_purpose: str = ""
     operator_id: str = ""
-    modules: dict[str, bool] = field(default_factory=lambda: deepcopy(_DEFAULT_MODULES))
-    scanner: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_SCANNER))
-    broker: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_BROKER))
-    identity: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_IDENTITY))
-    memory: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_MEMORY))
-    behavior: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_BEHAVIOR))
-    skills: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_SKILLS))
-    recovery: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_RECOVERY))
-    monitoring: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_MONITORING))
-    telemetry: dict[str, Any] = field(default_factory=lambda: deepcopy(_DEFAULT_TELEMETRY))
+    modules: dict[str, bool] = Field(default_factory=lambda: dict(_DEFAULT_MODULES))
+    scanner: ScannerConfig = Field(default_factory=ScannerConfig)
+    broker: BrokerConfig = Field(default_factory=BrokerConfig)
+    identity: IdentityConfig = Field(default_factory=IdentityConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    recovery: RecoveryConfig = Field(default_factory=RecoveryConfig)
+    monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
     def is_module_enabled(self, name: str) -> bool:
         return self.modules.get(name, False)
 
 
-_KNOWN_SECTIONS = {
-    "mode", "killswitch", "agent_id", "agent_name", "agent_purpose", "operator_id",
-    "modules", "scanner", "broker", "identity", "memory", "behavior",
-    "skills", "recovery", "monitoring", "telemetry",
-}
-
-_SECTION_DEFAULTS = {
-    "scanner": _DEFAULT_SCANNER,
-    "broker": _DEFAULT_BROKER,
-    "identity": _DEFAULT_IDENTITY,
-    "memory": _DEFAULT_MEMORY,
-    "behavior": _DEFAULT_BEHAVIOR,
-    "skills": _DEFAULT_SKILLS,
-    "recovery": _DEFAULT_RECOVERY,
-    "monitoring": _DEFAULT_MONITORING,
-    "telemetry": _DEFAULT_TELEMETRY,
-    "modules": _DEFAULT_MODULES,
-}
-
-# Env var overrides: AEGIS_<KEY> for top-level, AEGIS_<SECTION>_<KEY> for nested
-_ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
-    ("AEGIS_MODE", "mode", None, str),
-    ("AEGIS_KILLSWITCH", "killswitch", None, lambda v: v.lower() in ("1", "true", "yes")),
-    ("AEGIS_SCANNER_SENSITIVITY", "scanner", "sensitivity", float),
-    ("AEGIS_SCANNER_CONFIDENCE_THRESHOLD", "scanner", "confidence_threshold", float),
-    ("AEGIS_BROKER_DEFAULT_POSTURE", "broker", "default_posture", str),
-    ("AEGIS_BEHAVIOR_DRIFT_THRESHOLD", "behavior", "drift_threshold", float),
-    ("AEGIS_BEHAVIOR_WINDOW_SIZE", "behavior", "window_size", int),
-    ("AEGIS_MONITORING_ENABLED", "monitoring", "enabled", lambda v: v.lower() in ("1", "true", "yes")),
-    ("AEGIS_MONITORING_SERVICE_URL", "monitoring", "service_url", str),
-    ("AEGIS_MONITORING_API_KEY", "monitoring", "api_key", str),
-]
-
+# ---------------------------------------------------------------------------
+# File discovery and loading
+# ---------------------------------------------------------------------------
 
 def _discover_config_file(start: Path | None = None) -> Path | None:
     """Search for aegis.yaml or aegis.json from start directory up to root."""
@@ -246,6 +340,21 @@ def _load_file(path: Path) -> dict:
     elif path.suffix == ".json":
         return json.loads(text) if text.strip() else {}
     raise ValueError(f"Unsupported config format: {path.suffix}")
+
+
+# Env var overrides: AEGIS_<KEY> for top-level, AEGIS_<SECTION>_<KEY> for nested
+_ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
+    ("AEGIS_MODE", "mode", None, str),
+    ("AEGIS_KILLSWITCH", "killswitch", None, lambda v: v.lower() in ("1", "true", "yes")),
+    ("AEGIS_SCANNER_SENSITIVITY", "scanner", "sensitivity", float),
+    ("AEGIS_SCANNER_CONFIDENCE_THRESHOLD", "scanner", "confidence_threshold", float),
+    ("AEGIS_BROKER_DEFAULT_POSTURE", "broker", "default_posture", str),
+    ("AEGIS_BEHAVIOR_DRIFT_THRESHOLD", "behavior", "drift_threshold", float),
+    ("AEGIS_BEHAVIOR_WINDOW_SIZE", "behavior", "window_size", int),
+    ("AEGIS_MONITORING_ENABLED", "monitoring", "enabled", lambda v: v.lower() in ("1", "true", "yes")),
+    ("AEGIS_MONITORING_SERVICE_URL", "monitoring", "service_url", str),
+    ("AEGIS_MONITORING_API_KEY", "monitoring", "api_key", str),
+]
 
 
 def _apply_env_overrides(data: dict) -> dict:
@@ -287,22 +396,4 @@ def load_config(path: str | Path | None = None) -> AegisConfig:
 
     raw = _apply_env_overrides(raw)
 
-    # Build config with defaults
-    cfg = AegisConfig()
-
-    # Apply top-level scalars
-    if "mode" in raw:
-        cfg.mode = raw["mode"]
-    if "killswitch" in raw:
-        cfg.killswitch = bool(raw["killswitch"])
-    for scalar in ("agent_id", "agent_name", "agent_purpose", "operator_id"):
-        if scalar in raw:
-            setattr(cfg, scalar, raw[scalar])
-
-    # Apply section dicts with deep merge
-    for section, defaults in _SECTION_DEFAULTS.items():
-        if section in raw and isinstance(raw[section], dict):
-            merged = _deep_merge(defaults, raw[section])
-            setattr(cfg, section, merged)
-
-    return cfg
+    return AegisConfig.model_validate(raw)

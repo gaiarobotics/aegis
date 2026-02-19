@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aegis.core.config import RecoveryConfig
 from aegis.recovery.quarantine import RecoveryQuarantine
 
 
@@ -108,7 +109,7 @@ class TestRecoveryQuarantine:
 
     def test_config_disables_auto_quarantine(self):
         """Test that config can disable auto quarantine."""
-        q = RecoveryQuarantine(config={"auto_quarantine": False})
+        q = RecoveryQuarantine(config=RecoveryConfig(auto_quarantine=False))
 
         nk_verdict = MagicMock()
         nk_verdict.verdict = "hostile"
@@ -118,7 +119,7 @@ class TestRecoveryQuarantine:
 
     def test_config_disables_hostile_nk_quarantine(self):
         """Test config can disable quarantine on hostile NK."""
-        q = RecoveryQuarantine(config={"quarantine_on_hostile_nk": False})
+        q = RecoveryQuarantine(config=RecoveryConfig(quarantine_on_hostile_nk=False))
 
         nk_verdict = MagicMock()
         nk_verdict.verdict = "hostile"
@@ -128,7 +129,7 @@ class TestRecoveryQuarantine:
 
     def test_custom_drift_sigma_threshold_high(self):
         """Custom high threshold should allow drift that default would quarantine."""
-        q = RecoveryQuarantine(config={"drift_sigma_threshold": 5.0})
+        q = RecoveryQuarantine(config=RecoveryConfig(drift_sigma_threshold=5.0))
 
         drift_result = MagicMock()
         drift_result.is_drifting = True
@@ -140,7 +141,7 @@ class TestRecoveryQuarantine:
 
     def test_custom_drift_sigma_threshold_low(self):
         """Custom low threshold should quarantine drift that default would allow."""
-        q = RecoveryQuarantine(config={"drift_sigma_threshold": 1.5})
+        q = RecoveryQuarantine(config=RecoveryConfig(drift_sigma_threshold=1.5))
 
         drift_result = MagicMock()
         drift_result.is_drifting = True

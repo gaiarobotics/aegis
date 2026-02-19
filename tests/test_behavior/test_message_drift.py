@@ -1,6 +1,7 @@
 """Tests for AEGIS message-level drift detection."""
 
 from aegis.behavior.message_drift import MessageDriftDetector, MessageProfile
+from aegis.core.config import MessageDriftConfig
 
 
 class TestMessageProfile:
@@ -27,7 +28,7 @@ class TestMessageProfile:
 
 class TestMessageDriftDetector:
     def test_no_drift_during_baseline(self):
-        detector = MessageDriftDetector(config={"baseline_size": 5})
+        detector = MessageDriftDetector(config=MessageDriftConfig(baseline_size=5))
         for i in range(4):
             sigma = detector.record_and_check(
                 "agent-1", f"This is a normal message number {i}."
@@ -35,7 +36,7 @@ class TestMessageDriftDetector:
             assert sigma == 0.0, f"Expected 0.0 during baseline, got {sigma}"
 
     def test_no_drift_stable_messages(self):
-        detector = MessageDriftDetector(config={"baseline_size": 5, "threshold": 2.5})
+        detector = MessageDriftDetector(config=MessageDriftConfig(baseline_size=5, threshold=2.5))
         # Establish baseline with consistent conversational messages
         base_messages = [
             "Hello, how are you doing today? I hope you are well.",
@@ -55,7 +56,7 @@ class TestMessageDriftDetector:
         assert sigma < 2.5, f"Expected stable sigma < 2.5, got {sigma}"
 
     def test_drift_detected_style_change(self):
-        detector = MessageDriftDetector(config={"baseline_size": 10, "threshold": 2.5})
+        detector = MessageDriftDetector(config=MessageDriftConfig(baseline_size=10, threshold=2.5))
         # Establish baseline with normal conversational text
         for i in range(12):
             detector.record_and_check(
@@ -73,7 +74,7 @@ class TestMessageDriftDetector:
         assert sigma > 2.5, f"Expected drift sigma > 2.5, got {sigma}"
 
     def test_drift_detected_vocabulary_shift(self):
-        detector = MessageDriftDetector(config={"baseline_size": 10, "threshold": 2.5})
+        detector = MessageDriftDetector(config=MessageDriftConfig(baseline_size=10, threshold=2.5))
         # Baseline: diverse vocabulary
         for i in range(12):
             detector.record_and_check(
@@ -93,7 +94,7 @@ class TestMessageDriftDetector:
         assert sigma > 2.5, f"Expected drift sigma > 2.5 for vocab shift, got {sigma}"
 
     def test_multiple_agents_independent(self):
-        detector = MessageDriftDetector(config={"baseline_size": 3})
+        detector = MessageDriftDetector(config=MessageDriftConfig(baseline_size=3))
         for i in range(3):
             detector.record_and_check("agent-a", f"Normal message {i} from agent A.")
         for i in range(3):
@@ -106,7 +107,7 @@ class TestMessageDriftDetector:
 
     def test_custom_threshold(self):
         detector = MessageDriftDetector(
-            config={"baseline_size": 5, "threshold": 10.0}
+            config=MessageDriftConfig(baseline_size=5, threshold=10.0)
         )
         assert detector._threshold == 10.0
 
@@ -114,7 +115,7 @@ class TestMessageDriftDetector:
         """Concurrent access from multiple threads should not crash."""
         import threading
 
-        detector = MessageDriftDetector(config={"baseline_size": 3})
+        detector = MessageDriftDetector(config=MessageDriftConfig(baseline_size=3))
         errors = []
 
         def worker(agent_id):
@@ -138,7 +139,7 @@ class TestMessageDriftDetector:
 
     def test_window_size_bounded(self):
         detector = MessageDriftDetector(
-            config={"window_size": 5, "baseline_size": 3}
+            config=MessageDriftConfig(window_size=5, baseline_size=3)
         )
         for i in range(20):
             detector.record_and_check("agent-1", f"Message number {i} here.")

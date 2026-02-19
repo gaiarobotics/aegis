@@ -22,6 +22,25 @@ import re
 from typing import Any
 
 
+# ---------------------------------------------------------------------------
+# Optional rapidfuzz integration
+# ---------------------------------------------------------------------------
+
+_RAPIDFUZZ_AVAILABLE: bool | None = None
+
+
+def is_rapidfuzz_available() -> bool:
+    """Check whether the rapidfuzz package is importable."""
+    global _RAPIDFUZZ_AVAILABLE
+    if _RAPIDFUZZ_AVAILABLE is None:
+        try:
+            import rapidfuzz  # noqa: F401
+            _RAPIDFUZZ_AVAILABLE = True
+        except ImportError:
+            _RAPIDFUZZ_AVAILABLE = False
+    return _RAPIDFUZZ_AVAILABLE
+
+
 # Known platform suffixes → canonical platform prefix
 _PLATFORM_SUFFIXES: dict[str, str] = {
     "moltbook.social": "moltbook",
@@ -172,15 +191,20 @@ class IdentityResolver:
 def _edit_distance_at_most(a: str, b: str, max_dist: int) -> bool:
     """Check if edit distance between a and b is <= max_dist.
 
-    Early-exit optimization: if length difference > max_dist, return False.
-    Uses a bounded DP approach for efficiency.
+    Uses rapidfuzz when available for faster computation,
+    falling back to pure-Python implementation.
     """
     if abs(len(a) - len(b)) > max_dist:
         return False
     if a == b:
         return True
 
-    # For max_dist=1, we can use a simple single-pass check
+    # Fast path: use rapidfuzz when available
+    if is_rapidfuzz_available():
+        from rapidfuzz.distance import Levenshtein
+        return Levenshtein.distance(a, b) <= max_dist
+
+    # Pure-Python fallback
     if max_dist == 1:
         return _edit_distance_one(a, b)
 

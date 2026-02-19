@@ -6,6 +6,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from aegis.core.config import MemoryConfig
+
 
 @dataclass
 class MemoryEntry:
@@ -29,26 +31,11 @@ class WriteResult:
     sanitized_value: str | None
 
 
-_DEFAULT_ALLOWED = ["fact", "state", "observation", "history_summary"]
-_DEFAULT_BLOCKED = ["instruction", "policy", "directive", "tool_config"]
-
-
-@dataclass
-class _GuardConfig:
-    allowed_categories: list[str] = field(default_factory=lambda: list(_DEFAULT_ALLOWED))
-    blocked_categories: list[str] = field(default_factory=lambda: list(_DEFAULT_BLOCKED))
-
-
 class MemoryGuard:
     """Validates memory writes against category allowlists and an optional scanner."""
 
-    def __init__(self, config: dict[str, Any] | None = None, scanner: Any = None) -> None:
-        self._config = _GuardConfig()
-        if config:
-            if "allowed_categories" in config:
-                self._config.allowed_categories = list(config["allowed_categories"])
-            if "blocked_categories" in config:
-                self._config.blocked_categories = list(config["blocked_categories"])
+    def __init__(self, config: MemoryConfig | None = None, scanner: Any = None) -> None:
+        self._config = config or MemoryConfig()
         self._scanner = scanner
 
     def validate_write(self, entry: MemoryEntry) -> WriteResult:

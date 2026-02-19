@@ -103,8 +103,10 @@ class TestEndToEndPipeline:
         """Exceeding budget should deny subsequent actions."""
         from aegis.core.config import AegisConfig
 
-        cfg = AegisConfig(mode="enforce")
-        cfg.broker["budgets"]["max_write_tool_calls"] = 2
+        cfg = AegisConfig(
+            mode="enforce",
+            broker={"budgets": {"max_write_tool_calls": 2}},
+        )
         shield = Shield(config=cfg)
 
         # Register a tool

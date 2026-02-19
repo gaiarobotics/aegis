@@ -14,6 +14,8 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any
 
+from aegis.core.config import MessageDriftConfig
+
 
 @dataclass
 class MessageProfile:
@@ -38,11 +40,11 @@ class MessageDriftDetector:
             and ``threshold`` keys.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        config = config or {}
-        self._window_size: int = config.get("window_size", 20)
-        self._baseline_size: int = config.get("baseline_size", 10)
-        self._threshold: float = config.get("threshold", 2.5)
+    def __init__(self, config: MessageDriftConfig | None = None) -> None:
+        config = config or MessageDriftConfig()
+        self._window_size: int = config.window_size
+        self._baseline_size: int = config.baseline_size
+        self._threshold: float = config.threshold
         self._profiles: dict[str, deque[MessageProfile]] = {}
         self._baselines: dict[str, tuple[MessageProfile, MessageProfile] | None] = {}
         self._lock = threading.Lock()

@@ -1,6 +1,7 @@
 """Tests for AEGIS system prompt and core file monitoring."""
 
 from aegis.behavior.prompt_monitor import PromptMonitor
+from aegis.core.config import PromptMonitorConfig
 
 
 class TestPromptMonitor:
@@ -56,7 +57,7 @@ class TestPromptMonitor:
     def test_watched_file_change_detected(self, tmp_path):
         watched = tmp_path / "SOUL.md"
         watched.write_text("Original system identity.")
-        monitor = PromptMonitor(config={"watch_files": [str(watched)]})
+        monitor = PromptMonitor(config=PromptMonitorConfig(watch_files=[str(watched)]))
         # First check — file unchanged
         result = monitor.check({})
         assert result is False
@@ -67,7 +68,7 @@ class TestPromptMonitor:
 
     def test_watched_file_missing_graceful(self):
         monitor = PromptMonitor(
-            config={"watch_files": ["/nonexistent/SOUL.md"]}
+            config=PromptMonitorConfig(watch_files=["/nonexistent/SOUL.md"])
         )
         result = monitor.check({})
         assert result is False

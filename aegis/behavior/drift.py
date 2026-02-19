@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from aegis.core.config import BehaviorConfig
 from aegis.behavior.tracker import BehaviorEvent, BehaviorFingerprint
 
 
@@ -23,9 +24,9 @@ class DriftResult:
 class DriftDetector:
     """Detects behavioral drift by comparing events against an established fingerprint."""
 
-    def __init__(self, config: dict[str, Any] | None = None):
-        config = config or {}
-        self._threshold: float = config.get("drift_threshold", 2.5)
+    def __init__(self, config: BehaviorConfig | None = None):
+        config = config or BehaviorConfig()
+        self._threshold: float = config.drift_threshold
 
     def check_drift(
         self,

@@ -14,6 +14,7 @@ from collections import deque
 from typing import Any
 from urllib.parse import urlparse
 
+from aegis.core.config import MonitoringConfig
 from aegis.monitoring.reports import (
     AgentHeartbeat,
     CompromiseReport,
@@ -29,7 +30,7 @@ class MonitoringClient:
     """Non-blocking client that reports signed events to a monitoring service.
 
     Args:
-        config: Monitoring configuration dict (from ``AegisConfig.monitoring``).
+        config: Monitoring configuration (from ``AegisConfig.monitoring``).
         agent_id: This agent's identifier.
         operator_id: The operator deploying this agent.
         keypair: Optional ``KeyPair`` for signing reports.
@@ -37,28 +38,26 @@ class MonitoringClient:
 
     def __init__(
         self,
-        config: dict[str, Any],
+        config: MonitoringConfig,
         agent_id: str = "",
         operator_id: str = "",
         keypair: Any = None,
     ) -> None:
         self._config = config
-        self._enabled = bool(config.get("enabled", False))
-        service_url = config.get(
-            "service_url", "https://aegis.gaiarobotics.com/api/v1"
-        ).rstrip("/")
+        self._enabled = config.enabled
+        service_url = config.service_url.rstrip("/")
         parsed = urlparse(service_url)
         if parsed.scheme not in ("http", "https", ""):
             raise ValueError(f"Invalid service URL scheme: {parsed.scheme}")
         if service_url and not parsed.hostname:
             raise ValueError("Service URL must have a valid hostname")
         self._service_url = service_url
-        self._api_key = config.get("api_key", "")
-        self._heartbeat_interval = config.get("heartbeat_interval_seconds", 60)
-        self._retry_max = config.get("retry_max_attempts", 3)
-        self._retry_backoff = config.get("retry_backoff_seconds", 5)
-        self._timeout = config.get("timeout_seconds", 10)
-        self._queue_max = config.get("queue_max_size", 1000)
+        self._api_key = config.api_key
+        self._heartbeat_interval = config.heartbeat_interval_seconds
+        self._retry_max = config.retry_max_attempts
+        self._retry_backoff = config.retry_backoff_seconds
+        self._timeout = config.timeout_seconds
+        self._queue_max = config.queue_max_size
 
         self._agent_id = agent_id
         self._operator_id = operator_id

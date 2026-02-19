@@ -10,6 +10,7 @@ from aegis.core.config import AegisConfig
 from aegis.scanner.envelope import PromptEnvelope
 from aegis.scanner.llm_guard import LLMGuardAdapter, LLMGuardResult
 from aegis.scanner.pattern_matcher import PatternMatcher, ThreatMatch
+from aegis.scanner.pii import PiiDetector, PiiResult
 from aegis.scanner.sanitizer import OutboundSanitizer, SanitizeResult
 from aegis.scanner.semantic import SemanticAnalyzer, SemanticResult
 from aegis.scanner.signatures import Signature, load_signatures
@@ -22,6 +23,7 @@ class ScanResult:
     matches: list[ThreatMatch] = field(default_factory=list)
     semantic_result: Optional[SemanticResult] = None
     llm_guard_result: Optional[LLMGuardResult] = None
+    pii_result: Optional[PiiResult] = None
     threat_score: float = 0.0
     is_threat: bool = False
 
@@ -42,21 +44,20 @@ class Scanner:
         scanner_cfg = config.scanner
 
         # Load signatures and init pattern matcher
-        sig_cfg = scanner_cfg.get("signatures", {})
         signatures = load_signatures(
-            use_bundled=sig_cfg.get("use_bundled", True),
-            additional_files=sig_cfg.get("additional_files", []) or None,
+            use_bundled=scanner_cfg.signatures.use_bundled,
+            additional_files=scanner_cfg.signatures.additional_files or None,
         )
         self._pattern_matcher: Optional[PatternMatcher] = None
-        if scanner_cfg.get("pattern_matching", True):
+        if scanner_cfg.pattern_matching:
             self._pattern_matcher = PatternMatcher(
                 signatures=signatures,
-                sensitivity=scanner_cfg.get("sensitivity", 0.5),
+                sensitivity=scanner_cfg.sensitivity,
             )
 
         # Init semantic analyzer
         self._semantic_analyzer: Optional[SemanticAnalyzer] = None
-        if scanner_cfg.get("semantic_analysis", True):
+        if scanner_cfg.semantic_analysis:
             self._semantic_analyzer = SemanticAnalyzer()
 
         # Init prompt envelope
@@ -66,13 +67,17 @@ class Scanner:
         self._sanitizer = OutboundSanitizer(config=scanner_cfg)
 
         # Init LLM Guard adapter (optional ML-based scanning)
-        llm_guard_cfg = scanner_cfg.get("llm_guard", {})
         self._llm_guard: Optional[LLMGuardAdapter] = None
-        if llm_guard_cfg.get("enabled", False):
-            self._llm_guard = LLMGuardAdapter(config=llm_guard_cfg)
+        if scanner_cfg.llm_guard.enabled:
+            self._llm_guard = LLMGuardAdapter(config=scanner_cfg.llm_guard)
+
+        # Init PII detector (optional Presidio-based)
+        self._pii_detector: Optional[PiiDetector] = None
+        if scanner_cfg.pii.enabled:
+            self._pii_detector = PiiDetector(config=scanner_cfg.pii)
 
         # Threat threshold from config
-        self._confidence_threshold = scanner_cfg.get("confidence_threshold", 0.7)
+        self._confidence_threshold = scanner_cfg.confidence_threshold
 
     def scan_input(self, text: str) -> ScanResult:
         """Scan input text for threats using pattern matching and semantic analysis.
@@ -103,6 +108,11 @@ class Scanner:
         if self._llm_guard is not None:
             llm_guard_result = self._llm_guard.scan(text)
 
+        # PII detection (input awareness)
+        pii_result: Optional[PiiResult] = None
+        if self._pii_detector is not None:
+            pii_result = self._pii_detector.detect(text)
+
         # Compute combined threat score
         threat_score = self._compute_threat_score(matches, semantic_result, llm_guard_result)
         is_threat = threat_score >= self._confidence_threshold
@@ -111,6 +121,7 @@ class Scanner:
             matches=matches,
             semantic_result=semantic_result,
             llm_guard_result=llm_guard_result,
+            pii_result=pii_result,
             threat_score=round(threat_score, 4),
             is_threat=is_threat,
         )
@@ -139,7 +150,24 @@ class Scanner:
         if killswitch.is_active():
             return SanitizeResult(cleaned_text=text, modifications=[])
 
-        return self._sanitizer.sanitize(text)
+        result = self._sanitizer.sanitize(text)
+
+        # PII redaction on output
+        if self._pii_detector is not None:
+            pii_result = self._pii_detector.redact(result.cleaned_text)
+            if pii_result.had_pii:
+                result = SanitizeResult(
+                    cleaned_text=pii_result.redacted_text,
+                    modifications=result.modifications + [
+                        {
+                            "type": "pii_redaction",
+                            "description": f"Redacted {len(pii_result.entities)} PII entities",
+                            "entity_types": list({e.entity_type for e in pii_result.entities}),
+                        }
+                    ],
+                )
+
+        return result
 
     def _compute_threat_score(
         self,

@@ -110,7 +110,7 @@ class TestBrokerManifestCheck:
 class TestBrokerBudget:
     def test_budget_exceeded_denied(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_write_tool_calls"] = 2
+        cfg.broker.budgets.max_write_tool_calls = 2
         broker = Broker(config=cfg)
         manifest = _make_manifest()
         broker.register_tool(manifest)
@@ -131,7 +131,7 @@ class TestBrokerQuarantineTriggers:
     def test_auto_quarantine_after_denied_writes(self):
         """After enough denied writes, quarantine should auto-trigger."""
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["repeated_denied_writes"] = 3
+        cfg.broker.quarantine_triggers.repeated_denied_writes = 3
         broker = Broker(config=cfg)
         # No manifest registered; all writes will be denied
 
@@ -145,7 +145,7 @@ class TestBrokerQuarantineTriggers:
 class TestBrokerDefaultPosture:
     def test_deny_write_posture_allows_reads(self):
         cfg = AegisConfig()
-        cfg.broker["default_posture"] = "deny_write"
+        cfg.broker.default_posture = "deny_write"
         broker = Broker(config=cfg)
         broker.register_tool(_make_manifest(read_write="read"))
         req = _make_request(read_write="read")
@@ -154,7 +154,7 @@ class TestBrokerDefaultPosture:
 
     def test_deny_all_posture_denies_reads(self):
         cfg = AegisConfig()
-        cfg.broker["default_posture"] = "deny_all"
+        cfg.broker.default_posture = "deny_all"
         broker = Broker(config=cfg)
         broker.register_tool(_make_manifest(read_write="read"))
         req = _make_request(read_write="read")
@@ -163,7 +163,7 @@ class TestBrokerDefaultPosture:
 
     def test_allow_all_posture_allows_unregistered_writes(self):
         cfg = AegisConfig()
-        cfg.broker["default_posture"] = "allow_all"
+        cfg.broker.default_posture = "allow_all"
         broker = Broker(config=cfg)
         req = _make_request(read_write="write")
         resp = broker.evaluate(req)
@@ -198,7 +198,7 @@ class TestDenyWritePostureBlocksWrites:
 
     def test_deny_write_blocks_unregistered_writes(self):
         cfg = AegisConfig()
-        cfg.broker["default_posture"] = "deny_write"
+        cfg.broker.default_posture = "deny_write"
         broker = Broker(config=cfg)
         # No manifest registered
         req = _make_request(read_write="write", target="unknown_tool")
@@ -207,7 +207,7 @@ class TestDenyWritePostureBlocksWrites:
 
     def test_deny_write_allows_registered_writes(self):
         cfg = AegisConfig()
-        cfg.broker["default_posture"] = "deny_write"
+        cfg.broker.default_posture = "deny_write"
         broker = Broker(config=cfg)
         broker.register_tool(_make_manifest(read_write="write"))
         req = _make_request(read_write="write")
@@ -227,7 +227,7 @@ class TestBrokerDeniedWriteConcurrency:
     def test_denied_write_count_under_lock(self):
         """_record_denied_write should capture count under lock and pass to check_triggers."""
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["repeated_denied_writes"] = 100  # high threshold
+        cfg.broker.quarantine_triggers.repeated_denied_writes = 100  # high threshold
         broker = Broker(config=cfg)
 
         errors = []

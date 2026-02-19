@@ -12,6 +12,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from aegis.core.config import PromptMonitorConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,9 +28,9 @@ class PromptMonitor:
         config: Optional dict with ``watch_files`` (list of paths).
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        config = config or {}
-        self._watch_files: list[str] = list(config.get("watch_files", []))
+    def __init__(self, config: PromptMonitorConfig | None = None) -> None:
+        config = config or PromptMonitorConfig()
+        self._watch_files: list[str] = list(config.watch_files)
         self._prompt_hash: str | None = None
         self._file_hashes: dict[str, str] = {}
         self._lock = threading.Lock()

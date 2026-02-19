@@ -83,8 +83,10 @@ class TestShieldBrokerOnly:
 class TestObserveMode:
     def test_observe_mode_logs_only(self, tmp_path):
         from aegis.broker import ActionRequest
-        cfg = AegisConfig(mode="observe")
-        cfg.telemetry["local_log_path"] = str(tmp_path / "telemetry.jsonl")
+        cfg = AegisConfig(
+            mode="observe",
+            telemetry={"local_log_path": str(tmp_path / "telemetry.jsonl")},
+        )
         shield = Shield(config=cfg)
 
         # Register a tool so we get past manifest check
@@ -311,7 +313,7 @@ class TestShieldPolicyConfig:
         config_file.write_text("mode: enforce\nscanner:\n  sensitivity: 0.9\n")
         shield = Shield(policy=str(config_file))
         assert shield.mode == "enforce"
-        assert shield.config.scanner["sensitivity"] == 0.9
+        assert shield.config.scanner.sensitivity == 0.9
 
     def test_policy_nonexistent_uses_defaults(self):
         shield = Shield(policy="/nonexistent/aegis.yaml")
@@ -328,8 +330,7 @@ class TestShieldRecordTrustInteraction:
         assert shield._trust_manager.get_score("agent-1") > 0.0
 
     def test_record_anomalous_interaction(self):
-        cfg = AegisConfig()
-        cfg.identity["trust"] = {"interaction_min_interval": 0}
+        cfg = AegisConfig(identity={"trust": {"interaction_min_interval": 0}})
         shield = Shield(modules=["identity"], config=cfg)
         # First build some score
         for _ in range(5):

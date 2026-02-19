@@ -4,6 +4,7 @@ import time
 
 from aegis.behavior.drift import DriftDetector, DriftResult
 from aegis.behavior.tracker import BehaviorEvent, BehaviorFingerprint, BehaviorTracker
+from aegis.core.config import BehaviorConfig
 
 
 def _make_event(
@@ -131,13 +132,13 @@ class TestThresholdConfigurable:
         fp = tracker.get_fingerprint("agent-1")
 
         # With a very high threshold, even a large spike should not trigger
-        detector_lenient = DriftDetector(config={"drift_threshold": 100.0})
+        detector_lenient = DriftDetector(config=BehaviorConfig(drift_threshold=100.0))
         spike_event = _make_event(output_length=200, tool_used="search", content_type="text")
         result = detector_lenient.check_drift(fp, spike_event)
         assert result.is_drifting is False
 
         # With a very low threshold, a small deviation should trigger
-        detector_strict = DriftDetector(config={"drift_threshold": 0.1})
+        detector_strict = DriftDetector(config=BehaviorConfig(drift_threshold=0.1))
         small_event = _make_event(output_length=110, tool_used="search", content_type="text")
         result2 = detector_strict.check_drift(fp, small_event)
         assert result2.is_drifting is True

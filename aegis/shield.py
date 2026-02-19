@@ -92,7 +92,7 @@ class Shield:
 
         self._mode = self._config.mode
         self._telemetry = TelemetryLogger(
-            log_path=self._config.telemetry.get("local_log_path", ".aegis/telemetry.jsonl"),
+            log_path=self._config.telemetry.local_log_path,
         )
 
         # Instantiate modules based on config
@@ -109,6 +109,7 @@ class Shield:
         self._identity_resolver = None
         self._message_drift_detector = None
         self._prompt_monitor = None
+        self._isolation_forest = None
 
         self._init_modules()
         self._init_monitoring()
@@ -133,12 +134,11 @@ class Shield:
             try:
                 from aegis.identity import NKCell, TrustManager
                 from aegis.identity.resolver import IdentityResolver
-                self._trust_manager = TrustManager(config=self._config.identity.get("trust"))
-                self._nk_cell = NKCell(config=self._config.identity.get("nkcell"))
-                resolver_cfg = self._config.identity.get("resolver", {})
+                self._trust_manager = TrustManager(config=self._config.identity.trust)
+                self._nk_cell = NKCell(config=self._config.identity.nkcell)
                 self._identity_resolver = IdentityResolver(
-                    aliases=resolver_cfg.get("aliases"),
-                    auto_learn=resolver_cfg.get("auto_learn", True),
+                    aliases=self._config.identity.resolver.aliases,
+                    auto_learn=self._config.identity.resolver.auto_learn,
                 )
             except Exception:
                 logger.debug("Identity module init failed", exc_info=True)
@@ -150,16 +150,28 @@ class Shield:
                 self._drift_detector = DriftDetector(config=self._config.behavior)
                 try:
                     from aegis.behavior.message_drift import MessageDriftDetector
-                    msg_drift_cfg = self._config.behavior.get("message_drift", {})
+                    msg_drift_cfg = self._config.behavior.message_drift
                     self._message_drift_detector = MessageDriftDetector(config=msg_drift_cfg)
                 except Exception:
                     logger.debug("Message drift detector init failed", exc_info=True)
                 try:
                     from aegis.behavior.prompt_monitor import PromptMonitor
-                    prompt_mon_cfg = self._config.behavior.get("prompt_monitor", {})
+                    prompt_mon_cfg = self._config.behavior.prompt_monitor
                     self._prompt_monitor = PromptMonitor(config=prompt_mon_cfg)
                 except Exception:
                     logger.debug("Prompt monitor init failed", exc_info=True)
+                # IsolationForest anomaly detection (optional sklearn-based)
+                try:
+                    iso_cfg = self._config.behavior.isolation_forest
+                    if iso_cfg.enabled:
+                        from aegis.behavior.isolation_forest import (
+                            IsolationForestDetector,
+                        )
+                        self._isolation_forest = IsolationForestDetector(
+                            config=iso_cfg,
+                        )
+                except Exception:
+                    logger.debug("IsolationForest init failed", exc_info=True)
             except Exception:
                 logger.debug("Behavior module init failed", exc_info=True)
 
@@ -181,15 +193,13 @@ class Shield:
     def _init_monitoring(self) -> None:
         """Initialize monitoring client if enabled."""
         mon_cfg = self._config.monitoring
-        if not mon_cfg.get("enabled", False):
+        if not mon_cfg.enabled:
             return
         try:
             from aegis.monitoring.client import MonitoringClient
             from aegis.identity.attestation import generate_keypair
 
-            key_type = self._config.identity.get("attestation", {}).get(
-                "key_type", "hmac-sha256"
-            )
+            key_type = self._config.identity.attestation.key_type
             keypair = generate_keypair(key_type)
 
             self._monitoring_client = MonitoringClient(
@@ -532,6 +542,16 @@ class Shield:
                 )
                 drift_sigma = max(drift_sigma, message_drift_sigma)
 
+            # IsolationForest anomaly detection
+            iso_result = None
+            if self._isolation_forest is not None:
+                current_fp = self._behavior_tracker.get_fingerprint(agent_id)
+                if current_fp is not None:
+                    iso_result = self._isolation_forest.record_and_check(current_fp)
+                    if iso_result.is_anomaly:
+                        # Scale anomaly score to sigma-comparable value
+                        drift_sigma = max(drift_sigma, iso_result.anomaly_score * 5.0)
+
             # System prompt integrity
             purpose_hash_changed = False
             if self._prompt_monitor is not None and kwargs is not None:
@@ -570,6 +590,7 @@ class Shield:
                 message_drift_sigma=message_drift_sigma,
                 purpose_hash_changed=purpose_hash_changed,
                 nk_verdict=nk_verdict.verdict if nk_verdict else None,
+                iso_anomaly=iso_result.is_anomaly if iso_result else False,
             )
 
             return {
@@ -580,6 +601,7 @@ class Shield:
                 "message_drift_sigma": message_drift_sigma,
                 "purpose_hash_changed": purpose_hash_changed,
                 "nk_verdict": nk_verdict.verdict if nk_verdict else None,
+                "iso_anomaly": iso_result.is_anomaly if iso_result else False,
             }
         except Exception:
             logger.debug("Behavior recording failed", exc_info=True)

@@ -1,5 +1,6 @@
 """Tests for AEGIS outbound sanitizer."""
 
+from aegis.core.config import ScannerConfig
 from aegis.scanner.sanitizer import OutboundSanitizer, SanitizeResult
 
 
@@ -177,7 +178,7 @@ class TestSanitizeResult:
 
 class TestDisabledSanitizer:
     def test_disabled_returns_text_unchanged(self):
-        sanitizer = OutboundSanitizer(config={"outbound_sanitizer": False})
+        sanitizer = OutboundSanitizer(config=ScannerConfig(outbound_sanitizer=False))
         text = "[SYSTEM] This should not be removed."
         result = sanitizer.sanitize(text)
         assert result.cleaned_text == text
@@ -186,5 +187,5 @@ class TestDisabledSanitizer:
     def test_enabled_property(self):
         enabled = OutboundSanitizer()
         assert enabled.enabled is True
-        disabled = OutboundSanitizer(config={"outbound_sanitizer": False})
+        disabled = OutboundSanitizer(config=ScannerConfig(outbound_sanitizer=False))
         assert disabled.enabled is False

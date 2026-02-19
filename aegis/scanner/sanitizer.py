@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from aegis.core.config import ScannerConfig
+
 
 @dataclass
 class SanitizeResult:
@@ -79,14 +81,14 @@ class OutboundSanitizer:
     """Sanitizes model outputs to remove authority markers and injection scaffolding.
 
     Args:
-        config: Optional dict. If ``config.get("outbound_sanitizer")`` is False,
+        config: Optional ScannerConfig. If ``config.outbound_sanitizer`` is False,
             sanitization is disabled and text passes through unchanged.
     """
 
-    def __init__(self, config: Optional[dict] = None) -> None:
+    def __init__(self, config: Optional[ScannerConfig] = None) -> None:
         self._enabled = True
         if config is not None:
-            self._enabled = bool(config.get("outbound_sanitizer", True))
+            self._enabled = bool(config.outbound_sanitizer)
 
     @property
     def enabled(self) -> bool:

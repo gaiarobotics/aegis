@@ -36,8 +36,8 @@ class TestBudgetTrackerDefaults:
 
     def test_custom_config_limits(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_write_tool_calls"] = 50
-        cfg.broker["budgets"]["max_posts_messages"] = 10
+        cfg.broker.budgets.max_write_tool_calls = 50
+        cfg.broker.budgets.max_posts_messages = 10
         tracker = BudgetTracker(config=cfg)
         remaining = tracker.remaining()
         assert remaining["max_write_tool_calls"] == 50
@@ -52,7 +52,7 @@ class TestBudgetCheckAndRecord:
 
     def test_check_budget_over_limit(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_write_tool_calls"] = 2
+        cfg.broker.budgets.max_write_tool_calls = 2
         tracker = BudgetTracker(config=cfg)
         req = _make_request(action_type="tool_call", read_write="write")
         tracker.record_action(req)
@@ -75,7 +75,7 @@ class TestBudgetCheckAndRecord:
 
     def test_post_message_budget(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_posts_messages"] = 2
+        cfg.broker.budgets.max_posts_messages = 2
         tracker = BudgetTracker(config=cfg)
         req = _make_request(action_type="post_message", read_write="write")
         tracker.record_action(req)
@@ -84,7 +84,7 @@ class TestBudgetCheckAndRecord:
 
     def test_http_write_budget(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_external_http_writes"] = 1
+        cfg.broker.budgets.max_external_http_writes = 1
         tracker = BudgetTracker(config=cfg)
         req = _make_request(action_type="http_write", read_write="write")
         tracker.record_action(req)
@@ -110,7 +110,7 @@ class TestNewDomainTracking:
 
     def test_new_domain_burst_exceeds_limit(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_new_domains"] = 2
+        cfg.broker.budgets.max_new_domains = 2
         tracker = BudgetTracker(config=cfg)
 
         for i, domain in enumerate(["a.com", "b.com", "c.com"]):
@@ -181,7 +181,7 @@ class TestCheckAndRecord:
 
     def test_check_and_record_over_budget(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_write_tool_calls"] = 2
+        cfg.broker.budgets.max_write_tool_calls = 2
         tracker = BudgetTracker(config=cfg)
         req = _make_request(action_type="tool_call", read_write="write")
         assert tracker.check_and_record(req) is True
@@ -202,7 +202,7 @@ class TestCheckAndRecord:
 
     def test_check_and_record_post_message_budget(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_posts_messages"] = 1
+        cfg.broker.budgets.max_posts_messages = 1
         tracker = BudgetTracker(config=cfg)
         req = _make_request(action_type="post_message", read_write="write")
         assert tracker.check_and_record(req) is True
@@ -210,7 +210,7 @@ class TestCheckAndRecord:
 
     def test_check_and_record_http_write_new_domain(self):
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_new_domains"] = 1
+        cfg.broker.budgets.max_new_domains = 1
         tracker = BudgetTracker(config=cfg)
         req1 = _make_request(action_type="http_write", read_write="write", target="a.com")
         req2 = _make_request(action_type="http_write", read_write="write", target="b.com")
@@ -222,7 +222,7 @@ class TestCheckAndRecord:
         import threading
 
         cfg = AegisConfig()
-        cfg.broker["budgets"]["max_write_tool_calls"] = 5
+        cfg.broker.budgets.max_write_tool_calls = 5
         tracker = BudgetTracker(config=cfg)
         barrier = threading.Barrier(10)
         results: list[bool] = []

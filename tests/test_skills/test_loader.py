@@ -2,6 +2,7 @@
 
 import json
 
+from aegis.core.config import SkillsConfig
 from aegis.skills.loader import LoadResult, SkillLoader
 from aegis.skills.manifest import SkillManifest
 
@@ -33,7 +34,7 @@ class TestLoadCleanSkillApproved:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(incubation_mode=False))
         manifest = _make_manifest()
         result = loader.load_skill(str(skill_file), manifest)
 
@@ -138,8 +139,7 @@ class TestIncubationMode:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        config = {"incubation_mode": True}
-        loader = SkillLoader(config=config)
+        loader = SkillLoader(config=SkillsConfig(incubation_mode=True))
         manifest = _make_manifest()
         result = loader.load_skill(str(skill_file), manifest)
 
@@ -152,7 +152,7 @@ class TestIncubationMode:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(incubation_mode=False))
         manifest = _make_manifest()
         result = loader.load_skill(str(skill_file), manifest)
 
@@ -171,8 +171,7 @@ class TestPathContainment:
 
         base_dir = str(tmp_path / "skills")
         (tmp_path / "skills").mkdir()
-        config = {"skills_base_dir": base_dir}
-        loader = SkillLoader(config=config)
+        loader = SkillLoader(config=SkillsConfig(skills_base_dir=base_dir))
         result = loader.load_skill(outside_path, _make_manifest())
         assert result.approved is False
         assert "outside" in result.reason.lower()
@@ -186,8 +185,7 @@ class TestPathContainment:
         skill_file = base_dir / "main.py"
         skill_file.write_text(code)
 
-        config = {"skills_base_dir": str(base_dir)}
-        loader = SkillLoader(config=config)
+        loader = SkillLoader(config=SkillsConfig(skills_base_dir=str(base_dir)))
         result = loader.load_skill(str(skill_file), _make_manifest())
         assert result.approved is True
 

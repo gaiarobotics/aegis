@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from aegis.core.config import TrustConfig
 from aegis.identity.trust import (
     MAX_DELEGATION_BONUS,
     MAX_VOUCHES_PER_VOUCHER,
@@ -18,9 +19,8 @@ from aegis.identity.trust import (
 
 def _tm(**kwargs):
     """Create a TrustManager with rate-limiting disabled for tests."""
-    config = {"interaction_min_interval": 0}
-    config.update(kwargs)
-    return TrustManager(config=config)
+    kwargs.setdefault("interaction_min_interval", 0)
+    return TrustManager(config=TrustConfig(**kwargs))
 
 
 class TestTrustManagerBasics:

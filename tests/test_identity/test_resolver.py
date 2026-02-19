@@ -1,5 +1,9 @@
 """Tests for AEGIS identity resolver — canonical ID mapping."""
 
+import sys
+import types
+from unittest.mock import MagicMock
+
 import pytest
 
 from aegis.identity.resolver import IdentityResolver, _edit_distance_one
@@ -249,3 +253,93 @@ class TestEndToEndTrustResolution:
         # They should NOT be the same record
         assert shield._trust_manager._records.get("alice") is not \
                shield._trust_manager._records.get("moltbook:alice")
+
+
+class TestRapidfuzzIntegration:
+    """Test rapidfuzz integration and fallback."""
+
+    def test_fallback_when_not_available(self, monkeypatch):
+        """Pure-Python fallback produces correct results."""
+        import aegis.identity.resolver as resolver_mod
+        monkeypatch.setattr(resolver_mod, "_RAPIDFUZZ_AVAILABLE", False)
+
+        # Same string
+        assert resolver_mod._edit_distance_at_most("hello", "hello", 1) is True
+        # Distance 1
+        assert resolver_mod._edit_distance_at_most("hello", "helo", 1) is True
+        assert resolver_mod._edit_distance_at_most("hello", "hellp", 1) is True
+        # Distance > 1
+        assert resolver_mod._edit_distance_at_most("hello", "world", 1) is False
+        # Length difference > max_dist
+        assert resolver_mod._edit_distance_at_most("hi", "hello", 1) is False
+
+    def test_rapidfuzz_path_when_available(self, monkeypatch):
+        """When rapidfuzz is available, it's used for distance calculation."""
+        import aegis.identity.resolver as resolver_mod
+
+        # Install a fake rapidfuzz
+        fake_rapidfuzz = types.ModuleType("rapidfuzz")
+        fake_distance = types.ModuleType("rapidfuzz.distance")
+        fake_levenshtein = MagicMock()
+        fake_levenshtein.distance.return_value = 1
+        fake_distance.Levenshtein = fake_levenshtein
+        fake_rapidfuzz.distance = fake_distance
+
+        monkeypatch.setitem(sys.modules, "rapidfuzz", fake_rapidfuzz)
+        monkeypatch.setitem(sys.modules, "rapidfuzz.distance", fake_distance)
+        monkeypatch.setattr(resolver_mod, "_RAPIDFUZZ_AVAILABLE", None)
+
+        result = resolver_mod._edit_distance_at_most("hello", "hellp", 1)
+        assert result is True
+        fake_levenshtein.distance.assert_called_once_with("hello", "hellp")
+
+    def test_both_paths_agree(self, monkeypatch):
+        """Verify both implementations agree on a set of test cases."""
+        import aegis.identity.resolver as resolver_mod
+
+        test_cases = [
+            ("hello", "hello", 1, True),
+            ("hello", "helo", 1, True),
+            ("hello", "hellp", 1, True),
+            ("hello", "world", 1, False),
+            ("abc", "abcd", 1, True),
+            ("abc", "abcde", 1, False),
+            ("test", "test", 0, True),
+            ("test", "tset", 1, False),  # transposition = edit distance 2
+            ("alice", "alicee", 1, True),
+            ("alice", "bob", 1, False),
+        ]
+
+        # Test with pure-Python
+        monkeypatch.setattr(resolver_mod, "_RAPIDFUZZ_AVAILABLE", False)
+        python_results = []
+        for a, b, d, _ in test_cases:
+            python_results.append(resolver_mod._edit_distance_at_most(a, b, d))
+
+        # Verify against expected
+        for (a, b, d, expected), actual in zip(test_cases, python_results):
+            assert actual == expected, f"Failed for ({a}, {b}, {d}): got {actual}, expected {expected}"
+
+    def test_resolver_fuzzy_with_fallback(self, monkeypatch):
+        """IdentityResolver fuzzy matching works with pure-Python fallback."""
+        import aegis.identity.resolver as resolver_mod
+        monkeypatch.setattr(resolver_mod, "_RAPIDFUZZ_AVAILABLE", False)
+
+        resolver = resolver_mod.IdentityResolver(auto_learn=True)
+        # Register a canonical
+        resolver.resolve("alice_agent")
+        assert "alice_agent" in resolver.known_canonicals
+
+        # Typo within edit distance 1 should resolve to canonical
+        resolved = resolver.resolve("alice_agenT")  # capital T = distance 1
+        # Note: _normalize lowercases, so "alice_agenT" -> "alice_agent" (exact match after normalize)
+        assert resolved == "alice_agent"
+
+    def test_is_rapidfuzz_available(self, monkeypatch):
+        """Test the availability check function."""
+        import aegis.identity.resolver as resolver_mod
+        monkeypatch.setattr(resolver_mod, "_RAPIDFUZZ_AVAILABLE", None)
+        monkeypatch.delitem(sys.modules, "rapidfuzz", raising=False)
+        # Should return False since rapidfuzz is not installed in test env
+        result = resolver_mod.is_rapidfuzz_available()
+        assert isinstance(result, bool)

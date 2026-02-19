@@ -19,6 +19,8 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
+from aegis.core.config import TrustConfig
+
 
 # Tier constants
 TIER_UNKNOWN = 0
@@ -65,13 +67,13 @@ class TrustManager:
         config: Optional configuration dict for overriding defaults.
     """
 
-    def __init__(self, config: dict | None = None):
+    def __init__(self, config: TrustConfig | None = None):
         self._records: dict[str, TrustRecord] = {}
-        self._config = config or {}
+        self._config = config or TrustConfig()
         self._compromised: set[str] = set()
         self._compromise_callback = None
         self._interaction_min_interval: float = float(
-            self._config.get("interaction_min_interval", INTERACTION_MIN_INTERVAL)
+            self._config.interaction_min_interval
         )
 
     @staticmethod

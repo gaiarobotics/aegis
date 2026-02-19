@@ -1,5 +1,6 @@
 """Tests for AEGIS prompt envelope."""
 
+from aegis.core.config import ScannerConfig
 from aegis.scanner.envelope import (
     HIERARCHY_DISCLAIMER,
     INSTRUCTION_HIERARCHY,
@@ -188,7 +189,7 @@ class TestAssistantRoleDemotion:
 
 class TestDisabledEnvelope:
     def test_disabled_returns_messages_unchanged(self):
-        envelope = PromptEnvelope(config={"prompt_envelope": False})
+        envelope = PromptEnvelope(config=ScannerConfig(prompt_envelope=False))
         messages = [
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hello."},
@@ -199,7 +200,7 @@ class TestDisabledEnvelope:
         assert wrapped[1]["content"] == "Hello."
 
     def test_disabled_no_hierarchy_disclaimer(self):
-        envelope = PromptEnvelope(config={"prompt_envelope": False})
+        envelope = PromptEnvelope(config=ScannerConfig(prompt_envelope=False))
         messages = [{"role": "user", "content": "Hello."}]
         wrapped = envelope.wrap_messages(messages)
         for msg in wrapped:
@@ -208,7 +209,7 @@ class TestDisabledEnvelope:
     def test_enabled_property(self):
         enabled = PromptEnvelope()
         assert enabled.enabled is True
-        disabled = PromptEnvelope(config={"prompt_envelope": False})
+        disabled = PromptEnvelope(config=ScannerConfig(prompt_envelope=False))
         assert disabled.enabled is False
 
 

@@ -6,6 +6,8 @@ import re
 from copy import deepcopy
 from typing import Any, Optional
 
+from aegis.core.config import ScannerConfig
+
 
 # Provenance tags
 TRUSTED_SYSTEM = "[TRUSTED.SYSTEM]"
@@ -48,14 +50,14 @@ class PromptEnvelope:
     """Wraps messages with provenance tags to establish trust hierarchy.
 
     Args:
-        config: Optional dict. If ``config.get("prompt_envelope")`` is False,
+        config: Optional ScannerConfig. If ``config.prompt_envelope`` is False,
             wrapping is disabled and messages pass through unchanged.
     """
 
-    def __init__(self, config: Optional[dict] = None) -> None:
+    def __init__(self, config: Optional[ScannerConfig] = None) -> None:
         self._enabled = True
         if config is not None:
-            self._enabled = bool(config.get("prompt_envelope", True))
+            self._enabled = bool(config.prompt_envelope)
 
     @property
     def enabled(self) -> bool:

@@ -10,6 +10,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from aegis.core.config import NKCellConfig
+
 
 @dataclass
 class AgentContext:
@@ -58,8 +60,8 @@ class NKCell:
         config: Optional configuration dict for overriding defaults.
     """
 
-    def __init__(self, config: dict | None = None):
-        self._config = config or {}
+    def __init__(self, config: NKCellConfig | None = None):
+        self._config = config or NKCellConfig()
 
     def _compute_activating_signals(self, context: AgentContext) -> dict[str, float]:
         """Compute activating (threat) signals, each in [0.0, 1.0]."""

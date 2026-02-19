@@ -18,10 +18,9 @@ class QuarantineManager:
         if config is None:
             config = AegisConfig()
 
-        triggers = config.broker.get("quarantine_triggers", {})
-        self._threshold_denied_writes: int = triggers.get("repeated_denied_writes", 5)
-        self._threshold_new_domain_burst: int = triggers.get("new_domain_burst", 3)
-        self._threshold_drift_score: float = triggers.get("drift_score_threshold", 3.0)
+        self._threshold_denied_writes: int = config.broker.quarantine_triggers.repeated_denied_writes
+        self._threshold_new_domain_burst: int = config.broker.quarantine_triggers.new_domain_burst
+        self._threshold_drift_score: float = config.broker.quarantine_triggers.drift_score_threshold
 
         self._exit_token: str | None = exit_token
         self._lock = threading.Lock()

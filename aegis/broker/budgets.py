@@ -15,12 +15,11 @@ class BudgetTracker:
         if config is None:
             config = AegisConfig()
 
-        budgets = config.broker.get("budgets", {})
         self._limits: dict[str, int] = {
-            "max_write_tool_calls": budgets.get("max_write_tool_calls", 20),
-            "max_posts_messages": budgets.get("max_posts_messages", 5),
-            "max_external_http_writes": budgets.get("max_external_http_writes", 10),
-            "max_new_domains": budgets.get("max_new_domains", 3),
+            "max_write_tool_calls": config.broker.budgets.max_write_tool_calls,
+            "max_posts_messages": config.broker.budgets.max_posts_messages,
+            "max_external_http_writes": config.broker.budgets.max_external_http_writes,
+            "max_new_domains": config.broker.budgets.max_new_domains,
         }
         self._lock = threading.Lock()
         self._counters: dict[str, int] = {

@@ -4,6 +4,7 @@ import threading
 import time
 
 from aegis.behavior.tracker import BehaviorEvent, BehaviorFingerprint, BehaviorTracker
+from aegis.core.config import BehaviorConfig
 
 
 def _make_event(
@@ -70,7 +71,7 @@ class TestRecordAndFingerprint:
 
 class TestRollingWindow:
     def test_rolling_window(self):
-        tracker = BehaviorTracker(config={"window_size": 5})
+        tracker = BehaviorTracker(config=BehaviorConfig(window_size=5))
 
         # Add 5 events with output_length=100
         for _ in range(5):
@@ -130,11 +131,11 @@ class TestMaxTrackedAgents:
         assert tracker._max_agents == 10000
 
     def test_custom_max_agents(self):
-        tracker = BehaviorTracker(config={"max_tracked_agents": 5})
+        tracker = BehaviorTracker(config=BehaviorConfig(max_tracked_agents=5))
         assert tracker._max_agents == 5
 
     def test_rejects_events_beyond_max_agents(self):
-        tracker = BehaviorTracker(config={"max_tracked_agents": 3})
+        tracker = BehaviorTracker(config=BehaviorConfig(max_tracked_agents=3))
 
         # Add events from 3 agents — all should be accepted
         for i in range(3):
@@ -148,7 +149,7 @@ class TestMaxTrackedAgents:
         assert len(tracker._events) == 3
 
     def test_existing_agents_still_accepted_at_limit(self):
-        tracker = BehaviorTracker(config={"max_tracked_agents": 2})
+        tracker = BehaviorTracker(config=BehaviorConfig(max_tracked_agents=2))
 
         tracker.record_event(_make_event(agent_id="agent-1"))
         tracker.record_event(_make_event(agent_id="agent-2"))
@@ -162,7 +163,7 @@ class TestMaxTrackedAgents:
 class TestAnchorBaseline:
     def test_anchor_created_after_window(self):
         """After anchor_window events, anchor is frozen."""
-        tracker = BehaviorTracker(config={"anchor_window": 10})
+        tracker = BehaviorTracker(config=BehaviorConfig(anchor_window=10))
         for i in range(10):
             tracker.record_event(
                 _make_event(output_length=100, tool_used="search", content_type="text")
@@ -173,7 +174,7 @@ class TestAnchorBaseline:
 
     def test_anchor_not_created_before_window(self):
         """Before window events, no anchor should exist."""
-        tracker = BehaviorTracker(config={"anchor_window": 10})
+        tracker = BehaviorTracker(config=BehaviorConfig(anchor_window=10))
         for i in range(9):
             tracker.record_event(
                 _make_event(output_length=100, tool_used="search", content_type="text")
@@ -183,7 +184,7 @@ class TestAnchorBaseline:
 
     def test_anchor_immutable(self):
         """After anchor is set, new events should not change it."""
-        tracker = BehaviorTracker(config={"anchor_window": 10})
+        tracker = BehaviorTracker(config=BehaviorConfig(anchor_window=10))
         # Record 10 events with output_length=100 to create anchor
         for i in range(10):
             tracker.record_event(
@@ -212,7 +213,7 @@ class TestAnchorBaseline:
 
     def test_custom_anchor_window(self):
         """Custom anchor_window config is respected."""
-        tracker = BehaviorTracker(config={"anchor_window": 5})
+        tracker = BehaviorTracker(config=BehaviorConfig(anchor_window=5))
 
         # 4 events: no anchor yet
         for i in range(4):
@@ -238,7 +239,7 @@ class TestTrackerConcurrency:
 
     def test_concurrent_record_and_fingerprint(self):
         """Concurrent record_event and get_fingerprint calls should be safe."""
-        tracker = BehaviorTracker(config={"window_size": 50})
+        tracker = BehaviorTracker(config=BehaviorConfig(window_size=50))
         errors = []
         barrier = threading.Barrier(10)
 

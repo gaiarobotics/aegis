@@ -74,7 +74,7 @@ class TestQuarantineTriggers:
 class TestQuarantineCustomThresholds:
     def test_custom_denied_writes_threshold(self):
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["repeated_denied_writes"] = 10
+        cfg.broker.quarantine_triggers.repeated_denied_writes = 10
         qm = QuarantineManager(config=cfg)
         qm.check_triggers(denied_count=9, new_domain_count=0)
         assert qm.is_quarantined() is False
@@ -83,7 +83,7 @@ class TestQuarantineCustomThresholds:
 
     def test_custom_domain_burst_threshold(self):
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["new_domain_burst"] = 5
+        cfg.broker.quarantine_triggers.new_domain_burst = 5
         qm = QuarantineManager(config=cfg)
         qm.check_triggers(denied_count=0, new_domain_count=4)
         assert qm.is_quarantined() is False
@@ -92,7 +92,7 @@ class TestQuarantineCustomThresholds:
 
     def test_custom_drift_threshold(self):
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["drift_score_threshold"] = 5.0
+        cfg.broker.quarantine_triggers.drift_score_threshold = 5.0
         qm = QuarantineManager(config=cfg)
         qm.check_triggers(denied_count=0, new_domain_count=0, drift_score=4.9)
         assert qm.is_quarantined() is False
@@ -153,7 +153,7 @@ class TestQuarantineExitToken:
     def test_token_with_config_and_exit_token(self):
         """exit_token works alongside custom config."""
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["repeated_denied_writes"] = 10
+        cfg.broker.quarantine_triggers.repeated_denied_writes = 10
         qm = QuarantineManager(config=cfg, exit_token="my-token")
         qm.enter_quarantine("reason")
         with pytest.raises(ValueError, match="Invalid exit token"):

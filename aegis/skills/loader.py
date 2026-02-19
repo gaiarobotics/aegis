@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from aegis.core.config import SkillsConfig
 from aegis.skills.manifest import SkillManifest, validate_manifest
 from aegis.skills.quarantine import analyze_code
 
@@ -32,11 +33,11 @@ class SkillLoader:
 
     def __init__(
         self,
-        config: dict[str, Any] | None = None,
+        config: SkillsConfig | None = None,
         broker: Any = None,
         scanner: Any = None,
     ) -> None:
-        self._config = config or {}
+        self._config = config or SkillsConfig()
         self._broker = broker
         self._scanner = scanner
         self._hash_cache: dict[str, LoadResult] = {}
@@ -73,7 +74,7 @@ class SkillLoader:
 
         # Step 2: Resolve path and enforce containment
         p = Path(path).resolve()
-        skills_base_dir = self._config.get("skills_base_dir")
+        skills_base_dir = self._config.skills_base_dir
         if skills_base_dir is not None:
             base = Path(skills_base_dir).resolve()
             try:
@@ -125,7 +126,7 @@ class SkillLoader:
             )
 
         # Step 6: Apply incubation mode
-        if self._config.get("incubation_mode", False):
+        if self._config.incubation_mode:
             result.incubation = True
 
         # Step 7: Cache result

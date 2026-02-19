@@ -10,6 +10,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from aegis.core.config import BehaviorConfig
+
 
 @dataclass
 class BehaviorEvent:
@@ -42,11 +44,11 @@ class BehaviorFingerprint:
 class BehaviorTracker:
     """Tracks per-agent behavioral events in a rolling window and computes fingerprints."""
 
-    def __init__(self, config: dict[str, Any] | None = None):
-        config = config or {}
-        self._window_size: int = config.get("window_size", 100)
-        self._max_agents: int = config.get("max_tracked_agents", 10000)
-        self._anchor_window: int = config.get("anchor_window", 20)
+    def __init__(self, config: BehaviorConfig | None = None):
+        config = config or BehaviorConfig()
+        self._window_size: int = config.window_size
+        self._max_agents: int = config.max_tracked_agents
+        self._anchor_window: int = config.anchor_window
         self._events: dict[str, deque[BehaviorEvent]] = {}
         self._anchor_fingerprints: dict[str, BehaviorFingerprint] = {}
         self._event_counts: dict[str, int] = {}

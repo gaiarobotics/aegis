@@ -108,6 +108,14 @@ _DEFAULT_BEHAVIOR = {
     "window_size": 100,
     "drift_threshold": 2.5,
     "min_events_for_profile": 10,
+    "message_drift": {
+        "window_size": 20,
+        "baseline_size": 10,
+        "threshold": 2.5,
+    },
+    "prompt_monitor": {
+        "watch_files": [],
+    },
 }
 
 _DEFAULT_SKILLS = {

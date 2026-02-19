@@ -1,7 +1,5 @@
 """Tests for AEGIS base provider wrapper."""
 
-import warnings
-
 from aegis.providers.base import BaseWrapper, WrappedClient, _InterceptProxy, _extract_user_text
 from aegis.shield import Shield
 
@@ -29,15 +27,6 @@ class TestBaseWrapper:
         client = MockClient()
         wrapped = wrapper.wrap(client)
         assert isinstance(wrapped, WrappedClient)
-
-    def test_wrapped_client_preserves_original(self):
-        shield = Shield(modules=["scanner"])
-        wrapper = BaseWrapper(shield=shield)
-        client = MockClient()
-        wrapped = wrapper.wrap(client)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            assert wrapped.original is client
 
     def test_wrapped_client_delegates_attributes(self):
         shield = Shield(modules=["scanner"])
@@ -73,33 +62,6 @@ class TestBaseWrapper:
         tools = [{"name": "calculator", "type": "function"}]
         wrapped = wrapper.wrap(client, tools=tools)
         assert isinstance(wrapped, WrappedClient)
-
-
-class TestWrappedClientOriginalDeprecation:
-    def test_original_emits_deprecation_warning(self):
-        """Accessing .original should emit a DeprecationWarning."""
-        shield = Shield(modules=[])
-        wrapper = BaseWrapper(shield=shield)
-        client = MockClient()
-        wrapped = wrapper.wrap(client)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = wrapped.original
-            assert result is client
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "deprecated" in str(w[0].message).lower()
-            assert "original" in str(w[0].message).lower()
-
-    def test_original_still_returns_client(self):
-        """Even though deprecated, .original must still return the underlying client."""
-        shield = Shield(modules=[])
-        wrapper = BaseWrapper(shield=shield)
-        client = MockClient()
-        wrapped = wrapper.wrap(client)
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            assert wrapped.original is client
 
 
 class TestWrappedClientAccess:

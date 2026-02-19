@@ -39,7 +39,6 @@ class TestTopLevelAPI:
         client = MockClient()
         wrapped = aegis.wrap(client)
         assert isinstance(wrapped, WrappedClient)
-        assert wrapped.original is client
 
     def test_wrap_with_mode(self):
         client = MockClient()

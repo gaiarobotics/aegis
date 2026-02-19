@@ -33,7 +33,6 @@ class TestGenericWrapper:
         client = MockCreateClient()
         wrapped = wrapper.wrap(client)
         assert isinstance(wrapped, WrappedClient)
-        assert wrapped.original is client
 
     def test_wrap_with_tools(self):
         shield = Shield(modules=[])

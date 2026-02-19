@@ -28,7 +28,6 @@ class TestAnthropicWrapper:
         client = MockAnthropicClient()
         wrapped = wrapper.wrap(client)
         assert isinstance(wrapped, WrappedClient)
-        assert wrapped.original is client
 
     def test_wrapped_client_has_messages(self):
         shield = Shield(modules=["scanner"])

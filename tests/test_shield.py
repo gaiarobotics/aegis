@@ -228,7 +228,6 @@ class TestShieldWrapWithTools:
         tools = [{"name": "calculator", "type": "function"}]
         wrapped = shield.wrap(client, tools=tools)
         assert isinstance(wrapped, WrappedClient)
-        assert wrapped.original is client
 
 
 class TestWrapMessagesProvenance:

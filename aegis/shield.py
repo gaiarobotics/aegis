@@ -107,6 +107,8 @@ class Shield:
         self._context_rollback = None
         self._monitoring_client = None
         self._identity_resolver = None
+        self._message_drift_detector = None
+        self._prompt_monitor = None
 
         self._init_modules()
         self._init_monitoring()
@@ -146,6 +148,18 @@ class Shield:
                 from aegis.behavior import BehaviorTracker, DriftDetector
                 self._behavior_tracker = BehaviorTracker(config=self._config.behavior)
                 self._drift_detector = DriftDetector(config=self._config.behavior)
+                try:
+                    from aegis.behavior.message_drift import MessageDriftDetector
+                    msg_drift_cfg = self._config.behavior.get("message_drift", {})
+                    self._message_drift_detector = MessageDriftDetector(config=msg_drift_cfg)
+                except Exception:
+                    logger.debug("Message drift detector init failed", exc_info=True)
+                try:
+                    from aegis.behavior.prompt_monitor import PromptMonitor
+                    prompt_mon_cfg = self._config.behavior.get("prompt_monitor", {})
+                    self._prompt_monitor = PromptMonitor(config=prompt_mon_cfg)
+                except Exception:
+                    logger.debug("Prompt monitor init failed", exc_info=True)
             except Exception:
                 logger.debug("Behavior module init failed", exc_info=True)
 
@@ -437,6 +451,139 @@ class Shield:
             return
         canonical = self.resolve_agent_id(agent_id)
         self._trust_manager.record_interaction(canonical, clean=clean, anomaly=anomaly)
+
+    def record_response_behavior(
+        self,
+        response: Any,
+        provider: str,
+        agent_id: str = "self",
+        kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Record behavioral data from an LLM response and check for drift.
+
+        Extracts tool calls, output length, and content type from the
+        response.  Feeds data into the behavior tracker, drift detector,
+        message drift detector, and prompt monitor.  Results are forwarded
+        to the NK cell when anomalies are detected.
+
+        Returns a dict with drift metrics or an empty dict on early exit.
+        """
+        if killswitch.is_active():
+            return {}
+        if self._behavior_tracker is None:
+            return {}
+
+        try:
+            import time
+            from aegis.providers.base import (
+                _classify_content_type,
+                _extract_response_text,
+                _extract_response_text_length,
+                _extract_tool_calls,
+            )
+            from aegis.behavior.tracker import BehaviorEvent
+
+            output_length = _extract_response_text_length(response, provider)
+            tool_calls = _extract_tool_calls(response, provider)
+            content_type = _classify_content_type(response, provider)
+            response_text = _extract_response_text(response, provider)
+
+            # Record primary event
+            event = BehaviorEvent(
+                agent_id=agent_id,
+                timestamp=time.time(),
+                event_type="llm_response",
+                output_length=output_length,
+                tool_used=tool_calls[0] if tool_calls else None,
+                content_type=content_type,
+                target=None,
+            )
+            self._behavior_tracker.record_event(event)
+
+            # Record additional tool call events
+            for tool_name in tool_calls[1:]:
+                extra = BehaviorEvent(
+                    agent_id=agent_id,
+                    timestamp=time.time(),
+                    event_type="tool_call",
+                    output_length=0,
+                    tool_used=tool_name,
+                    content_type="tool_use",
+                    target=None,
+                )
+                self._behavior_tracker.record_event(extra)
+
+            # Check drift against anchor
+            drift_result = None
+            drift_sigma = 0.0
+            anchor = self._behavior_tracker.get_anchor(agent_id)
+            if anchor is not None and self._drift_detector is not None:
+                current_fp = self._behavior_tracker.get_fingerprint(agent_id)
+                drift_result = self._drift_detector.check_drift(
+                    current_fp, event, baseline=anchor,
+                )
+                drift_sigma = drift_result.max_sigma
+
+            # Message-level semantic drift
+            message_drift_sigma = 0.0
+            if self._message_drift_detector is not None and response_text:
+                message_drift_sigma = self._message_drift_detector.record_and_check(
+                    agent_id, response_text,
+                )
+                drift_sigma = max(drift_sigma, message_drift_sigma)
+
+            # System prompt integrity
+            purpose_hash_changed = False
+            if self._prompt_monitor is not None and kwargs is not None:
+                purpose_hash_changed = self._prompt_monitor.check(kwargs)
+
+            # Feed into NK cell if anomalies detected
+            nk_verdict = None
+            if self._nk_cell is not None and (drift_sigma > 0.0 or purpose_hash_changed):
+                try:
+                    from aegis.identity import AgentContext
+                    context = AgentContext(
+                        agent_id=agent_id,
+                        has_attestation=False,
+                        attestation_valid=False,
+                        attestation_expired=False,
+                        capabilities_within_scope=True,
+                        drift_sigma=drift_sigma,
+                        clean_interaction_ratio=1.0,
+                        scanner_threat_score=0.0,
+                        communication_count=0,
+                        purpose_hash_changed=purpose_hash_changed,
+                    )
+                    nk_verdict = self._nk_cell.assess(context)
+                except Exception:
+                    logger.debug("NK cell assessment in behavior failed", exc_info=True)
+
+            # Log telemetry
+            self._telemetry.log_event(
+                "behavior_recorded",
+                agent_id=agent_id,
+                output_length=output_length,
+                tool_calls=tool_calls,
+                content_type=content_type,
+                drift_sigma=drift_sigma,
+                is_drifting=drift_result.is_drifting if drift_result else False,
+                message_drift_sigma=message_drift_sigma,
+                purpose_hash_changed=purpose_hash_changed,
+                nk_verdict=nk_verdict.verdict if nk_verdict else None,
+            )
+
+            return {
+                "drift_sigma": drift_sigma,
+                "is_drifting": drift_result.is_drifting if drift_result else False,
+                "drift_details": drift_result.per_dimension_scores if drift_result else {},
+                "new_tools": drift_result.new_tools if drift_result else [],
+                "message_drift_sigma": message_drift_sigma,
+                "purpose_hash_changed": purpose_hash_changed,
+                "nk_verdict": nk_verdict.verdict if nk_verdict else None,
+            }
+        except Exception:
+            logger.debug("Behavior recording failed", exc_info=True)
+            return {}
 
     def wrap_messages(
         self,

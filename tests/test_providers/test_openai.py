@@ -24,7 +24,6 @@ class TestOpenAIWrapper:
         client = MockOpenAIClient()
         wrapped = wrapper.wrap(client)
         assert isinstance(wrapped, WrappedClient)
-        assert wrapped.original is client
 
 
 class TestDetectOpenAI:

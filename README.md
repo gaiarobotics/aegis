@@ -43,15 +43,15 @@ AEGIS layers seven independent defense mechanisms so that bypassing any single o
 
 | Mode | Behavior |
 |------|----------|
-| `observe` (default) | Detects and logs threats, but never blocks - safe for evaluation |
-| `enforce` | Blocks detected threats by raising `ThreatBlockedError` |
+| `enforce` (default) | Blocks detected threats by raising `ThreatBlockedError` |
+| `observe` | Detects and logs threats, but never blocks - useful for evaluation |
 
 ```python
-# Start safe
-client = aegis.wrap(my_client, mode="observe")
+# Protected by default
+client = aegis.wrap(my_client)
 
-# Switch to enforcement when confident
-client = aegis.wrap(my_client, mode="enforce")
+# Use observe mode to evaluate detections before enforcing
+client = aegis.wrap(my_client, mode="observe")
 ```
 
 ## Supported Providers

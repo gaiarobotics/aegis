@@ -18,7 +18,7 @@ class TestTopLevelAPI:
 
     def test_shield_constructor(self):
         shield = aegis.Shield()
-        assert shield.mode == "observe"
+        assert shield.mode == "enforce"
 
     def test_shield_with_mode(self):
         shield = aegis.Shield(mode="enforce")

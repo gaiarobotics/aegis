@@ -51,7 +51,7 @@ from aegis import Shield
 shield = Shield(
     policy=None,        # str | None — path to YAML/JSON config file
     modules=None,       # list[str] | None — modules to enable (default: all)
-    mode=None,          # str | None — "observe" or "enforce"
+    mode=None,          # str | None — "enforce" (default) or "observe"
     config=None,        # AegisConfig | None — pre-built config object
 )
 ```

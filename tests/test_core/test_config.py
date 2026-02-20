@@ -9,7 +9,7 @@ from aegis.core.config import AegisConfig, load_config
 class TestDefaultConfig:
     def test_default_mode(self):
         cfg = AegisConfig()
-        assert cfg.mode == "observe"
+        assert cfg.mode == "enforce"
 
     def test_default_killswitch_false(self):
         cfg = AegisConfig()
@@ -107,7 +107,7 @@ class TestAutoDiscovery:
     def test_no_config_uses_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         cfg = load_config()
-        assert cfg.mode == "observe"
+        assert cfg.mode == "enforce"
 
 
 class TestUnknownSections:

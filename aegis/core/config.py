@@ -290,7 +290,7 @@ class AegisConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    mode: str = "observe"
+    mode: str = "enforce"
     killswitch: bool = False
     agent_id: str = ""
     agent_name: str = ""

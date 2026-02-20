@@ -10,7 +10,7 @@ from aegis.shield import ActionResult, SanitizeResult, ScanResult, Shield
 class TestShieldConstruction:
     def test_default_construction(self):
         shield = Shield()
-        assert shield.mode == "observe"
+        assert shield.mode == "enforce"
         assert shield.config is not None
 
     def test_mode_override(self):
@@ -317,7 +317,7 @@ class TestShieldPolicyConfig:
 
     def test_policy_nonexistent_uses_defaults(self):
         shield = Shield(policy="/nonexistent/aegis.yaml")
-        assert shield.mode == "observe"  # default
+        assert shield.mode == "enforce"  # default
 
 
 class TestShieldRecordTrustInteraction:

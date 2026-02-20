@@ -49,7 +49,7 @@ That's it. AEGIS auto-detects your provider (Anthropic, OpenAI, or generic) and 
 
 When you call `aegis.wrap(client)`:
 
-1. AEGIS creates a `Shield` with default settings (observe mode, all modules enabled)
+1. AEGIS creates a `Shield` with default settings (enforce mode, all modules enabled)
 2. It wraps your client in a transparent proxy
 3. Every API call is intercepted:
    - **Input text** is scanned for prompt injection patterns
@@ -58,7 +58,7 @@ When you call `aegis.wrap(client)`:
    - **Agent identity** is tracked for trust scoring
 4. Clean requests pass through unchanged — you get the same response you'd get without AEGIS
 
-By default, AEGIS runs in **observe mode**: threats are detected and logged but never blocked. Your application behavior is identical to running without AEGIS.
+By default, AEGIS runs in **enforce mode**: detected threats are blocked by raising `ThreatBlockedError`. Use `mode="observe"` if you want to evaluate detections without blocking.
 
 ## Modes
 
@@ -66,15 +66,15 @@ AEGIS has two modes:
 
 | Mode | Behavior | Use When |
 |------|----------|----------|
-| `observe` (default) | Detects threats, logs them, but allows all calls through | Evaluating AEGIS, tuning thresholds |
-| `enforce` | Blocks detected threats by raising `ThreatBlockedError` | Production protection |
+| `enforce` (default) | Blocks detected threats by raising `ThreatBlockedError` | Production protection |
+| `observe` | Detects threats, logs them, but allows all calls through | Evaluating AEGIS, tuning thresholds |
 
 ```python
-# Start in observe mode to evaluate detections
-client = aegis.wrap(anthropic.Anthropic(), mode="observe")
+# Protected by default
+client = aegis.wrap(anthropic.Anthropic())
 
-# Switch to enforce mode when confident
-client = aegis.wrap(anthropic.Anthropic(), mode="enforce")
+# Use observe mode to evaluate detections before enforcing
+client = aegis.wrap(anthropic.Anthropic(), mode="observe")
 ```
 
 ### Handling Blocked Threats

@@ -60,6 +60,8 @@ client = aegis.wrap(my_client, mode="observe")
 |----------|-------------------|
 | **Anthropic** | `client.messages.create()` |
 | **OpenAI** | `client.chat.completions.create()` |
+| **Ollama** | `client.chat()` and `client.generate()` |
+| **vLLM** | `llm.generate()` and `llm.chat()` |
 | **Generic** | `client.create()` or `client.generate()` |
 
 ## Optional Extras

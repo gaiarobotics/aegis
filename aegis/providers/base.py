@@ -66,6 +66,29 @@ def _extract_response_text(response: Any, provider: str) -> str:
             text = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
             if isinstance(text, str):
                 parts.append(text)
+    elif provider == "ollama":
+        if isinstance(response, dict):
+            # chat response: {"message": {"content": "..."}}
+            msg = response.get("message")
+            if isinstance(msg, dict):
+                text = msg.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+            # generate response: {"response": "..."}
+            text = response.get("response")
+            if isinstance(text, str):
+                parts.append(text)
+        elif hasattr(response, "message") and hasattr(response.message, "content"):
+            parts.append(response.message.content)
+        elif hasattr(response, "response") and isinstance(response.response, str):
+            parts.append(response.response)
+    elif provider == "vllm":
+        if isinstance(response, list):
+            for req_output in response:
+                for comp in getattr(req_output, "outputs", []):
+                    text = getattr(comp, "text", None)
+                    if isinstance(text, str):
+                        parts.append(text)
     elif provider == "generic":
         if isinstance(response, str):
             parts.append(response)

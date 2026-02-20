@@ -635,6 +635,12 @@ class Shield:
         if "anthropic" in client_module:
             from aegis.providers.anthropic import AnthropicWrapper
             wrapper = AnthropicWrapper(shield=self)
+        elif "ollama" in client_module:
+            from aegis.providers.ollama import OllamaWrapper
+            wrapper = OllamaWrapper(shield=self)
+        elif "vllm" in client_module:
+            from aegis.providers.vllm import VLLMWrapper
+            wrapper = VLLMWrapper(shield=self)
         elif "openai" in client_module:
             from aegis.providers.openai import OpenAIWrapper
             wrapper = OpenAIWrapper(shield=self)

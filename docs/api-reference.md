@@ -15,7 +15,7 @@ protected = aegis.wrap(client, mode="enforce", modules=["scanner", "broker"])
 ```
 
 **Parameters:**
-- `client` — The LLM client to wrap (Anthropic, OpenAI, or any client with `create()`/`generate()`)
+- `client` — The LLM client to wrap (Anthropic, OpenAI, Ollama, vLLM, or any client with `create()`/`generate()`)
 - `**kwargs` — Passed to `Shield()` constructor: `policy`, `modules`, `mode`, `config`
 
 **Returns:** `WrappedClient` — a transparent proxy that intercepts API calls

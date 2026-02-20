@@ -100,8 +100,10 @@ AEGIS auto-detects your LLM client:
 
 | Provider | Intercepted Method | Detection |
 |----------|-------------------|-----------|
-| **Anthropic** | `client.messages.create()` | Class name contains "Anthropic" |
-| **OpenAI** | `client.chat.completions.create()` | Class name contains "OpenAI" |
+| **Anthropic** | `client.messages.create()` | Module contains "anthropic" |
+| **OpenAI** | `client.chat.completions.create()` | Module contains "openai" |
+| **Ollama** | `client.chat()` and `client.generate()` | Module contains "ollama" |
+| **vLLM** | `llm.generate()` and `llm.chat()` | Module contains "vllm" |
 | **Generic** | `client.create()` or `client.generate()` | Fallback for any client with these methods |
 
 All other attributes and methods on your client pass through unchanged.

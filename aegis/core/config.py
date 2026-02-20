@@ -267,6 +267,22 @@ class TelemetryConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Integrity sub-models
+# ---------------------------------------------------------------------------
+
+class IntegrityConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    hash_on_load: str = "async"              # "sync" | "async" | "off"
+    rehash_interval_seconds: int = 3600      # periodic full re-hash (0 = disabled)
+    inotify_enabled: bool = True             # attempt inotify on Linux
+    ollama_models_path: str = ""             # override; empty = auto-detect
+    hf_cache_path: str = ""                  # override; empty = auto-detect
+    model_file_extensions: list[str] = Field(default_factory=lambda: [
+        ".safetensors", ".bin", ".pt", ".pth", ".gguf", ".ggml", ".model",
+    ])
+
+
+# ---------------------------------------------------------------------------
 # Modules toggle
 # ---------------------------------------------------------------------------
 
@@ -278,6 +294,7 @@ _DEFAULT_MODULES: dict[str, bool] = {
     "behavior": True,
     "skills": True,
     "recovery": True,
+    "integrity": True,
 }
 
 
@@ -304,6 +321,7 @@ class AegisConfig(BaseModel):
     behavior: BehaviorConfig = Field(default_factory=BehaviorConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     recovery: RecoveryConfig = Field(default_factory=RecoveryConfig)
+    integrity: IntegrityConfig = Field(default_factory=IntegrityConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
@@ -354,6 +372,8 @@ _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
     ("AEGIS_MONITORING_ENABLED", "monitoring", "enabled", lambda v: v.lower() in ("1", "true", "yes")),
     ("AEGIS_MONITORING_SERVICE_URL", "monitoring", "service_url", str),
     ("AEGIS_MONITORING_API_KEY", "monitoring", "api_key", str),
+    ("AEGIS_INTEGRITY_HASH_ON_LOAD", "integrity", "hash_on_load", str),
+    ("AEGIS_INTEGRITY_REHASH_INTERVAL", "integrity", "rehash_interval_seconds", int),
 ]
 
 

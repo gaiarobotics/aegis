@@ -110,6 +110,7 @@ class Shield:
         self._message_drift_detector = None
         self._prompt_monitor = None
         self._isolation_forest = None
+        self._integrity_monitor = None
 
         self._init_modules()
         self._init_monitoring()
@@ -189,6 +190,77 @@ class Shield:
                 self._context_rollback = ContextRollback()
             except Exception:
                 logger.debug("Recovery module init failed", exc_info=True)
+
+        if self._config.is_module_enabled("integrity"):
+            try:
+                from aegis.integrity.monitor import IntegrityMonitor
+                self._integrity_monitor = IntegrityMonitor(
+                    config=self._config.integrity,
+                )
+            except Exception:
+                logger.debug("Integrity module init failed", exc_info=True)
+
+    @property
+    def integrity_monitor(self):
+        """Access the integrity monitor module (may be None)."""
+        return self._integrity_monitor
+
+    def check_model_integrity(
+        self,
+        model_name: str,
+        provider: str,
+        *,
+        model_path: str | None = None,
+    ) -> None:
+        """Check model file integrity, registering the model on first call.
+
+        In enforce mode, raises ModelTamperedError if tampering detected.
+        In observe mode, logs the tampering but allows inference to proceed.
+
+        No-op when killswitch is active or integrity module is disabled.
+        """
+        if killswitch.is_active():
+            return
+        if self._integrity_monitor is None:
+            return
+
+        # Auto-register on first call for this model
+        if not self._integrity_monitor.is_registered(model_name):
+            self._integrity_monitor.register_model(
+                model_name, provider, model_path=model_path,
+            )
+
+        # Fast stat check
+        issues = self._integrity_monitor.check_integrity(model_name)
+        if not issues:
+            return
+
+        # Tampering detected
+        from aegis.integrity.monitor import ModelTamperedError
+
+        detail = "; ".join(issues)
+        first_file = issues[0].split(": ", 1)[-1] if issues else "unknown"
+
+        self._telemetry.log_event(
+            "model_integrity",
+            model_name=model_name,
+            provider=provider,
+            tampering_detected=True,
+            issues=issues,
+            mode=self._mode,
+        )
+
+        if self._mode == "enforce":
+            raise ModelTamperedError(
+                model_name=model_name,
+                file_path=first_file,
+                detail=detail,
+            )
+        else:
+            logger.warning(
+                "Model tampering detected (observe mode): %s -- %s",
+                model_name, detail,
+            )
 
     def _init_monitoring(self) -> None:
         """Initialize monitoring client if enabled."""

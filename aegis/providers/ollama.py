@@ -51,6 +51,11 @@ class OllamaWrapper(BaseWrapper):
                 if messages:
                     kwargs["messages"] = shield.wrap_messages(messages)
 
+                # 2.5. Model integrity check
+                model = kwargs.get("model", "")
+                if model:
+                    shield.check_model_integrity(model, provider="ollama")
+
                 # 3. Call the real method
                 response = real_chat(*args, **kwargs)
 
@@ -87,6 +92,11 @@ class OllamaWrapper(BaseWrapper):
                     is_threat = scan.is_threat
                     if is_threat and shield.mode == "enforce":
                         raise ThreatBlockedError(scan)
+
+                # 1.5. Model integrity check
+                model = kwargs.get("model", "")
+                if model:
+                    shield.check_model_integrity(model, provider="ollama")
 
                 # 2. Call the real method
                 response = real_generate(*args, **kwargs)

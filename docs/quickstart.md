@@ -471,6 +471,95 @@ When integrated with the Shield, quarantine is triggered automatically:
 
 During quarantine, all write operations are blocked. The agent can still read data and respond to queries, but cannot modify external state.
 
+## Model Integrity Protection
+
+When you use Ollama or vLLM, AEGIS automatically monitors model files on disk for tampering. This protects against model swaps, corruption, and poisoning attacks.
+
+**It's automatic.** If you're wrapping an Ollama or vLLM client, integrity monitoring is already enabled. No extra setup needed.
+
+```python
+import aegis
+import ollama
+
+# Model integrity is checked on every call
+client = aegis.wrap(ollama.Client())
+response = client.chat(model="llama3", messages=[{"role": "user", "content": "Hello"}])
+```
+
+### What It Detects
+
+On the first API call for a model, AEGIS:
+1. Discovers model files (Ollama blobs or HuggingFace cache)
+2. Takes a stat snapshot (mtime, size, inode) of each file
+3. Hashes files asynchronously in the background (SHA256)
+
+On every subsequent call, AEGIS checks the stat snapshot (essentially free — one `os.stat()` per file). If anything has changed:
+
+- **Enforce mode**: raises `ModelTamperedError`
+- **Observe mode**: logs a warning
+
+```python
+from aegis import ModelTamperedError
+
+try:
+    response = client.chat(model="llama3", messages=[...])
+except ModelTamperedError as e:
+    print(f"Model {e.model_name} tampered: {e.detail}")
+```
+
+### Tiered Detection Strategy
+
+| Tier | What | Cost | When |
+|------|------|------|------|
+| **Stat check** | mtime, size, inode | ~1 microsecond per file | Every API call |
+| **inotify** | Real-time file change notifications | Zero (kernel push) | Linux only, automatic |
+| **SHA256 hash** | Full content verification | Proportional to file size | On model registration |
+| **Periodic re-hash** | Catches mmap modifications | Same as above | Every hour (configurable) |
+
+inotify gracefully degrades on non-Linux platforms — stat checks and hashing still provide protection.
+
+<details>
+<summary>Integrity configuration</summary>
+
+```yaml
+# aegis.yaml
+integrity:
+  hash_on_load: async        # "sync" (blocks until hashed), "async" (background), or "off"
+  rehash_interval_seconds: 3600   # Re-hash all files periodically (0 to disable)
+  inotify_enabled: true       # Use inotify on Linux (auto-disabled on other platforms)
+  ollama_models_path: ""      # Override Ollama models directory (default: auto-detect)
+  hf_cache_path: ""           # Override HuggingFace cache directory (default: auto-detect)
+```
+
+Environment variable overrides:
+```bash
+AEGIS_INTEGRITY_HASH_ON_LOAD=sync
+AEGIS_INTEGRITY_REHASH_INTERVAL=1800
+```
+
+</details>
+
+<details>
+<summary>Provenance verification</summary>
+
+When AEGIS discovers Ollama model files, it reads the manifest to get expected SHA256 digests for each blob. After hashing, AEGIS compares against these digests to verify provenance:
+
+- **VERIFIED_MANIFEST** — computed hash matches the manifest digest
+- **UNVERIFIED** — no manifest digest available, or hash doesn't match
+- **PENDING** — hash not yet computed (async mode, not finished)
+
+```python
+shield = Shield()
+monitor = shield.integrity_monitor
+if monitor is not None:
+    status = monitor.get_status("llama3")
+    if status:
+        for f in status.files:
+            print(f"{f.path}: {f.provenance.value}")
+```
+
+</details>
+
 ## Configuration
 
 ### Config File
@@ -536,6 +625,7 @@ shield = Shield(
 | `memory` | Guards against memory poisoning | Agents with persistent memory across sessions |
 | `skills` | Sandboxes skill execution | Agents with dynamic skill loading |
 | `recovery` | Quarantine and rollback | Production systems needing auto-containment |
+| `integrity` | Detects model file tampering | Ollama or vLLM with local model files |
 
 ## Killswitch
 

@@ -37,6 +37,7 @@ AEGIS layers seven independent defense mechanisms so that bypassing any single o
 | **Behavior** | Fingerprints agent behavior and detects drift from baseline |
 | **Memory** | Guards against memory poisoning with category restrictions and taint tracking |
 | **Recovery** | Auto-quarantines compromised agents and rolls back to known-good state |
+| **Integrity** | Detects tampering of local model files (Ollama, vLLM) via stat checks, hashing, and inotify |
 | **Monitoring** | Optional reporting to a central monitoring service for network-wide visibility |
 
 ## Modes

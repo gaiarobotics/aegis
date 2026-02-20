@@ -66,6 +66,7 @@ If `policy` is `None`, AEGIS auto-discovers `aegis.yaml` or `aegis.json` by sear
 | `shield.mode` | `str` | Current mode (`"observe"` or `"enforce"`) |
 | `shield.scanner` | `Scanner \| None` | Scanner module instance |
 | `shield.broker` | `Broker \| None` | Broker module instance |
+| `shield.integrity_monitor` | `IntegrityMonitor \| None` | Integrity monitoring module |
 
 ### `shield.scan_input(text) → ScanResult`
 
@@ -147,9 +148,80 @@ Map a raw agent identifier to its canonical form.
 shield.resolve_agent_id("@Alice")  # → "alice"
 ```
 
+### `shield.check_model_integrity(model_name, provider, *, model_path=None)`
+
+Check model file integrity for Ollama or vLLM models. Auto-registers the model on first call.
+
+```python
+shield.check_model_integrity("llama3", provider="ollama")
+```
+
+In enforce mode, raises `ModelTamperedError` if tampering is detected. In observe mode, logs a warning. No-op when the integrity module is disabled or killswitch is active.
+
 ### `shield.record_trust_interaction(agent_id, clean=True, anomaly=False)`
 
 Record a trust interaction for an agent. The `agent_id` is resolved to canonical form before recording.
+
+---
+
+## Integrity
+
+### `ModelTamperedError`
+
+Exception raised when model file tampering is detected in enforce mode.
+
+```python
+from aegis import ModelTamperedError
+
+try:
+    response = client.chat(model="llama3", messages=[...])
+except ModelTamperedError as e:
+    e.model_name   # "llama3"
+    e.file_path    # path to the tampered file
+    e.detail       # "mtime changed: /path/to/file"
+```
+
+### `IntegrityMonitor`
+
+```python
+from aegis.integrity import IntegrityMonitor
+
+monitor = IntegrityMonitor(config=integrity_config)
+monitor.register_model("llama3", provider="ollama")
+monitor.is_registered("llama3")        # True
+issues = monitor.check_integrity("llama3")  # [] if clean
+status = monitor.get_status("llama3")  # RegisteredModel
+monitor.stop()                         # Clean shutdown
+```
+
+### `ProvenanceStatus`
+
+```python
+from aegis.integrity import ProvenanceStatus
+
+ProvenanceStatus.PENDING              # Hash not yet computed
+ProvenanceStatus.VERIFIED_MANIFEST    # Hash matches Ollama manifest digest
+ProvenanceStatus.UNVERIFIED           # No manifest or hash mismatch
+```
+
+### `IntegrityConfig`
+
+```yaml
+integrity:
+  hash_on_load: async              # "sync", "async", or "off"
+  rehash_interval_seconds: 3600    # 0 to disable periodic re-hash
+  inotify_enabled: true            # Linux inotify for real-time detection
+  ollama_models_path: ""           # Override ~/.ollama/models
+  hf_cache_path: ""                # Override ~/.cache/huggingface/hub
+  model_file_extensions:           # File extensions to track
+    - .safetensors
+    - .bin
+    - .pt
+    - .pth
+    - .gguf
+    - .ggml
+    - .model
+```
 
 ---
 
@@ -542,6 +614,7 @@ modules:
   behavior: true
   skills: true
   recovery: true
+  integrity: true
 
 scanner:
   pattern_matching: true
@@ -614,6 +687,13 @@ recovery:
   quarantine_on_hostile_nk: true
   purge_window_hours: 24
 
+integrity:
+  hash_on_load: async
+  rehash_interval_seconds: 3600
+  inotify_enabled: true
+  ollama_models_path: ""
+  hf_cache_path: ""
+
 monitoring:
   enabled: false
   service_url: "https://aegis.gaiarobotics.com/api/v1"
@@ -640,6 +720,8 @@ telemetry:
 | `AEGIS_BROKER_DEFAULT_POSTURE` | `broker.default_posture` |
 | `AEGIS_BEHAVIOR_DRIFT_THRESHOLD` | `behavior.drift_threshold` |
 | `AEGIS_BEHAVIOR_WINDOW_SIZE` | `behavior.window_size` |
+| `AEGIS_INTEGRITY_HASH_ON_LOAD` | `integrity.hash_on_load` |
+| `AEGIS_INTEGRITY_REHASH_INTERVAL` | `integrity.rehash_interval_seconds` |
 | `AEGIS_MONITORING_ENABLED` | `monitoring.enabled` |
 | `AEGIS_MONITORING_SERVICE_URL` | `monitoring.service_url` |
 | `AEGIS_MONITORING_API_KEY` | `monitoring.api_key` |

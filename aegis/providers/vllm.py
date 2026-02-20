@@ -56,6 +56,13 @@ class VLLMWrapper(BaseWrapper):
                                 if shield.mode == "enforce":
                                     raise ThreatBlockedError(scan)
 
+                # Model integrity check
+                model_name = getattr(client, "model", None) or ""
+                if model_name:
+                    shield.check_model_integrity(
+                        model_name, provider="vllm", model_path=model_name,
+                    )
+
                 # Call the real method
                 results = real_generate(*args, **kwargs)
 
@@ -95,6 +102,13 @@ class VLLMWrapper(BaseWrapper):
                 # 2. Tag provenance
                 if messages:
                     kwargs["messages"] = shield.wrap_messages(messages)
+
+                # 2.5. Model integrity check
+                model_name = getattr(client, "model", None) or ""
+                if model_name:
+                    shield.check_model_integrity(
+                        model_name, provider="vllm", model_path=model_name,
+                    )
 
                 # 3. Call real method
                 results = real_chat(*args, **kwargs)

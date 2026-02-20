@@ -1,6 +1,7 @@
 """AEGIS: Agent Epidemiological Guardian & Immune System."""
 
 from aegis.core import killswitch
+from aegis.integrity.monitor import ModelTamperedError
 from aegis.shield import Shield, ThreatBlockedError
 
 __version__ = "0.1.0"
@@ -31,6 +32,7 @@ def wrap(client, **kwargs):
 
 
 __all__ = [
+    "ModelTamperedError",
     "Shield",
     "ThreatBlockedError",
     "killswitch",

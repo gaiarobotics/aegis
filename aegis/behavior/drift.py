@@ -50,6 +50,7 @@ class DriftDetector:
         dims = ref.dimensions
 
         # --- output_length z-score ---
+        # TODO(mb): Is z-score the best metric here? Revisit.
         ol = dims.get("output_length", {"mean": 0.0, "std": 0.0})
         ol_mean = ol["mean"]
         ol_std = ol["std"]

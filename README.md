@@ -27,7 +27,7 @@ One line. No config needed. AEGIS auto-detects your provider, scans inputs for p
 
 ## What It Does
 
-AEGIS layers seven independent defense mechanisms so that bypassing any single one doesn't mean total compromise:
+AEGIS layers eight independent defense mechanisms so that bypassing any single one doesn't mean total compromise:
 
 | Module | Purpose |
 |--------|---------|

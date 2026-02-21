@@ -18,7 +18,7 @@ The three frameworks solve overlapping but distinct problems:
 
 **LLM Guard** uses a scanner pattern with separate input scanners (prompt injection, PII anonymization, toxicity, topic banning) and output scanners (content moderation, bias, sensitive data, regex). Each scanner returns `(sanitized_output, is_valid, risk_score)`. It's focused squarely on security -- closer to a WAF for LLMs.
 
-**AEGIS** uses an epidemiological/immune system model with 7 interconnected modules. It's not just scanning I/O -- it models agent identity, trust relationships, behavioral fingerprints, and immune-like threat responses.
+**AEGIS** uses an epidemiological/immune system model with 8 interconnected modules. It's not just scanning I/O -- it models agent identity, trust relationships, behavioral fingerprints, and immune-like threat responses.
 
 ## What AEGIS Does Differently
 

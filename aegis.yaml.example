@@ -105,6 +105,14 @@ recovery:
   quarantine_on_hostile_nk: true
   purge_window_hours: 24
 
+# -- Killswitch -----------------------------------------------
+killswitch:
+  monitors: []                  # List of monitor URLs or "aegis-central"
+  # monitors:
+  #   - "aegis-central"         # Managed emergency shutoff via aegis.gaiarobotics.com
+  #   - "https://my-monitor.example.com/api/v1/killswitch/status"
+  ttl_seconds: 60               # How often to poll monitors (seconds)
+
 # -- Telemetry -----------------------------------------------
 telemetry:
   local_log: true

@@ -10,7 +10,7 @@ import sqlite3
 import threading
 from typing import Any
 
-from monitor.models import AgentEdge, AgentNode, CompromiseRecord, StoredEvent
+from monitor.models import AgentEdge, AgentNode, CompromiseRecord, KillswitchRule, StoredEvent
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -58,6 +58,17 @@ CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_compromises_compromised ON compromises(compromised_agent_id);
 CREATE INDEX IF NOT EXISTS idx_compromises_ts ON compromises(timestamp);
+
+CREATE TABLE IF NOT EXISTS killswitch_rules (
+    rule_id    TEXT PRIMARY KEY,
+    scope      TEXT NOT NULL DEFAULT 'agent',
+    target     TEXT NOT NULL DEFAULT '',
+    blocked    INTEGER NOT NULL DEFAULT 1,
+    reason     TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_ks_scope ON killswitch_rules(scope);
 """
 
 
@@ -291,6 +302,87 @@ class Database:
             )
             for r in rows
         ]
+
+    # ---- Killswitch Rules ----
+
+    def insert_killswitch_rule(self, rule: KillswitchRule) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO killswitch_rules
+                   (rule_id, scope, target, blocked, reason, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rule.rule_id,
+                rule.scope,
+                rule.target,
+                int(rule.blocked),
+                rule.reason,
+                rule.created_at,
+                rule.created_by,
+            ),
+        )
+        conn.commit()
+
+    def get_killswitch_rules(self) -> list[KillswitchRule]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM killswitch_rules ORDER BY created_at DESC"
+        ).fetchall()
+        return [
+            KillswitchRule(
+                rule_id=r["rule_id"],
+                scope=r["scope"],
+                target=r["target"],
+                blocked=bool(r["blocked"]),
+                reason=r["reason"],
+                created_at=r["created_at"],
+                created_by=r["created_by"],
+            )
+            for r in rows
+        ]
+
+    def delete_killswitch_rule(self, rule_id: str) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute(
+            "DELETE FROM killswitch_rules WHERE rule_id = ?", (rule_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def check_killswitch(self, agent_id: str, operator_id: str) -> tuple[bool, str, str]:
+        """Check killswitch status for an agent.
+
+        Priority: swarm rules first, then operator, then agent.
+        Returns (blocked, reason, scope).
+        """
+        conn = self._get_conn()
+        # Check swarm-level first
+        row = conn.execute(
+            "SELECT * FROM killswitch_rules WHERE scope = 'swarm' AND blocked = 1 LIMIT 1"
+        ).fetchone()
+        if row:
+            return True, row["reason"], "swarm"
+
+        # Check operator-level
+        if operator_id:
+            row = conn.execute(
+                "SELECT * FROM killswitch_rules WHERE scope = 'operator' AND target = ? AND blocked = 1 LIMIT 1",
+                (operator_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "operator"
+
+        # Check agent-level
+        if agent_id:
+            row = conn.execute(
+                "SELECT * FROM killswitch_rules WHERE scope = 'agent' AND target = ? AND blocked = 1 LIMIT 1",
+                (agent_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "agent"
+
+        return False, "", ""
 
     def count_compromised_agents(self) -> int:
         conn = self._get_conn()

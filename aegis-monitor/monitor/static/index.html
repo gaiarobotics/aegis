@@ -73,6 +73,16 @@
                 </div>
             </div>
 
+            <div class="filter-group killswitch-panel">
+                <h3>Killswitch</h3>
+                <div id="ks-status" class="ks-status-text">No rules active</div>
+                <div class="ks-actions">
+                    <button class="ks-btn ks-block-swarm" onclick="ksBlockSwarm()">Block All Agents</button>
+                    <button class="ks-btn ks-unblock-swarm" onclick="ksUnblockSwarm()">Unblock All</button>
+                </div>
+                <div id="ks-rules-list"></div>
+            </div>
+
             <div class="filter-group">
                 <h3>Time Range</h3>
                 <select id="time-range" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">

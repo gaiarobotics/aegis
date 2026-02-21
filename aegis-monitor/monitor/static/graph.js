@@ -155,7 +155,18 @@
                 data.at_risk_agents && data.at_risk_agents.length > 0 ?
                     data.at_risk_agents.join(", ") : "None");
 
-            document.getElementById("agent-popup").classList.add("visible");
+            // Add killswitch buttons to popup
+            var popup = document.getElementById("agent-popup");
+            var existingKsBtn = popup.querySelector(".ks-popup-actions");
+            if (existingKsBtn) existingKsBtn.remove();
+            var btnDiv = document.createElement("div");
+            btnDiv.className = "ks-popup-actions";
+            btnDiv.innerHTML =
+                '<button class="ks-btn ks-block-agent" onclick="ksBlockAgent(\'' + nodeId + '\')">Block Agent</button>' +
+                '<button class="ks-btn ks-unblock-agent" onclick="ksUnblockAgent(\'' + nodeId + '\')">Unblock Agent</button>';
+            popup.appendChild(btnDiv);
+
+            popup.classList.add("visible");
         } catch (err) {
             // silent
         }
@@ -202,6 +213,9 @@
                 " score=" + (data.threat_score || 0).toFixed(2));
         } else if (type === "heartbeat") {
             logEvent("heartbeat", "HEARTBEAT: " + data.agent_id);
+        } else if (type === "killswitch") {
+            logEvent("killswitch", "KILLSWITCH: " + data.action + " rule " + data.rule_id);
+            fetchKillswitchRules();
         }
 
         // Refresh graph and metrics
@@ -225,6 +239,120 @@
         }
     }
 
+    // ---- Killswitch ----
+    async function fetchKillswitchRules() {
+        try {
+            var resp = await fetch("/api/v1/killswitch/rules");
+            var data = await resp.json();
+            var rules = data.rules || [];
+            var statusEl = document.getElementById("ks-status");
+            var listEl = document.getElementById("ks-rules-list");
+            if (!statusEl || !listEl) return;
+
+            if (rules.length === 0) {
+                statusEl.textContent = "No rules active";
+                statusEl.className = "ks-status-text";
+                listEl.innerHTML = "";
+                return;
+            }
+
+            var blockingRules = rules.filter(function (r) { return r.blocked; });
+            if (blockingRules.length > 0) {
+                statusEl.textContent = blockingRules.length + " blocking rule(s) active";
+                statusEl.className = "ks-status-text ks-active";
+            } else {
+                statusEl.textContent = rules.length + " rule(s), none blocking";
+                statusEl.className = "ks-status-text";
+            }
+
+            listEl.innerHTML = rules.map(function (r) {
+                var label = r.scope === "swarm" ? "ALL AGENTS" :
+                    r.scope + ": " + (r.target || "—");
+                return '<div class="ks-rule">' +
+                    '<span class="ks-rule-scope">' + label + '</span>' +
+                    '<span class="ks-rule-reason">' + (r.reason || "") + '</span>' +
+                    '<button class="ks-rule-delete" onclick="ksDeleteRule(\'' + r.rule_id + '\')">&times;</button>' +
+                    '</div>';
+            }).join("");
+        } catch (err) {
+            // silent
+        }
+    }
+
+    window.ksBlockSwarm = async function () {
+        try {
+            await fetch("/api/v1/killswitch/rules", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    scope: "swarm",
+                    blocked: true,
+                    reason: "Emergency shutoff via dashboard",
+                }),
+            });
+            fetchKillswitchRules();
+        } catch (err) {
+            logEvent("system", "Failed to block swarm: " + err.message);
+        }
+    };
+
+    window.ksUnblockSwarm = async function () {
+        try {
+            var resp = await fetch("/api/v1/killswitch/rules");
+            var data = await resp.json();
+            var swarmRules = (data.rules || []).filter(function (r) { return r.scope === "swarm"; });
+            for (var i = 0; i < swarmRules.length; i++) {
+                await fetch("/api/v1/killswitch/rules/" + swarmRules[i].rule_id, { method: "DELETE" });
+            }
+            fetchKillswitchRules();
+        } catch (err) {
+            logEvent("system", "Failed to unblock swarm: " + err.message);
+        }
+    };
+
+    window.ksBlockAgent = async function (agentId) {
+        try {
+            await fetch("/api/v1/killswitch/rules", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    scope: "agent",
+                    target: agentId,
+                    blocked: true,
+                    reason: "Blocked via dashboard",
+                }),
+            });
+            fetchKillswitchRules();
+        } catch (err) {
+            logEvent("system", "Failed to block agent: " + err.message);
+        }
+    };
+
+    window.ksUnblockAgent = async function (agentId) {
+        try {
+            var resp = await fetch("/api/v1/killswitch/rules");
+            var data = await resp.json();
+            var agentRules = (data.rules || []).filter(function (r) {
+                return r.scope === "agent" && r.target === agentId;
+            });
+            for (var i = 0; i < agentRules.length; i++) {
+                await fetch("/api/v1/killswitch/rules/" + agentRules[i].rule_id, { method: "DELETE" });
+            }
+            fetchKillswitchRules();
+        } catch (err) {
+            logEvent("system", "Failed to unblock agent: " + err.message);
+        }
+    };
+
+    window.ksDeleteRule = async function (ruleId) {
+        try {
+            await fetch("/api/v1/killswitch/rules/" + ruleId, { method: "DELETE" });
+            fetchKillswitchRules();
+        } catch (err) {
+            logEvent("system", "Failed to delete rule: " + err.message);
+        }
+    };
+
     // ---- Filter listeners ----
     function setupFilters() {
         document.querySelectorAll('[data-filter]').forEach(function (el) {
@@ -238,10 +366,12 @@
         setupFilters();
         fetchGraph();
         fetchMetrics();
+        fetchKillswitchRules();
         connectWS();
 
         // Periodic refresh
         setInterval(fetchGraph, 15000);
         setInterval(fetchMetrics, 10000);
+        setInterval(fetchKillswitchRules, 10000);
     });
 })();

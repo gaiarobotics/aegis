@@ -20,6 +20,19 @@ protected = aegis.wrap(client, mode="enforce", modules=["scanner", "broker"])
 
 **Returns:** `WrappedClient` — a transparent proxy that intercepts API calls
 
+### `aegis.InferenceBlockedError`
+
+Exception raised when a remote killswitch blocks inference.
+
+```python
+from aegis.shield import InferenceBlockedError
+
+try:
+    response = client.messages.create(...)
+except InferenceBlockedError as e:
+    e.reason  # Human-readable reason from the blocking monitor
+```
+
 ### `aegis.ThreatBlockedError`
 
 Exception raised when enforce mode blocks a detected threat.
@@ -63,6 +76,7 @@ If `policy` is `None`, AEGIS auto-discovers `aegis.yaml` or `aegis.json` by sear
 | `shield.scanner` | `Scanner \| None` | Scanner module instance |
 | `shield.broker` | `Broker \| None` | Broker module instance |
 | `shield.integrity_monitor` | `IntegrityMonitor \| None` | Integrity monitoring module |
+| `shield.is_blocked` | `bool` | Whether remote killswitch is blocking inference |
 
 ### `shield.scan_input(text) → ScanResult`
 
@@ -153,6 +167,14 @@ shield.check_model_integrity("llama3", provider="ollama")
 ```
 
 In enforce mode, raises `ModelTamperedError` if tampering is detected. In observe mode, logs a warning. No-op when the integrity module is disabled.
+
+### `shield.check_killswitch()`
+
+Raise `InferenceBlockedError` if the remote killswitch is currently active. Called automatically by all provider wrappers before each inference call.
+
+```python
+shield.check_killswitch()  # raises InferenceBlockedError if blocked
+```
 
 ### `shield.record_trust_interaction(agent_id, clean=True, anomaly=False)`
 
@@ -665,6 +687,10 @@ integrity:
   inotify_enabled: true
   ollama_models_path: ""
   hf_cache_path: ""
+
+killswitch:
+  monitors: []                    # URLs or "aegis-central"
+  ttl_seconds: 60                 # Polling interval in seconds
 
 monitoring:
   enabled: false

@@ -20,7 +20,7 @@ from monitor.config import MonitorConfig
 from monitor.db import Database
 from monitor.epidemiology import R0Estimator
 from monitor.graph import AgentGraph
-from monitor.models import AgentNode, CompromiseRecord, StoredEvent
+from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, StoredEvent
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -289,6 +289,88 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
         "is_quarantined": agent.is_quarantined,
         "at_risk_agents": at_risk,
     }
+
+
+# ------------------------------------------------------------------
+# Killswitch endpoints
+# ------------------------------------------------------------------
+
+@app.get("/api/v1/killswitch/status")
+async def killswitch_status(
+    agent_id: str = "",
+    operator_id: str = "",
+    _key: str = Depends(verify_api_key),
+):
+    """Agent polling endpoint — returns block status."""
+    db: Database = app.state.db
+    blocked, reason, scope = db.check_killswitch(agent_id, operator_id)
+    return {"blocked": blocked, "reason": reason, "scope": scope}
+
+
+@app.post("/api/v1/killswitch/rules")
+async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)):
+    """Create a killswitch rule."""
+    db: Database = app.state.db
+    rule_id = data.get("rule_id", str(uuid.uuid4()))
+    rule = KillswitchRule(
+        rule_id=rule_id,
+        scope=data.get("scope", "agent"),
+        target=data.get("target", ""),
+        blocked=data.get("blocked", True),
+        reason=data.get("reason", ""),
+        created_at=data.get("created_at", time.time()),
+        created_by=data.get("created_by", ""),
+    )
+    db.insert_killswitch_rule(rule)
+
+    await _broadcast(app.state, {
+        "type": "killswitch",
+        "action": "created",
+        "rule_id": rule_id,
+        "scope": rule.scope,
+        "target": rule.target,
+        "blocked": rule.blocked,
+        "reason": rule.reason,
+    })
+
+    return {"rule_id": rule_id, "status": "ok"}
+
+
+@app.get("/api/v1/killswitch/rules")
+async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
+    """List all active killswitch rules."""
+    db: Database = app.state.db
+    rules = db.get_killswitch_rules()
+    return {
+        "rules": [
+            {
+                "rule_id": r.rule_id,
+                "scope": r.scope,
+                "target": r.target,
+                "blocked": r.blocked,
+                "reason": r.reason,
+                "created_at": r.created_at,
+                "created_by": r.created_by,
+            }
+            for r in rules
+        ]
+    }
+
+
+@app.delete("/api/v1/killswitch/rules/{rule_id}")
+async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+    """Remove a killswitch rule."""
+    db: Database = app.state.db
+    deleted = db.delete_killswitch_rule(rule_id)
+
+    if deleted:
+        await _broadcast(app.state, {
+            "type": "killswitch",
+            "action": "deleted",
+            "rule_id": rule_id,
+        })
+
+    return {"status": "ok" if deleted else "not_found"}
 
 
 # ------------------------------------------------------------------

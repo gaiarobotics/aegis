@@ -202,3 +202,93 @@ body {
 .event-log .event.threat { color: var(--red); }
 .event-log .event.compromise { color: var(--red); font-weight: 600; }
 .event-log .event.heartbeat { color: var(--gray); }
+.event-log .event.killswitch { color: var(--yellow); font-weight: 600; }
+
+/* Killswitch panel */
+.killswitch-panel { border-top: 1px solid var(--border); padding-top: 12px; }
+
+.ks-status-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+.ks-status-text.ks-active {
+    color: var(--red);
+    font-weight: 600;
+}
+
+.ks-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.ks-btn {
+    padding: 6px 10px;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ks-block-swarm, .ks-block-agent {
+    background: var(--red);
+    color: #fff;
+}
+.ks-block-swarm:hover, .ks-block-agent:hover {
+    background: #c0392b;
+}
+
+.ks-unblock-swarm, .ks-unblock-agent {
+    background: var(--green);
+    color: #fff;
+}
+.ks-unblock-swarm:hover, .ks-unblock-agent:hover {
+    background: #27ae60;
+}
+
+.ks-rule {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.ks-rule-scope {
+    color: var(--red);
+    font-weight: 600;
+    flex: 1;
+}
+
+.ks-rule-reason {
+    color: var(--text-muted);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ks-rule-delete {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 4px;
+}
+.ks-rule-delete:hover {
+    color: var(--red);
+}
+
+.ks-popup-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}

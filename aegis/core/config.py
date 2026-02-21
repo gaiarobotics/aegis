@@ -283,6 +283,16 @@ class IntegrityConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Killswitch sub-models
+# ---------------------------------------------------------------------------
+
+class KillswitchConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    monitors: list[str] = Field(default_factory=list)   # URLs or "aegis-central"
+    ttl_seconds: int = 60
+
+
+# ---------------------------------------------------------------------------
 # Modules toggle
 # ---------------------------------------------------------------------------
 
@@ -323,6 +333,7 @@ class AegisConfig(BaseModel):
     integrity: IntegrityConfig = Field(default_factory=IntegrityConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    killswitch: KillswitchConfig = Field(default_factory=KillswitchConfig)
 
     def is_module_enabled(self, name: str) -> bool:
         return self.modules.get(name, False)

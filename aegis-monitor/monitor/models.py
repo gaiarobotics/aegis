@@ -56,3 +56,16 @@ class CompromiseRecord:
     nk_verdict: str = ""
     recommended_action: str = "quarantine"
     timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class KillswitchRule:
+    """A killswitch rule that can block agents by scope."""
+
+    rule_id: str = ""
+    scope: str = "agent"      # "swarm", "operator", "agent"
+    target: str = ""           # agent_id or operator_id (ignored for swarm)
+    blocked: bool = True
+    reason: str = ""
+    created_at: float = field(default_factory=time.time)
+    created_by: str = ""

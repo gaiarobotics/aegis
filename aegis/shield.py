@@ -51,6 +51,18 @@ class ThreatBlockedError(Exception):
         super().__init__(message or f"Threat blocked (score={scan_result.threat_score})")
 
 
+class InferenceBlockedError(Exception):
+    """Raised when a remote killswitch blocks inference.
+
+    Attributes:
+        reason: Human-readable reason from the blocking monitor.
+    """
+
+    def __init__(self, reason: str = ""):
+        self.reason = reason
+        super().__init__(reason or "Inference blocked by remote killswitch")
+
+
 class Shield:
     """Unified AEGIS orchestrator.
 
@@ -110,9 +122,11 @@ class Shield:
         self._prompt_monitor = None
         self._isolation_forest = None
         self._integrity_monitor = None
+        self._killswitch = None
 
         self._init_modules()
         self._init_monitoring()
+        self._init_killswitch()
 
     def _init_modules(self) -> None:
         """Instantiate enabled modules with graceful degradation."""
@@ -288,6 +302,34 @@ class Shield:
         except Exception:
             logger.debug("Monitoring client init failed", exc_info=True)
             self._monitoring_client = None
+
+    def _init_killswitch(self) -> None:
+        """Initialize remote killswitch if monitors are configured."""
+        ks_cfg = self._config.killswitch
+        if not ks_cfg.monitors:
+            return
+        try:
+            from aegis.core.remote_killswitch import RemoteKillswitch
+            self._killswitch = RemoteKillswitch(
+                config=ks_cfg,
+                agent_id=self._config.agent_id,
+                operator_id=self._config.operator_id,
+            )
+            self._killswitch.start()
+        except Exception:
+            logger.debug("Remote killswitch init failed", exc_info=True)
+
+    @property
+    def is_blocked(self) -> bool:
+        """True if the remote killswitch is currently blocking inference."""
+        if self._killswitch is None:
+            return False
+        return self._killswitch.is_blocked()
+
+    def check_killswitch(self) -> None:
+        """Raise InferenceBlockedError if remote killswitch is active."""
+        if self._killswitch is not None and self._killswitch.is_blocked():
+            raise InferenceBlockedError(self._killswitch.block_reason)
 
     def _on_compromise_reported(self, agent_id: str) -> None:
         """Callback from TrustManager.report_compromise()."""

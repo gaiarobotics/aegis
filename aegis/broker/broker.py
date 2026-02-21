@@ -66,7 +66,8 @@ class Broker:
             )
 
         # Step 1: If quarantined and not explicitly a read -> DENY
-        if self._quarantine.is_quarantined() and action_request.read_write.lower().strip() != "read":
+        rw = action_request.read_write.lower().strip() if action_request.read_write else ""
+        if self._quarantine.is_quarantined() and rw != "read":
             return ActionResponse(
                 request_id=action_request.id,
                 decision=ActionDecision.DENY,

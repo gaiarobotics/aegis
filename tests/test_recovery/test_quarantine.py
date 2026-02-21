@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aegis.core.config import RecoveryConfig
 from aegis.recovery.quarantine import RecoveryQuarantine
 
 
@@ -108,7 +109,7 @@ class TestRecoveryQuarantine:
 
     def test_config_disables_auto_quarantine(self):
         """Test that config can disable auto quarantine."""
-        q = RecoveryQuarantine(config={"auto_quarantine": False})
+        q = RecoveryQuarantine(config=RecoveryConfig(auto_quarantine=False))
 
         nk_verdict = MagicMock()
         nk_verdict.verdict = "hostile"
@@ -118,7 +119,7 @@ class TestRecoveryQuarantine:
 
     def test_config_disables_hostile_nk_quarantine(self):
         """Test config can disable quarantine on hostile NK."""
-        q = RecoveryQuarantine(config={"quarantine_on_hostile_nk": False})
+        q = RecoveryQuarantine(config=RecoveryConfig(quarantine_on_hostile_nk=False))
 
         nk_verdict = MagicMock()
         nk_verdict.verdict = "hostile"
@@ -128,7 +129,7 @@ class TestRecoveryQuarantine:
 
     def test_custom_drift_sigma_threshold_high(self):
         """Custom high threshold should allow drift that default would quarantine."""
-        q = RecoveryQuarantine(config={"drift_sigma_threshold": 5.0})
+        q = RecoveryQuarantine(config=RecoveryConfig(drift_sigma_threshold=5.0))
 
         drift_result = MagicMock()
         drift_result.is_drifting = True
@@ -140,7 +141,7 @@ class TestRecoveryQuarantine:
 
     def test_custom_drift_sigma_threshold_low(self):
         """Custom low threshold should quarantine drift that default would allow."""
-        q = RecoveryQuarantine(config={"drift_sigma_threshold": 1.5})
+        q = RecoveryQuarantine(config=RecoveryConfig(drift_sigma_threshold=1.5))
 
         drift_result = MagicMock()
         drift_result.is_drifting = True
@@ -149,3 +150,80 @@ class TestRecoveryQuarantine:
         result = q.auto_quarantine(drift_result=drift_result)
         assert result is True
         assert q.is_quarantined() is True
+
+
+class TestRecoveryQuarantineExitToken:
+    """Tests for token-guarded quarantine exit on RecoveryQuarantine."""
+
+    def test_no_token_exit_works_without_argument(self):
+        """When no exit_token is configured, exit works with no argument."""
+        q = RecoveryQuarantine()
+        q.enter(reason="test")
+        q.exit()
+        assert q.is_quarantined() is False
+
+    def test_no_token_exit_works_with_any_argument(self):
+        """When no exit_token is configured, exit works even if a token is passed."""
+        q = RecoveryQuarantine()
+        q.enter(reason="test")
+        q.exit(token="anything")
+        assert q.is_quarantined() is False
+
+    def test_token_exit_with_correct_token(self):
+        """When exit_token is configured, exit succeeds with the correct token."""
+        q = RecoveryQuarantine(exit_token="recovery-secret")
+        q.enter(reason="hostile activity")
+        q.exit(token="recovery-secret")
+        assert q.is_quarantined() is False
+        assert q.get_reason() is None
+
+    def test_token_exit_rejects_wrong_token(self):
+        """When exit_token is configured, exit raises ValueError for wrong token."""
+        q = RecoveryQuarantine(exit_token="recovery-secret")
+        q.enter(reason="hostile activity")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            q.exit(token="wrong-token")
+        assert q.is_quarantined() is True
+        assert q.get_reason() == "hostile activity"
+
+    def test_token_exit_rejects_none_token(self):
+        """When exit_token is configured, exit raises ValueError if no token is given."""
+        q = RecoveryQuarantine(exit_token="recovery-secret")
+        q.enter(reason="locked")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            q.exit()
+        assert q.is_quarantined() is True
+
+    def test_token_exit_rejects_empty_string_token(self):
+        """When exit_token is configured, exit rejects empty string."""
+        q = RecoveryQuarantine(exit_token="recovery-secret")
+        q.enter(reason="locked")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            q.exit(token="")
+        assert q.is_quarantined() is True
+
+    def test_token_with_config_and_exit_token(self):
+        """exit_token works alongside custom config."""
+        q = RecoveryQuarantine(
+            config={"drift_sigma_threshold": 5.0},
+            exit_token="my-token",
+        )
+        q.enter(reason="test")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            q.exit(token="bad")
+        q.exit(token="my-token")
+        assert q.is_quarantined() is False
+
+    def test_auto_quarantine_then_token_exit(self):
+        """Auto-quarantine state can only be exited with the correct token."""
+        q = RecoveryQuarantine(exit_token="auto-exit")
+        nk_verdict = MagicMock()
+        nk_verdict.verdict = "hostile"
+        q.auto_quarantine(nk_verdict=nk_verdict)
+        assert q.is_quarantined() is True
+
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            q.exit(token="wrong")
+
+        q.exit(token="auto-exit")
+        assert q.is_quarantined() is False

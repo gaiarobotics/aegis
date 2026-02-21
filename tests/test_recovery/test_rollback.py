@@ -70,3 +70,44 @@ class TestContextRollback:
         assert len(snapshots) == 1
         assert snapshots[0].snapshot_id == sid
         assert snapshots[0].description == "auto id test"
+
+
+class TestSnapshotCap:
+    """Tests for the max_snapshots eviction behaviour."""
+
+    def test_default_max_snapshots(self):
+        """Default max_snapshots is 50."""
+        rb = ContextRollback()
+        assert rb._max_snapshots == 50
+
+    def test_custom_max_snapshots(self):
+        """Custom max_snapshots value is honoured."""
+        rb = ContextRollback(max_snapshots=10)
+        assert rb._max_snapshots == 10
+
+    def test_oldest_evicted(self):
+        """When exceeding max, the oldest snapshot is evicted."""
+        rb = ContextRollback(max_snapshots=3)
+
+        rb.save_snapshot({"v": 1}, snapshot_id="s1")
+        rb.save_snapshot({"v": 2}, snapshot_id="s2")
+        rb.save_snapshot({"v": 3}, snapshot_id="s3")
+
+        assert len(rb._snapshots) == 3
+
+        # Adding a 4th should evict s1
+        rb.save_snapshot({"v": 4}, snapshot_id="s4")
+        assert len(rb._snapshots) == 3
+        assert "s1" not in rb._snapshots
+        assert "s2" in rb._snapshots
+        assert "s3" in rb._snapshots
+        assert "s4" in rb._snapshots
+
+        # s1 should no longer be rollback-able
+        with pytest.raises(KeyError):
+            rb.rollback("s1")
+
+        # s2, s3, s4 should still work
+        assert rb.rollback("s2") == {"v": 2}
+        assert rb.rollback("s3") == {"v": 3}
+        assert rb.rollback("s4") == {"v": 4}

@@ -3,12 +3,7 @@
 import threading
 from typing import Any, Optional
 
-
-_DEFAULT_CONFIG = {
-    "auto_quarantine": True,
-    "quarantine_on_hostile_nk": True,
-    "drift_sigma_threshold": 3.0,
-}
+from aegis.core.config import RecoveryConfig
 
 
 class RecoveryQuarantine:
@@ -18,10 +13,13 @@ class RecoveryQuarantine:
     quarantine based on NK verdicts and drift detection results.
     """
 
-    def __init__(self, config: Optional[dict] = None) -> None:
-        self._config = {**_DEFAULT_CONFIG}
-        if config is not None:
-            self._config.update(config)
+    def __init__(
+        self,
+        config: RecoveryConfig | None = None,
+        exit_token: Optional[str] = None,
+    ) -> None:
+        self._config = config or RecoveryConfig()
+        self._exit_token: Optional[str] = exit_token
         self._quarantined = False
         self._reason: Optional[str] = None
         self._read_only = False
@@ -39,9 +37,19 @@ class RecoveryQuarantine:
             self._reason = reason
             self._read_only = read_only
 
-    def exit(self) -> None:
-        """Deactivate quarantine."""
+    def exit(self, token: Optional[str] = None) -> None:
+        """Deactivate quarantine.
+
+        Args:
+            token: If an exit_token was configured, this must match it.
+
+        Raises:
+            ValueError: If an exit_token was configured and the provided
+                token does not match.
+        """
         with self._lock:
+            if self._exit_token is not None and token != self._exit_token:
+                raise ValueError("Invalid exit token")
             self._quarantined = False
             self._reason = None
             self._read_only = False
@@ -78,13 +86,13 @@ class RecoveryQuarantine:
         Returns:
             True if quarantine was entered, False otherwise.
         """
-        if not self._config.get("auto_quarantine", True):
+        if not self._config.auto_quarantine:
             return False
 
         # Check NK verdict
         if nk_verdict is not None:
             if (
-                self._config.get("quarantine_on_hostile_nk", True)
+                self._config.quarantine_on_hostile_nk
                 and getattr(nk_verdict, "verdict", None) == "hostile"
             ):
                 self.enter(reason="Auto-quarantine: hostile NK verdict detected")
@@ -95,7 +103,7 @@ class RecoveryQuarantine:
             if (
                 getattr(drift_result, "is_drifting", False)
                 and getattr(drift_result, "max_sigma", 0.0)
-                > self._config.get("drift_sigma_threshold", 3.0)
+                > self._config.drift_sigma_threshold
             ):
                 sigma = getattr(drift_result, "max_sigma", 0.0)
                 self.enter(

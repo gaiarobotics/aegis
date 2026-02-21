@@ -42,11 +42,14 @@ class TestShieldMonitoring:
         """Shield should create a monitoring client when enabled."""
         from aegis.shield import Shield
 
-        cfg = AegisConfig()
-        cfg.monitoring["enabled"] = True
-        cfg.monitoring["service_url"] = "http://localhost:9999/api/v1"
-        cfg.agent_id = "test-agent"
-        cfg.operator_id = "test-op"
+        cfg = AegisConfig(
+            agent_id="test-agent",
+            operator_id="test-op",
+            monitoring={
+                "enabled": True,
+                "service_url": "http://localhost:9999/api/v1",
+            },
+        )
 
         shield = Shield(config=cfg)
         assert shield._monitoring_client is not None
@@ -58,14 +61,22 @@ class TestShieldMonitoring:
         """scan_input should send a threat event when a threat is detected."""
         from aegis.shield import Shield
 
-        cfg = AegisConfig()
-        cfg.monitoring["enabled"] = True
-        cfg.monitoring["service_url"] = "http://localhost:9999/api/v1"
-        cfg.agent_id = "test-agent"
-        cfg.modules["scanner"] = False
-        cfg.modules["identity"] = False
-        cfg.modules["behavior"] = False
-        cfg.modules["recovery"] = False
+        cfg = AegisConfig(
+            agent_id="test-agent",
+            monitoring={
+                "enabled": True,
+                "service_url": "http://localhost:9999/api/v1",
+            },
+            modules={
+                "scanner": False,
+                "identity": False,
+                "behavior": False,
+                "recovery": False,
+                "broker": True,
+                "memory": True,
+                "skills": True,
+            },
+        )
 
         shield = Shield(config=cfg)
         assert shield._monitoring_client is not None
@@ -94,10 +105,13 @@ class TestShieldMonitoring:
         """TrustManager compromise callback should be wired to monitoring client."""
         from aegis.shield import Shield
 
-        cfg = AegisConfig()
-        cfg.monitoring["enabled"] = True
-        cfg.monitoring["service_url"] = "http://localhost:9999/api/v1"
-        cfg.agent_id = "test-agent"
+        cfg = AegisConfig(
+            agent_id="test-agent",
+            monitoring={
+                "enabled": True,
+                "service_url": "http://localhost:9999/api/v1",
+            },
+        )
 
         shield = Shield(config=cfg)
 

@@ -19,16 +19,16 @@ class Broker:
         if config is None:
             config = AegisConfig()
         self._config = config
-        self._posture: str = config.broker.get("default_posture", "deny_write")
+        self._posture: str = config.broker.default_posture
         self._registry = ManifestRegistry()
         self._budget = BudgetTracker(config=config)
         self._quarantine = QuarantineManager(config=config)
         self._lock = threading.Lock()
         self._denied_write_count: int = 0
 
-    def register_tool(self, manifest: ToolManifest) -> None:
+    def register_tool(self, manifest: ToolManifest, *, overwrite: bool = False) -> None:
         """Register a tool manifest with the broker's registry."""
-        self._registry.register(manifest)
+        self._registry.register(manifest, overwrite=overwrite)
 
     def evaluate(
         self,
@@ -65,8 +65,9 @@ class Broker:
                 policy_rule="posture.allow_all",
             )
 
-        # Step 1: If quarantined and write -> DENY
-        if self._quarantine.is_quarantined() and action_request.read_write == "write":
+        # Step 1: If quarantined and not explicitly a read -> DENY
+        rw = action_request.read_write.lower().strip() if action_request.read_write else ""
+        if self._quarantine.is_quarantined() and rw != "read":
             return ActionResponse(
                 request_id=action_request.id,
                 decision=ActionDecision.DENY,
@@ -95,8 +96,8 @@ class Broker:
                 policy_rule="manifest.check_failed",
             )
 
-        # Step 3: Check budget
-        if not self._budget.check_budget(action_request):
+        # Step 3: Atomically check budget and record action
+        if not self._budget.check_and_record(action_request):
             self._record_denied_write(action_request)
             return ActionResponse(
                 request_id=action_request.id,
@@ -105,12 +106,11 @@ class Broker:
                 policy_rule="budget.exceeded",
             )
 
-        # Step 4: Record action in budget tracker
-        self._budget.record_action(action_request)
-
-        # Step 5: Check quarantine triggers
+        # Step 4: Check quarantine triggers
+        with self._lock:
+            captured_denied = self._denied_write_count
         self._quarantine.check_triggers(
-            denied_count=self._denied_write_count,
+            denied_count=captured_denied,
             new_domain_count=self._budget.new_domain_count,
         )
 
@@ -126,8 +126,9 @@ class Broker:
         if action_request.read_write == "write":
             with self._lock:
                 self._denied_write_count += 1
-            # Check triggers after recording denial
+                captured_count = self._denied_write_count
+            # Check triggers after recording denial, using captured value
             self._quarantine.check_triggers(
-                denied_count=self._denied_write_count,
+                denied_count=captured_count,
                 new_domain_count=self._budget.new_domain_count,
             )

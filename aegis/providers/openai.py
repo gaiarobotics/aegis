@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import copy
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from aegis.providers.base import BaseWrapper, WrappedClient, _extract_user_text, _record_trust_for_messages
 
@@ -44,6 +47,14 @@ class OpenAIWrapper(BaseWrapper):
 
             # 4. Sanitize output
             response = _sanitize_openai_response(shield, response)
+
+            # 4.5. Record response behavior and check drift
+            try:
+                shield.record_response_behavior(
+                    response=response, provider="openai", kwargs=kwargs,
+                )
+            except Exception:
+                logger.debug("Behavior recording failed", exc_info=True)
 
             # 5. Record trust interaction for discovered agents
             _record_trust_for_messages(shield, messages, clean=not is_threat)

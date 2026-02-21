@@ -10,15 +10,19 @@ from aegis.core.config import AegisConfig
 class QuarantineManager:
     """Thread-safe quarantine manager for read-only lockdown mode."""
 
-    def __init__(self, config: AegisConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: AegisConfig | None = None,
+        exit_token: str | None = None,
+    ) -> None:
         if config is None:
             config = AegisConfig()
 
-        triggers = config.broker.get("quarantine_triggers", {})
-        self._threshold_denied_writes: int = triggers.get("repeated_denied_writes", 5)
-        self._threshold_new_domain_burst: int = triggers.get("new_domain_burst", 3)
-        self._threshold_drift_score: float = triggers.get("drift_score_threshold", 3.0)
+        self._threshold_denied_writes: int = config.broker.quarantine_triggers.repeated_denied_writes
+        self._threshold_new_domain_burst: int = config.broker.quarantine_triggers.new_domain_burst
+        self._threshold_drift_score: float = config.broker.quarantine_triggers.drift_score_threshold
 
+        self._exit_token: str | None = exit_token
         self._lock = threading.Lock()
         self._quarantined: bool = False
         self._reason: str | None = None
@@ -29,9 +33,19 @@ class QuarantineManager:
             self._quarantined = True
             self._reason = reason
 
-    def exit_quarantine(self) -> None:
-        """Deactivate quarantine mode."""
+    def exit_quarantine(self, token: str | None = None) -> None:
+        """Deactivate quarantine mode.
+
+        Args:
+            token: If an exit_token was configured, this must match it.
+
+        Raises:
+            ValueError: If an exit_token was configured and the provided
+                token does not match.
+        """
         with self._lock:
+            if self._exit_token is not None and token != self._exit_token:
+                raise ValueError("Invalid exit token")
             self._quarantined = False
             self._reason = None
 

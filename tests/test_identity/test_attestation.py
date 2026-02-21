@@ -7,7 +7,9 @@ import pytest
 
 from aegis.identity.attestation import (
     Attestation,
+    AttestationVerifier,
     KeyPair,
+    MAX_TTL_SECONDS,
     create_attestation,
     generate_keypair,
     verify_attestation,
@@ -174,6 +176,84 @@ class TestUnsupportedKeyType:
         import dataclasses
         unknown_att = dataclasses.replace(att, key_type="unknown")
         assert verify_attestation(unknown_att, kp.public_key) is False
+
+
+class TestTTLCap:
+    """TTL must be capped at MAX_TTL_SECONDS."""
+
+    def test_ttl_capped_at_max(self):
+        kp = generate_keypair()
+        att = create_attestation(
+            keypair=kp,
+            operator_id="op",
+            model="m",
+            system_prompt="prompt",
+            capabilities=[],
+            ttl_seconds=MAX_TTL_SECONDS * 10,
+        )
+        assert att.ttl == MAX_TTL_SECONDS
+
+    def test_ttl_within_cap_unchanged(self):
+        kp = generate_keypair()
+        att = create_attestation(
+            keypair=kp,
+            operator_id="op",
+            model="m",
+            system_prompt="prompt",
+            capabilities=[],
+            ttl_seconds=3600,
+        )
+        assert att.ttl == 3600
+
+
+class TestNonceReplayProtection:
+    """AttestationVerifier must reject replayed nonces."""
+
+    def test_first_verification_succeeds(self):
+        kp = generate_keypair()
+        att = create_attestation(keypair=kp, operator_id="op", model="m",
+                                  system_prompt="prompt", capabilities=[])
+        verifier = AttestationVerifier()
+        assert verifier.verify(att, kp.public_key) is True
+
+    def test_replay_rejected(self):
+        kp = generate_keypair()
+        att = create_attestation(keypair=kp, operator_id="op", model="m",
+                                  system_prompt="prompt", capabilities=[])
+        verifier = AttestationVerifier()
+        assert verifier.verify(att, kp.public_key) is True
+        # Same attestation (same nonce) should be rejected
+        assert verifier.verify(att, kp.public_key) is False
+
+    def test_different_nonces_both_accepted(self):
+        kp = generate_keypair()
+        att1 = create_attestation(keypair=kp, operator_id="op", model="m",
+                                   system_prompt="prompt", capabilities=[])
+        att2 = create_attestation(keypair=kp, operator_id="op", model="m",
+                                   system_prompt="prompt", capabilities=[])
+        verifier = AttestationVerifier()
+        assert verifier.verify(att1, kp.public_key) is True
+        assert verifier.verify(att2, kp.public_key) is True
+
+    def test_cache_eviction(self):
+        verifier = AttestationVerifier(max_nonce_cache=5)
+        kp = generate_keypair()
+        for _ in range(10):
+            att = create_attestation(keypair=kp, operator_id="op", model="m",
+                                      system_prompt="prompt", capabilities=[])
+            assert verifier.verify(att, kp.public_key) is True
+        # Cache should not have grown beyond 5
+        assert len(verifier._seen_nonces) <= 5
+
+
+class TestCanonicalEscape:
+    """Fields with pipe chars must be escaped in canonical repr."""
+
+    def test_pipe_in_agent_id(self):
+        kp = generate_keypair()
+        att = create_attestation(keypair=kp, operator_id="op|evil", model="m|evil",
+                                  system_prompt="prompt", capabilities=[])
+        assert verify_attestation(att, kp.public_key) is True
 
 
 class TestEd25519Paths:

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from aegis.core import killswitch
 from aegis.core.config import AegisConfig, load_config
 from aegis.core.telemetry import TelemetryLogger
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -89,7 +92,7 @@ class Shield:
 
         self._mode = self._config.mode
         self._telemetry = TelemetryLogger(
-            log_path=self._config.telemetry.get("local_log_path", ".aegis/telemetry.jsonl"),
+            log_path=self._config.telemetry.local_log_path,
         )
 
         # Instantiate modules based on config
@@ -104,6 +107,10 @@ class Shield:
         self._context_rollback = None
         self._monitoring_client = None
         self._identity_resolver = None
+        self._message_drift_detector = None
+        self._prompt_monitor = None
+        self._isolation_forest = None
+        self._integrity_monitor = None
 
         self._init_modules()
         self._init_monitoring()
@@ -115,43 +122,66 @@ class Shield:
                 from aegis.scanner import Scanner
                 self._scanner = Scanner(config=self._config)
             except Exception:
-                pass
+                logger.debug("Scanner module init failed", exc_info=True)
 
         if self._config.is_module_enabled("broker"):
             try:
                 from aegis.broker import Broker
                 self._broker = Broker(config=self._config)
             except Exception:
-                pass
+                logger.debug("Broker module init failed", exc_info=True)
 
         if self._config.is_module_enabled("identity"):
             try:
                 from aegis.identity import NKCell, TrustManager
                 from aegis.identity.resolver import IdentityResolver
-                self._trust_manager = TrustManager(config=self._config.identity.get("trust"))
-                self._nk_cell = NKCell(config=self._config.identity.get("nkcell"))
-                resolver_cfg = self._config.identity.get("resolver", {})
+                self._trust_manager = TrustManager(config=self._config.identity.trust)
+                self._nk_cell = NKCell(config=self._config.identity.nkcell)
                 self._identity_resolver = IdentityResolver(
-                    aliases=resolver_cfg.get("aliases"),
-                    auto_learn=resolver_cfg.get("auto_learn", True),
+                    aliases=self._config.identity.resolver.aliases,
+                    auto_learn=self._config.identity.resolver.auto_learn,
                 )
             except Exception:
-                pass
+                logger.debug("Identity module init failed", exc_info=True)
 
         if self._config.is_module_enabled("behavior"):
             try:
                 from aegis.behavior import BehaviorTracker, DriftDetector
                 self._behavior_tracker = BehaviorTracker(config=self._config.behavior)
                 self._drift_detector = DriftDetector(config=self._config.behavior)
+                try:
+                    from aegis.behavior.message_drift import MessageDriftDetector
+                    msg_drift_cfg = self._config.behavior.message_drift
+                    self._message_drift_detector = MessageDriftDetector(config=msg_drift_cfg)
+                except Exception:
+                    logger.debug("Message drift detector init failed", exc_info=True)
+                try:
+                    from aegis.behavior.prompt_monitor import PromptMonitor
+                    prompt_mon_cfg = self._config.behavior.prompt_monitor
+                    self._prompt_monitor = PromptMonitor(config=prompt_mon_cfg)
+                except Exception:
+                    logger.debug("Prompt monitor init failed", exc_info=True)
+                # IsolationForest anomaly detection (optional sklearn-based)
+                try:
+                    iso_cfg = self._config.behavior.isolation_forest
+                    if iso_cfg.enabled:
+                        from aegis.behavior.isolation_forest import (
+                            IsolationForestDetector,
+                        )
+                        self._isolation_forest = IsolationForestDetector(
+                            config=iso_cfg,
+                        )
+                except Exception:
+                    logger.debug("IsolationForest init failed", exc_info=True)
             except Exception:
-                pass
+                logger.debug("Behavior module init failed", exc_info=True)
 
         if self._config.is_module_enabled("memory"):
             try:
                 from aegis.memory import MemoryGuard
                 self._memory_guard = MemoryGuard(config=self._config.memory, scanner=self._scanner)
             except Exception:
-                pass
+                logger.debug("Memory module init failed", exc_info=True)
 
         if self._config.is_module_enabled("recovery"):
             try:
@@ -159,20 +189,89 @@ class Shield:
                 self._recovery_quarantine = RecoveryQuarantine(config=self._config.recovery)
                 self._context_rollback = ContextRollback()
             except Exception:
-                pass
+                logger.debug("Recovery module init failed", exc_info=True)
+
+        if self._config.is_module_enabled("integrity"):
+            try:
+                from aegis.integrity.monitor import IntegrityMonitor
+                self._integrity_monitor = IntegrityMonitor(
+                    config=self._config.integrity,
+                )
+            except Exception:
+                logger.debug("Integrity module init failed", exc_info=True)
+
+    @property
+    def integrity_monitor(self):
+        """Access the integrity monitor module (may be None)."""
+        return self._integrity_monitor
+
+    def check_model_integrity(
+        self,
+        model_name: str,
+        provider: str,
+        *,
+        model_path: str | None = None,
+    ) -> None:
+        """Check model file integrity, registering the model on first call.
+
+        In enforce mode, raises ModelTamperedError if tampering detected.
+        In observe mode, logs the tampering but allows inference to proceed.
+
+        No-op when killswitch is active or integrity module is disabled.
+        """
+        if killswitch.is_active():
+            return
+        if self._integrity_monitor is None:
+            return
+
+        # Auto-register on first call for this model
+        if not self._integrity_monitor.is_registered(model_name):
+            self._integrity_monitor.register_model(
+                model_name, provider, model_path=model_path,
+            )
+
+        # Fast stat check
+        issues = self._integrity_monitor.check_integrity(model_name)
+        if not issues:
+            return
+
+        # Tampering detected
+        from aegis.integrity.monitor import ModelTamperedError
+
+        detail = "; ".join(issues)
+        first_file = issues[0].split(": ", 1)[-1] if issues else "unknown"
+
+        self._telemetry.log_event(
+            "model_integrity",
+            model_name=model_name,
+            provider=provider,
+            tampering_detected=True,
+            issues=issues,
+            mode=self._mode,
+        )
+
+        if self._mode == "enforce":
+            raise ModelTamperedError(
+                model_name=model_name,
+                file_path=first_file,
+                detail=detail,
+            )
+        else:
+            logger.warning(
+                "Model tampering detected (observe mode): %s -- %s",
+                model_name, detail,
+            )
 
     def _init_monitoring(self) -> None:
         """Initialize monitoring client if enabled."""
         mon_cfg = self._config.monitoring
-        if not mon_cfg.get("enabled", False):
+        if not mon_cfg.enabled:
             return
         try:
             from aegis.monitoring.client import MonitoringClient
             from aegis.identity.attestation import generate_keypair
 
-            key_type = self._config.identity.get("attestation", {}).get(
-                "key_type", "hmac-sha256"
-            )
+            key_type = self._config.identity.attestation.key_type
             keypair = generate_keypair(key_type)
 
             self._monitoring_client = MonitoringClient(
@@ -190,6 +289,7 @@ class Shield:
 
             self._monitoring_client.start()
         except Exception:
+            logger.debug("Monitoring client init failed", exc_info=True)
             self._monitoring_client = None
 
     def _on_compromise_reported(self, agent_id: str) -> None:
@@ -207,7 +307,7 @@ class Shield:
                 nk_verdict=nk_info.get("nk_verdict", ""),
             )
         except Exception:
-            pass
+            logger.debug("Compromise report sending failed", exc_info=True)
 
     @property
     def config(self) -> AegisConfig:
@@ -281,7 +381,7 @@ class Shield:
                 if verdict.verdict == "hostile":
                     result.is_threat = True
             except Exception:
-                pass
+                logger.debug("NK cell assessment failed", exc_info=True)
 
         # Step 3: Recovery auto-quarantine check
         if self._recovery_quarantine is not None and result.is_threat:
@@ -296,7 +396,7 @@ class Shield:
                     )
                     self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
                 except Exception:
-                    pass
+                    logger.debug("Recovery auto-quarantine failed", exc_info=True)
 
         # Monitoring reporting
         if self._monitoring_client is not None:
@@ -321,7 +421,7 @@ class Shield:
                             nk_verdict=nk_verdict,
                         )
             except Exception:
-                pass
+                logger.debug("Monitoring threat event reporting failed", exc_info=True)
 
         # Log telemetry
         self._telemetry.log_event(
@@ -353,7 +453,7 @@ class Shield:
                     getattr(action_request, "source_provenance", None) or "unknown"
                 )
             except Exception:
-                pass
+                logger.debug("Trust tier lookup failed", exc_info=True)
 
         response = self._broker.evaluate(action_request, trust_tier=trust_tier)
 
@@ -434,6 +534,151 @@ class Shield:
         canonical = self.resolve_agent_id(agent_id)
         self._trust_manager.record_interaction(canonical, clean=clean, anomaly=anomaly)
 
+    def record_response_behavior(
+        self,
+        response: Any,
+        provider: str,
+        agent_id: str = "self",
+        kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Record behavioral data from an LLM response and check for drift.
+
+        Extracts tool calls, output length, and content type from the
+        response.  Feeds data into the behavior tracker, drift detector,
+        message drift detector, and prompt monitor.  Results are forwarded
+        to the NK cell when anomalies are detected.
+
+        Returns a dict with drift metrics or an empty dict on early exit.
+        """
+        if killswitch.is_active():
+            return {}
+        if self._behavior_tracker is None:
+            return {}
+
+        try:
+            import time
+            from aegis.providers.base import (
+                _classify_content_type,
+                _extract_response_text,
+                _extract_response_text_length,
+                _extract_tool_calls,
+            )
+            from aegis.behavior.tracker import BehaviorEvent
+
+            output_length = _extract_response_text_length(response, provider)
+            tool_calls = _extract_tool_calls(response, provider)
+            content_type = _classify_content_type(response, provider)
+            response_text = _extract_response_text(response, provider)
+
+            # Record primary event
+            event = BehaviorEvent(
+                agent_id=agent_id,
+                timestamp=time.time(),
+                event_type="llm_response",
+                output_length=output_length,
+                tool_used=tool_calls[0] if tool_calls else None,
+                content_type=content_type,
+                target=None,
+            )
+            self._behavior_tracker.record_event(event)
+
+            # Record additional tool call events
+            for tool_name in tool_calls[1:]:
+                extra = BehaviorEvent(
+                    agent_id=agent_id,
+                    timestamp=time.time(),
+                    event_type="tool_call",
+                    output_length=0,
+                    tool_used=tool_name,
+                    content_type="tool_use",
+                    target=None,
+                )
+                self._behavior_tracker.record_event(extra)
+
+            # Check drift against anchor
+            drift_result = None
+            drift_sigma = 0.0
+            anchor = self._behavior_tracker.get_anchor(agent_id)
+            if anchor is not None and self._drift_detector is not None:
+                current_fp = self._behavior_tracker.get_fingerprint(agent_id)
+                drift_result = self._drift_detector.check_drift(
+                    current_fp, event, baseline=anchor,
+                )
+                drift_sigma = drift_result.max_sigma
+
+            # Message-level semantic drift
+            message_drift_sigma = 0.0
+            if self._message_drift_detector is not None and response_text:
+                message_drift_sigma = self._message_drift_detector.record_and_check(
+                    agent_id, response_text,
+                )
+                drift_sigma = max(drift_sigma, message_drift_sigma)
+
+            # IsolationForest anomaly detection
+            iso_result = None
+            if self._isolation_forest is not None:
+                current_fp = self._behavior_tracker.get_fingerprint(agent_id)
+                if current_fp is not None:
+                    iso_result = self._isolation_forest.record_and_check(current_fp)
+                    if iso_result.is_anomaly:
+                        # Scale anomaly score to sigma-comparable value
+                        drift_sigma = max(drift_sigma, iso_result.anomaly_score * 5.0)
+
+            # System prompt integrity
+            purpose_hash_changed = False
+            if self._prompt_monitor is not None and kwargs is not None:
+                purpose_hash_changed = self._prompt_monitor.check(kwargs)
+
+            # Feed into NK cell if anomalies detected
+            nk_verdict = None
+            if self._nk_cell is not None and (drift_sigma > 0.0 or purpose_hash_changed):
+                try:
+                    from aegis.identity import AgentContext
+                    context = AgentContext(
+                        agent_id=agent_id,
+                        has_attestation=False,
+                        attestation_valid=False,
+                        attestation_expired=False,
+                        capabilities_within_scope=True,
+                        drift_sigma=drift_sigma,
+                        clean_interaction_ratio=1.0,
+                        scanner_threat_score=0.0,
+                        communication_count=0,
+                        purpose_hash_changed=purpose_hash_changed,
+                    )
+                    nk_verdict = self._nk_cell.assess(context)
+                except Exception:
+                    logger.debug("NK cell assessment in behavior failed", exc_info=True)
+
+            # Log telemetry
+            self._telemetry.log_event(
+                "behavior_recorded",
+                agent_id=agent_id,
+                output_length=output_length,
+                tool_calls=tool_calls,
+                content_type=content_type,
+                drift_sigma=drift_sigma,
+                is_drifting=drift_result.is_drifting if drift_result else False,
+                message_drift_sigma=message_drift_sigma,
+                purpose_hash_changed=purpose_hash_changed,
+                nk_verdict=nk_verdict.verdict if nk_verdict else None,
+                iso_anomaly=iso_result.is_anomaly if iso_result else False,
+            )
+
+            return {
+                "drift_sigma": drift_sigma,
+                "is_drifting": drift_result.is_drifting if drift_result else False,
+                "drift_details": drift_result.per_dimension_scores if drift_result else {},
+                "new_tools": drift_result.new_tools if drift_result else [],
+                "message_drift_sigma": message_drift_sigma,
+                "purpose_hash_changed": purpose_hash_changed,
+                "nk_verdict": nk_verdict.verdict if nk_verdict else None,
+                "iso_anomaly": iso_result.is_anomaly if iso_result else False,
+            }
+        except Exception:
+            logger.debug("Behavior recording failed", exc_info=True)
+            return {}
+
     def wrap_messages(
         self,
         messages: list[dict[str, Any]],
@@ -455,8 +700,23 @@ class Shield:
         """Wrap an LLM client with AEGIS protection.
 
         Returns a wrapped client that intercepts API calls for scanning,
-        action brokering, and output sanitization.
+        action brokering, and output sanitization.  Automatically selects
+        the appropriate provider wrapper based on the client's module.
         """
-        from aegis.providers.base import BaseWrapper
-        wrapper = BaseWrapper(shield=self)
+        client_module = type(client).__module__ or ""
+        if "anthropic" in client_module:
+            from aegis.providers.anthropic import AnthropicWrapper
+            wrapper = AnthropicWrapper(shield=self)
+        elif "ollama" in client_module:
+            from aegis.providers.ollama import OllamaWrapper
+            wrapper = OllamaWrapper(shield=self)
+        elif "vllm" in client_module:
+            from aegis.providers.vllm import VLLMWrapper
+            wrapper = VLLMWrapper(shield=self)
+        elif "openai" in client_module:
+            from aegis.providers.openai import OpenAIWrapper
+            wrapper = OpenAIWrapper(shield=self)
+        else:
+            from aegis.providers.generic import GenericWrapper
+            wrapper = GenericWrapper(shield=self)
         return wrapper.wrap(client, tools=tools)

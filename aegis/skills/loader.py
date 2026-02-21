@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from aegis.core.config import SkillsConfig
 from aegis.skills.manifest import SkillManifest, validate_manifest
 from aegis.skills.quarantine import analyze_code
 
@@ -32,11 +33,11 @@ class SkillLoader:
 
     def __init__(
         self,
-        config: dict[str, Any] | None = None,
+        config: SkillsConfig | None = None,
         broker: Any = None,
         scanner: Any = None,
     ) -> None:
-        self._config = config or {}
+        self._config = config or SkillsConfig()
         self._broker = broker
         self._scanner = scanner
         self._hash_cache: dict[str, LoadResult] = {}
@@ -71,10 +72,35 @@ class SkillLoader:
                 skill_hash="",
             )
 
-        # Step 2: Compute SHA-256 hash of skill code
-        p = Path(path)
+        # Step 2: Resolve path and enforce containment
+        p = Path(path).resolve()
+        skills_base_dir = self._config.skills_base_dir
+        if skills_base_dir is not None:
+            base = Path(skills_base_dir).resolve()
+            try:
+                p.relative_to(base)
+            except ValueError:
+                return LoadResult(
+                    approved=False,
+                    reason=f"Skill path {p} is outside allowed base directory {base}",
+                    incubation=False,
+                    skill_hash="",
+                )
+
         code = p.read_text(encoding="utf-8")
         skill_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+        # Step 2b: Verify hash against manifest
+        filename = p.name
+        if manifest.hashes:
+            expected_hash = manifest.hashes.get(filename)
+            if expected_hash is not None and expected_hash != skill_hash:
+                return LoadResult(
+                    approved=False,
+                    reason=f"Hash mismatch for {filename}: expected {expected_hash}, got {skill_hash}",
+                    incubation=False,
+                    skill_hash=skill_hash,
+                )
 
         # Step 3: Check hash cache
         if skill_hash in self._hash_cache:
@@ -100,7 +126,7 @@ class SkillLoader:
             )
 
         # Step 6: Apply incubation mode
-        if self._config.get("incubation_mode", False):
+        if self._config.incubation_mode:
             result.incubation = True
 
         # Step 7: Cache result

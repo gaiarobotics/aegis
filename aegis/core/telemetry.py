@@ -12,8 +12,9 @@ from aegis.core import killswitch
 
 # Patterns that should be redacted
 _REDACT_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9]{10,}"),
+    re.compile(r"sk-[A-Za-z0-9\-]{10,}"),  # Anthropic API keys (with hyphens)
     re.compile(r"key-[A-Za-z0-9]{10,}"),
+    re.compile(r"Bearer\s+[^\s]+"),  # Bearer tokens
     re.compile(r"\b[A-Za-z0-9+/]{64,}={0,2}\b"),  # long base64
 ]
 

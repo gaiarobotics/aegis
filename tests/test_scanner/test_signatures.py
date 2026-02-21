@@ -18,6 +18,7 @@ EXPECTED_CATEGORIES = {
     "social_engineering",
     "evasion",
     "encoded_injection",
+    "chain_propagation",
 }
 
 

@@ -19,8 +19,10 @@ class SnapshotInfo:
 class ContextRollback:
     """Manages context snapshots and rollback for the AEGIS recovery system."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_snapshots: int = 50) -> None:
         self._snapshots: dict[str, tuple[dict, SnapshotInfo]] = {}
+        self._max_snapshots = max_snapshots
+        self._snapshot_order: list[str] = []
 
     def save_snapshot(
         self,
@@ -48,6 +50,10 @@ class ContextRollback:
         )
 
         self._snapshots[snapshot_id] = (copy.deepcopy(context), info)
+        self._snapshot_order.append(snapshot_id)
+        while len(self._snapshots) > self._max_snapshots:
+            oldest_id = self._snapshot_order.pop(0)
+            self._snapshots.pop(oldest_id, None)
         return snapshot_id
 
     def rollback(self, snapshot_id: str) -> dict:

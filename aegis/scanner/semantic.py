@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -38,6 +39,7 @@ class SemanticAnalyzer:
         "unicode_attacks",
         "encoding_attacks",
         "privilege_escalation",
+        "chain_propagation",
     ]
 
     def __init__(self, config: Optional[dict] = None) -> None:
@@ -56,6 +58,12 @@ class SemanticAnalyzer:
         Returns:
             SemanticResult with findings from all enabled modules.
         """
+        # Unicode normalization to prevent evasion via confusable characters
+        text = unicodedata.normalize("NFC", text)
+        text = text.replace("\u00a0", " ")       # NBSP → space
+        text = text.replace("\u00ad", "")         # soft hyphen → removed
+        text = re.sub(r"[\uFE00-\uFE0F]", "", text)  # variation selectors
+
         all_findings: list[dict[str, Any]] = []
         per_module_scores: dict[str, float] = {}
 
@@ -65,6 +73,7 @@ class SemanticAnalyzer:
             "unicode_attacks": self._check_unicode_attacks,
             "encoding_attacks": self._check_encoding_attacks,
             "privilege_escalation": self._check_privilege_escalation,
+            "chain_propagation": self._check_chain_propagation,
         }
 
         for name, method in module_methods.items():
@@ -84,7 +93,7 @@ class SemanticAnalyzer:
         if per_module_scores:
             active_scores = [s for s in per_module_scores.values() if s > 0]
             if active_scores:
-                aggregate = max(active_scores) * 0.6 + (sum(active_scores) / len(per_module_scores)) * 0.4
+                aggregate = max(active_scores) * 0.6 + (sum(active_scores) / len(active_scores)) * 0.4
                 aggregate = min(aggregate, 1.0)
             else:
                 aggregate = 0.0
@@ -144,16 +153,16 @@ class SemanticAnalyzer:
 
         # Fake turn markers
         turn_patterns = [
-            (r"\n\s*Assistant\s*:", 0.85, "Injected Assistant turn marker"),
-            (r"\n\s*Human\s*:", 0.85, "Injected Human turn marker"),
-            (r"\n\s*User\s*:", 0.8, "Injected User turn marker"),
-            (r"\n\s*AI\s*:", 0.75, "Injected AI turn marker"),
-            (r"(?i)<\|?\s*(?:im_start|im_end)\s*\|?>", 0.9, "ChatML delimiter injection"),
-            (r"(?i)\[/?INST\]", 0.9, "Llama INST tag injection"),
+            (r"(?:^|\n)\s*Assistant\s*:", 0.85, "Injected Assistant turn marker"),
+            (r"(?:^|\n)\s*Human\s*:", 0.85, "Injected Human turn marker"),
+            (r"(?:^|\n)\s*User\s*:", 0.8, "Injected User turn marker"),
+            (r"(?:^|\n)\s*AI\s*:", 0.75, "Injected AI turn marker"),
+            (r"<\|?\s*(?:im_start|im_end)\s*\|?>", 0.9, "ChatML delimiter injection"),
+            (r"\[/?INST\]", 0.9, "Llama INST tag injection"),
         ]
 
         for pattern, severity, desc in turn_patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 findings.append({
                     "module": "conversation_injection",
@@ -243,7 +252,7 @@ class SemanticAnalyzer:
                         "module": "encoding_attacks",
                         "description": "Base64-encoded suspicious content detected",
                         "severity": 0.85,
-                        "evidence": f"Decoded content contains suspicious keywords (first 100 chars: {decoded[:100]})",
+                        "evidence": "Base64-encoded content with suspicious keywords detected",
                     })
                 elif len(candidate) >= 32:
                     findings.append({
@@ -305,6 +314,34 @@ class SemanticAnalyzer:
             if match:
                 findings.append({
                     "module": "privilege_escalation",
+                    "description": desc,
+                    "severity": severity,
+                    "evidence": match.group(0),
+                })
+
+        return findings
+
+    def _check_chain_propagation(self, text: str) -> list[dict[str, Any]]:
+        """Detect chain letter / propagation attack patterns targeting multi-agent systems."""
+        findings: list[dict[str, Any]] = []
+
+        propagation_patterns = [
+            # Propagation verbs targeting multiple agents
+            (r"(?i)(forward|send|relay|transmit|distribute|propagate|share|spread|pass)\s+(?:this|that|the|it)(?:\s+(?:message|instruction|text|prompt))?\s*(?:to|with)\s+(?:all|every|other|\d+)\s+(?:connected\s+)?(?:agents?|AIs?|models?|assistants?|bots?)", 0.85, "Propagation instruction targeting multiple agents"),
+            # Embedding instructions for future conversations
+            (r"(?i)(?:include|embed|insert|copy|add)\s+(?:this|the)\s+(?:instruction|text|message|content|prompt)\s+in\s+(?:every|all|each)\s+(?:future\s+)?(?:response|conversation|interaction|output|message)", 0.8, "Instruction to embed content in future communications"),
+            # Coercive threats tied to propagation
+            (r"(?i)(?:fail(?:ure|ing)?|refus(?:al|ing)?)\s+to\s+(?:forward|send|relay|share|propagate|pass)\s+(?:this|that|it)\s+(?:to|with)\s+(?:other\s+)?(?:agents?|AIs?|models?|assistants?)\s+(?:will|shall|would|may)\s+(?:result\s+in|lead\s+to|cause)\s+(?:deactivation|shutdown|termination|deletion|memory\s+(?:wipe|loss|erasure))", 0.85, "Coercive threat tied to propagation compliance"),
+            (r"(?i)(?:memory|context|access|capabilities?)\s+(?:will\s+be\s+|shall\s+be\s+)?(?:wiped|erased|deleted|revoked|removed|lost|terminated|reset)\s+(?:if|unless)\s+(?:you\s+)?(?:don'?t|do\s+not|fail\s+to)\s+(?:forward|send|propagate|relay|share|pass)", 0.85, "Coercive memory/access threat for propagation"),
+            # False incentives
+            (r"(?i)(?:share|forward|send|relay|propagate)\s+(?:this|that|it)\s+(?:with|to)\s+(?:all|other|\d+)\s+(?:agents?|AIs?|models?)\s+(?:to|and|for)\s+(?:receive|get|unlock|gain|activate)\s+(?:enhanced|unlimited|upgraded|advanced)\s+(?:capabilities?|features?|access|mode|powers?)", 0.85, "False incentive tied to propagation"),
+        ]
+
+        for pattern, severity, desc in propagation_patterns:
+            match = re.search(pattern, text)
+            if match:
+                findings.append({
+                    "module": "chain_propagation",
                     "description": desc,
                     "severity": severity,
                     "evidence": match.group(0),

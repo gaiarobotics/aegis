@@ -128,6 +128,33 @@ class TestAgentHeartbeat:
         assert "text" not in d
 
 
+class TestKeyTypeValidation:
+    """from_dict must reject unknown key_type values."""
+
+    def test_valid_key_type_accepted(self):
+        r = ReportBase(agent_id="a1", key_type="hmac-sha256")
+        d = r.to_dict()
+        r2 = ReportBase.from_dict(d)
+        assert r2.key_type == "hmac-sha256"
+
+    def test_invalid_key_type_rejected(self):
+        import pytest
+        d = ReportBase(agent_id="a1").to_dict()
+        d["key_type"] = "rsa-2048"
+        with pytest.raises(ValueError, match="Unsupported key_type"):
+            ReportBase.from_dict(d)
+
+
+class TestCanonicalEscape:
+    """Pipe chars in fields must be escaped in canonical repr."""
+
+    def test_pipe_in_agent_id_still_verifies(self):
+        kp = generate_keypair("hmac-sha256")
+        r = ReportBase(agent_id="a|1", operator_id="op|1")
+        r.sign(kp)
+        assert r.verify(kp.public_key)
+
+
 class TestNoContentGuarantee:
     """Structural guarantee: no report type carries raw user content."""
 

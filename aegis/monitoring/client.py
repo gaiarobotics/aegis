@@ -12,7 +12,9 @@ import threading
 import time
 from collections import deque
 from typing import Any
+from urllib.parse import urlparse
 
+from aegis.core.config import MonitoringConfig
 from aegis.monitoring.reports import (
     AgentHeartbeat,
     CompromiseReport,
@@ -28,7 +30,7 @@ class MonitoringClient:
     """Non-blocking client that reports signed events to a monitoring service.
 
     Args:
-        config: Monitoring configuration dict (from ``AegisConfig.monitoring``).
+        config: Monitoring configuration (from ``AegisConfig.monitoring``).
         agent_id: This agent's identifier.
         operator_id: The operator deploying this agent.
         keypair: Optional ``KeyPair`` for signing reports.
@@ -36,28 +38,33 @@ class MonitoringClient:
 
     def __init__(
         self,
-        config: dict[str, Any],
+        config: MonitoringConfig,
         agent_id: str = "",
         operator_id: str = "",
         keypair: Any = None,
     ) -> None:
         self._config = config
-        self._enabled = bool(config.get("enabled", False))
-        self._service_url = config.get(
-            "service_url", "https://aegis.gaiarobotics.com/api/v1"
-        ).rstrip("/")
-        self._api_key = config.get("api_key", "")
-        self._heartbeat_interval = config.get("heartbeat_interval_seconds", 60)
-        self._retry_max = config.get("retry_max_attempts", 3)
-        self._retry_backoff = config.get("retry_backoff_seconds", 5)
-        self._timeout = config.get("timeout_seconds", 10)
-        self._queue_max = config.get("queue_max_size", 1000)
+        self._enabled = config.enabled
+        service_url = config.service_url.rstrip("/")
+        parsed = urlparse(service_url)
+        if parsed.scheme not in ("http", "https", ""):
+            raise ValueError(f"Invalid service URL scheme: {parsed.scheme}")
+        if service_url and not parsed.hostname:
+            raise ValueError("Service URL must have a valid hostname")
+        self._service_url = service_url
+        self._api_key = config.api_key
+        self._heartbeat_interval = config.heartbeat_interval_seconds
+        self._retry_max = config.retry_max_attempts
+        self._retry_backoff = config.retry_backoff_seconds
+        self._timeout = config.timeout_seconds
+        self._queue_max = config.queue_max_size
 
         self._agent_id = agent_id
         self._operator_id = operator_id
         self._keypair = keypair
 
         self._queue: deque[dict[str, Any]] = deque(maxlen=self._queue_max)
+        self._queue_lock = threading.Lock()
         self._heartbeat_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
@@ -214,17 +221,21 @@ class MonitoringClient:
         success = self._post(endpoint, payload)
         if not success:
             # Queue for retry
-            self._queue.append({"endpoint": endpoint, "payload": payload})
+            with self._queue_lock:
+                self._queue.append({"endpoint": endpoint, "payload": payload})
 
     def _flush_queue(self) -> None:
         """Attempt to send queued reports."""
-        retries = len(self._queue)
+        with self._queue_lock:
+            retries = len(self._queue)
         for _ in range(retries):
-            if not self._queue:
-                break
-            item = self._queue.popleft()
+            with self._queue_lock:
+                if not self._queue:
+                    break
+                item = self._queue.popleft()
             if not self._post(item["endpoint"], item["payload"]):
-                self._queue.append(item)
+                with self._queue_lock:
+                    self._queue.append(item)
                 break  # stop on first failure
 
     def _post(self, endpoint: str, payload: dict) -> bool:
@@ -249,7 +260,6 @@ class MonitoringClient:
                     attempt + 1,
                     self._retry_max,
                     endpoint,
-                    exc_info=True,
                 )
             if attempt < self._retry_max - 1:
                 time.sleep(self._retry_backoff)

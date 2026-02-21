@@ -56,7 +56,7 @@ def load_manifest(path: str | Path) -> SkillManifest:
         capabilities=data.get("capabilities", {}),
         secrets=data.get("secrets", []),
         budgets=data.get("budgets"),
-        sandbox=data.get("sandbox", False),
+        sandbox=data.get("sandbox", True),
     )
 
 
@@ -80,6 +80,18 @@ def validate_manifest(manifest: SkillManifest) -> ValidationResult:
 
     if not manifest.version:
         errors.append("Version must be non-empty")
+
+    if not manifest.publisher:
+        errors.append("Publisher must be non-empty")
+
+    if not isinstance(manifest.hashes, dict) or not manifest.hashes:
+        errors.append("Hashes must be a non-empty dict")
+
+    if not isinstance(manifest.capabilities, dict):
+        errors.append("Capabilities must be a dict")
+
+    if not isinstance(manifest.sandbox, bool):
+        errors.append("Sandbox must be a bool")
 
     return ValidationResult(
         valid=len(errors) == 0,

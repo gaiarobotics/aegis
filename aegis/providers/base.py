@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aegis.core import killswitch
+
+logger = logging.getLogger(__name__)
 
 
 def _record_trust_for_messages(shield: Any, messages: list[dict[str, Any]], clean: bool) -> None:
@@ -21,7 +24,7 @@ def _record_trust_for_messages(shield: Any, messages: list[dict[str, Any]], clea
                 agent_id, clean=clean, anomaly=not clean,
             )
     except Exception:
-        pass  # Never disrupt the call path
+        logger.debug("Trust recording failed", exc_info=True)
 
 
 def _extract_user_text(messages: list[dict[str, Any]]) -> str:
@@ -41,6 +44,140 @@ def _extract_user_text(messages: list[dict[str, Any]]) -> str:
                 if isinstance(block, dict) and block.get("type") == "text":
                     parts.append(block.get("text", ""))
     return "\n".join(parts)
+
+
+def _extract_response_text(response: Any, provider: str) -> str:
+    """Extract concatenated text content from a provider response.
+
+    Handles both dict (mock/raw) and SDK object formats for Anthropic,
+    OpenAI, and generic providers.
+    """
+    parts: list[str] = []
+    if provider == "anthropic":
+        content = _get_content_blocks(response)
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+            elif hasattr(block, "text") and getattr(block, "type", None) == "text":
+                parts.append(block.text)
+    elif provider == "openai":
+        for choice in _get_openai_choices(response):
+            msg = _get_choice_message(choice)
+            text = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+            if isinstance(text, str):
+                parts.append(text)
+    elif provider == "ollama":
+        if isinstance(response, dict):
+            # chat response: {"message": {"content": "..."}}
+            msg = response.get("message")
+            if isinstance(msg, dict):
+                text = msg.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+            # generate response: {"response": "..."}
+            text = response.get("response")
+            if isinstance(text, str):
+                parts.append(text)
+        elif hasattr(response, "message") and hasattr(response.message, "content"):
+            parts.append(response.message.content)
+        elif hasattr(response, "response") and isinstance(response.response, str):
+            parts.append(response.response)
+    elif provider == "vllm":
+        if isinstance(response, list):
+            for req_output in response:
+                for comp in getattr(req_output, "outputs", []):
+                    text = getattr(comp, "text", None)
+                    if isinstance(text, str):
+                        parts.append(text)
+    elif provider == "generic":
+        if isinstance(response, str):
+            parts.append(response)
+        elif isinstance(response, dict):
+            content = response.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+    return "\n".join(parts)
+
+
+def _extract_response_text_length(response: Any, provider: str) -> int:
+    """Extract total text length from a provider response."""
+    return len(_extract_response_text(response, provider))
+
+
+def _extract_tool_calls(response: Any, provider: str) -> list[str]:
+    """Extract tool names from a provider response.
+
+    Returns a list of tool name strings (may contain duplicates for
+    multiple calls to the same tool).
+    """
+    tools: list[str] = []
+    if provider == "anthropic":
+        content = _get_content_blocks(response)
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                name = block.get("name")
+                if name:
+                    tools.append(name)
+            elif getattr(block, "type", None) == "tool_use":
+                name = getattr(block, "name", None)
+                if name:
+                    tools.append(name)
+    elif provider == "openai":
+        for choice in _get_openai_choices(response):
+            msg = _get_choice_message(choice)
+            tcs = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+            if tcs:
+                for tc in tcs:
+                    if isinstance(tc, dict):
+                        name = tc.get("function", {}).get("name")
+                    else:
+                        name = getattr(getattr(tc, "function", None), "name", None)
+                    if name:
+                        tools.append(name)
+    return tools
+
+
+def _classify_content_type(response: Any, provider: str) -> str:
+    """Classify the response as 'text', 'code', 'tool_use', or 'mixed'."""
+    tool_calls = _extract_tool_calls(response, provider)
+    text = _extract_response_text(response, provider)
+    has_tools = len(tool_calls) > 0
+    has_text = len(text.strip()) > 0
+
+    if has_tools and not has_text:
+        return "tool_use"
+    if has_tools and has_text:
+        return "mixed"
+
+    # Simple code detection
+    code_indicators = ("```", "def ", "function ", "class ", "import ", "#include")
+    if has_text and any(ind in text for ind in code_indicators):
+        return "code"
+
+    return "text"
+
+
+# --- Internal helpers for response parsing ---
+
+def _get_content_blocks(response: Any) -> list:
+    """Get Anthropic-style content blocks from a response."""
+    if isinstance(response, dict):
+        return response.get("content", [])
+    return getattr(response, "content", []) or []
+
+
+def _get_openai_choices(response: Any) -> list:
+    """Get OpenAI-style choices from a response."""
+    if isinstance(response, dict):
+        return response.get("choices", [])
+    return getattr(response, "choices", []) or []
+
+
+def _get_choice_message(choice: Any) -> Any:
+    """Get the message from an OpenAI choice."""
+    if isinstance(choice, dict):
+        return choice.get("message", {})
+    return getattr(choice, "message", {})
 
 
 class _InterceptProxy:
@@ -100,11 +237,6 @@ class WrappedClient:
         self._shield = shield
         self._tools = tools
         self._intercept_map = intercept_map or {}
-
-    @property
-    def original(self) -> Any:
-        """Access the unwrapped original client."""
-        return self._client
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access, intercepting known namespaces."""

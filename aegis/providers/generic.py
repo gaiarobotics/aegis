@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from aegis.providers.base import BaseWrapper, WrappedClient
 
@@ -79,6 +82,14 @@ def _intercept_generic_call(
     if isinstance(response, str):
         cleaned = shield.sanitize_output(response)
         response = cleaned.cleaned_text
+
+    # 3.5. Record response behavior and check drift
+    try:
+        shield.record_response_behavior(
+            response=response, provider="generic", kwargs=kwargs,
+        )
+    except Exception:
+        logger.debug("Behavior recording failed", exc_info=True)
 
     # 4. Record trust from text-extracted speakers
     if text:

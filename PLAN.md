@@ -512,7 +512,7 @@ What you get: full programmatic control over every pipeline step. Use when you n
 
 ```yaml
 # Master controls
-mode: observe              # observe | enforce
+mode: enforce              # enforce | observe
 killswitch: false
 
 # Agent identity

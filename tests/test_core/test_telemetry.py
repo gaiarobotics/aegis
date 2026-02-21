@@ -135,3 +135,19 @@ class TestNestedRedaction:
         assert event["data"]["count"] == 42
         assert event["data"]["enabled"] is True
         assert event["data"]["ratio"] == 0.5
+
+
+class TestExpandedRedaction:
+    def test_anthropic_key_redacted(self):
+        """Keys like 'sk-ant-api03-abcdefghij' are redacted."""
+        text = "my key is sk-ant-api03-abcdefghij"
+        result = redact(text)
+        assert "sk-ant-api03" not in result
+        assert "[REDACTED]" in result
+
+    def test_bearer_token_redacted(self):
+        """'Bearer abc123xyz' is redacted."""
+        text = "Authorization: Bearer abc123xyz"
+        result = redact(text)
+        assert "abc123xyz" not in result
+        assert "[REDACTED]" in result

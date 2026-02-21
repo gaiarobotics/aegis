@@ -1,5 +1,7 @@
 """Tests for broker quarantine mode."""
 
+import pytest
+
 from aegis.broker.quarantine import QuarantineManager
 from aegis.core.config import AegisConfig
 
@@ -72,7 +74,7 @@ class TestQuarantineTriggers:
 class TestQuarantineCustomThresholds:
     def test_custom_denied_writes_threshold(self):
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["repeated_denied_writes"] = 10
+        cfg.broker.quarantine_triggers.repeated_denied_writes = 10
         qm = QuarantineManager(config=cfg)
         qm.check_triggers(denied_count=9, new_domain_count=0)
         assert qm.is_quarantined() is False
@@ -81,7 +83,7 @@ class TestQuarantineCustomThresholds:
 
     def test_custom_domain_burst_threshold(self):
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["new_domain_burst"] = 5
+        cfg.broker.quarantine_triggers.new_domain_burst = 5
         qm = QuarantineManager(config=cfg)
         qm.check_triggers(denied_count=0, new_domain_count=4)
         assert qm.is_quarantined() is False
@@ -90,12 +92,74 @@ class TestQuarantineCustomThresholds:
 
     def test_custom_drift_threshold(self):
         cfg = AegisConfig()
-        cfg.broker["quarantine_triggers"]["drift_score_threshold"] = 5.0
+        cfg.broker.quarantine_triggers.drift_score_threshold = 5.0
         qm = QuarantineManager(config=cfg)
         qm.check_triggers(denied_count=0, new_domain_count=0, drift_score=4.9)
         assert qm.is_quarantined() is False
         qm.check_triggers(denied_count=0, new_domain_count=0, drift_score=5.0)
         assert qm.is_quarantined() is True
+
+
+class TestQuarantineExitToken:
+    """Tests for token-guarded quarantine exit."""
+
+    def test_no_token_exit_works_without_argument(self):
+        """When no exit_token is configured, exit works with no argument."""
+        qm = QuarantineManager()
+        qm.enter_quarantine("reason")
+        qm.exit_quarantine()
+        assert qm.is_quarantined() is False
+
+    def test_no_token_exit_works_with_any_argument(self):
+        """When no exit_token is configured, exit works even if a token is passed."""
+        qm = QuarantineManager()
+        qm.enter_quarantine("reason")
+        qm.exit_quarantine(token="anything")
+        assert qm.is_quarantined() is False
+
+    def test_token_exit_with_correct_token(self):
+        """When exit_token is configured, exit succeeds with the correct token."""
+        qm = QuarantineManager(exit_token="secret-123")
+        qm.enter_quarantine("reason")
+        qm.exit_quarantine(token="secret-123")
+        assert qm.is_quarantined() is False
+        assert qm.reason is None
+
+    def test_token_exit_rejects_wrong_token(self):
+        """When exit_token is configured, exit raises ValueError for wrong token."""
+        qm = QuarantineManager(exit_token="secret-123")
+        qm.enter_quarantine("reason")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            qm.exit_quarantine(token="wrong-token")
+        assert qm.is_quarantined() is True
+        assert qm.reason == "reason"
+
+    def test_token_exit_rejects_none_token(self):
+        """When exit_token is configured, exit raises ValueError if no token is given."""
+        qm = QuarantineManager(exit_token="secret-123")
+        qm.enter_quarantine("locked down")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            qm.exit_quarantine()
+        assert qm.is_quarantined() is True
+
+    def test_token_exit_rejects_empty_string_token(self):
+        """When exit_token is configured, exit rejects empty string."""
+        qm = QuarantineManager(exit_token="secret-123")
+        qm.enter_quarantine("reason")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            qm.exit_quarantine(token="")
+        assert qm.is_quarantined() is True
+
+    def test_token_with_config_and_exit_token(self):
+        """exit_token works alongside custom config."""
+        cfg = AegisConfig()
+        cfg.broker.quarantine_triggers.repeated_denied_writes = 10
+        qm = QuarantineManager(config=cfg, exit_token="my-token")
+        qm.enter_quarantine("reason")
+        with pytest.raises(ValueError, match="Invalid exit token"):
+            qm.exit_quarantine(token="bad")
+        qm.exit_quarantine(token="my-token")
+        assert qm.is_quarantined() is False
 
 
 class TestQuarantineThreadSafety:

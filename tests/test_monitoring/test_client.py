@@ -5,25 +5,26 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock, patch
 
+from aegis.core.config import MonitoringConfig
 from aegis.monitoring.client import MonitoringClient
 from aegis.identity.attestation import generate_keypair
 
 
 def _disabled_config():
-    return {"enabled": False, "service_url": "http://localhost:1", "api_key": ""}
+    return MonitoringConfig(enabled=False, service_url="http://localhost:1", api_key="")
 
 
 def _enabled_config(port=0):
-    return {
-        "enabled": True,
-        "service_url": f"http://127.0.0.1:{port}/api/v1",
-        "api_key": "test-key",
-        "heartbeat_interval_seconds": 60,
-        "retry_max_attempts": 1,
-        "retry_backoff_seconds": 0,
-        "timeout_seconds": 2,
-        "queue_max_size": 10,
-    }
+    return MonitoringConfig(
+        enabled=True,
+        service_url=f"http://127.0.0.1:{port}/api/v1",
+        api_key="test-key",
+        heartbeat_interval_seconds=60,
+        retry_max_attempts=1,
+        retry_backoff_seconds=0,
+        timeout_seconds=2,
+        queue_max_size=10,
+    )
 
 
 class TestDisabledClient:
@@ -71,8 +72,12 @@ class TestClientQueue:
         assert len(client._queue) == 1
 
     def test_queue_max_size(self):
-        cfg = _enabled_config(port=1)
-        cfg["queue_max_size"] = 3
+        cfg = MonitoringConfig(
+            enabled=True,
+            service_url="http://127.0.0.1:1/api/v1",
+            api_key="test-key",
+            queue_max_size=3,
+        )
         client = MonitoringClient(cfg, agent_id="a1")
         client._post = lambda endpoint, payload: False
 
@@ -133,9 +138,13 @@ class TestClientAuthHeader:
 class TestClientGracefulDegradation:
     def test_no_exception_on_network_error(self):
         """Client should silently handle connection failures."""
-        cfg = _enabled_config(port=1)  # port 1 won't be listening
-        cfg["retry_max_attempts"] = 1
-        cfg["timeout_seconds"] = 1
+        cfg = MonitoringConfig(
+            enabled=True,
+            service_url="http://127.0.0.1:1/api/v1",
+            api_key="test-key",
+            retry_max_attempts=1,
+            timeout_seconds=1,
+        )
         client = MonitoringClient(cfg, agent_id="a1")
         # Should not raise
         client.send_compromise_report("a2")
@@ -145,8 +154,12 @@ class TestClientGracefulDegradation:
 
     def test_start_stop_lifecycle(self):
         """Start and stop should work without errors."""
-        cfg = _enabled_config(port=1)
-        cfg["heartbeat_interval_seconds"] = 0.1
+        cfg = MonitoringConfig(
+            enabled=True,
+            service_url="http://127.0.0.1:1/api/v1",
+            api_key="test-key",
+            heartbeat_interval_seconds=0.1,
+        )
         client = MonitoringClient(cfg, agent_id="a1")
         client._post = lambda endpoint, payload: True
         client.start()
@@ -154,3 +167,91 @@ class TestClientGracefulDegradation:
         assert client._heartbeat_thread.is_alive()
         client.stop()
         assert client._heartbeat_thread is None
+
+
+class TestClientQueueLock:
+    def test_has_queue_lock(self):
+        """MonitoringClient should have a _queue_lock attribute."""
+        client = MonitoringClient(_enabled_config(port=1), agent_id="a1")
+        assert hasattr(client, "_queue_lock")
+        assert isinstance(client._queue_lock, type(threading.Lock()))
+
+    def test_concurrent_send_and_flush(self):
+        """Concurrent sends and flushes should not corrupt the queue."""
+        cfg = MonitoringConfig(
+            enabled=True,
+            service_url="http://127.0.0.1:1/api/v1",
+            api_key="test-key",
+            queue_max_size=100,
+        )
+        client = MonitoringClient(cfg, agent_id="a1")
+
+        # Track calls to prevent actual HTTP requests
+        call_count = {"send": 0, "flush": 0}
+
+        # _post always fails so items get queued
+        client._post = lambda endpoint, payload: False
+
+        errors = []
+        barrier = threading.Barrier(10)
+
+        def send_worker():
+            try:
+                barrier.wait(timeout=5)
+                for _ in range(10):
+                    client.send_compromise_report("a2")
+            except Exception as e:
+                errors.append(e)
+
+        def flush_worker():
+            try:
+                barrier.wait(timeout=5)
+                for _ in range(10):
+                    client._flush_queue()
+            except Exception as e:
+                errors.append(e)
+
+        threads = []
+        for _ in range(5):
+            threads.append(threading.Thread(target=send_worker))
+        for _ in range(5):
+            threads.append(threading.Thread(target=flush_worker))
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        assert not errors
+        # Queue should not have raised any exceptions; all items should be intact
+        assert len(client._queue) <= 100
+
+
+class TestServiceUrlValidation:
+    def test_invalid_scheme_rejected(self):
+        """'ftp://evil.com' raises ValueError."""
+        import pytest
+
+        cfg = MonitoringConfig(enabled=True, service_url="ftp://evil.com", api_key="")
+        with pytest.raises(ValueError, match="Invalid service URL scheme"):
+            MonitoringClient(cfg, agent_id="a1")
+
+    def test_no_hostname_rejected(self):
+        """'http://' raises ValueError."""
+        import pytest
+
+        cfg = MonitoringConfig(enabled=True, service_url="http://", api_key="")
+        with pytest.raises(ValueError, match="Service URL must have a valid hostname"):
+            MonitoringClient(cfg, agent_id="a1")
+
+    def test_valid_http_accepted(self):
+        """'http://example.com' is accepted."""
+        cfg = MonitoringConfig(enabled=True, service_url="http://example.com", api_key="")
+        client = MonitoringClient(cfg, agent_id="a1")
+        assert client._service_url == "http://example.com"
+
+    def test_empty_url_accepted(self):
+        """Empty string is accepted (disabled monitoring)."""
+        cfg = MonitoringConfig(enabled=False, service_url="", api_key="")
+        client = MonitoringClient(cfg, agent_id="a1")
+        assert client._service_url == ""

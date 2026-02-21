@@ -49,7 +49,7 @@ That's it. AEGIS auto-detects your provider (Anthropic, OpenAI, or generic) and 
 
 When you call `aegis.wrap(client)`:
 
-1. AEGIS creates a `Shield` with default settings (observe mode, all modules enabled)
+1. AEGIS creates a `Shield` with default settings (enforce mode, all modules enabled)
 2. It wraps your client in a transparent proxy
 3. Every API call is intercepted:
    - **Input text** is scanned for prompt injection patterns
@@ -58,7 +58,7 @@ When you call `aegis.wrap(client)`:
    - **Agent identity** is tracked for trust scoring
 4. Clean requests pass through unchanged — you get the same response you'd get without AEGIS
 
-By default, AEGIS runs in **observe mode**: threats are detected and logged but never blocked. Your application behavior is identical to running without AEGIS.
+By default, AEGIS runs in **enforce mode**: detected threats are blocked by raising `ThreatBlockedError`. Use `mode="observe"` if you want to evaluate detections without blocking.
 
 ## Modes
 
@@ -66,15 +66,15 @@ AEGIS has two modes:
 
 | Mode | Behavior | Use When |
 |------|----------|----------|
-| `observe` (default) | Detects threats, logs them, but allows all calls through | Evaluating AEGIS, tuning thresholds |
-| `enforce` | Blocks detected threats by raising `ThreatBlockedError` | Production protection |
+| `enforce` (default) | Blocks detected threats by raising `ThreatBlockedError` | Production protection |
+| `observe` | Detects threats, logs them, but allows all calls through | Evaluating AEGIS, tuning thresholds |
 
 ```python
-# Start in observe mode to evaluate detections
-client = aegis.wrap(anthropic.Anthropic(), mode="observe")
+# Protected by default
+client = aegis.wrap(anthropic.Anthropic())
 
-# Switch to enforce mode when confident
-client = aegis.wrap(anthropic.Anthropic(), mode="enforce")
+# Use observe mode to evaluate detections before enforcing
+client = aegis.wrap(anthropic.Anthropic(), mode="observe")
 ```
 
 ### Handling Blocked Threats
@@ -100,8 +100,10 @@ AEGIS auto-detects your LLM client:
 
 | Provider | Intercepted Method | Detection |
 |----------|-------------------|-----------|
-| **Anthropic** | `client.messages.create()` | Class name contains "Anthropic" |
-| **OpenAI** | `client.chat.completions.create()` | Class name contains "OpenAI" |
+| **Anthropic** | `client.messages.create()` | Module contains "anthropic" |
+| **OpenAI** | `client.chat.completions.create()` | Module contains "openai" |
+| **Ollama** | `client.chat()` and `client.generate()` | Module contains "ollama" |
+| **vLLM** | `llm.generate()` and `llm.chat()` | Module contains "vllm" |
 | **Generic** | `client.create()` or `client.generate()` | Fallback for any client with these methods |
 
 All other attributes and methods on your client pass through unchanged.
@@ -469,6 +471,95 @@ When integrated with the Shield, quarantine is triggered automatically:
 
 During quarantine, all write operations are blocked. The agent can still read data and respond to queries, but cannot modify external state.
 
+## Model Integrity Protection
+
+When you use Ollama or vLLM, AEGIS automatically monitors model files on disk for tampering. This protects against model swaps, corruption, and poisoning attacks.
+
+**It's automatic.** If you're wrapping an Ollama or vLLM client, integrity monitoring is already enabled. No extra setup needed.
+
+```python
+import aegis
+import ollama
+
+# Model integrity is checked on every call
+client = aegis.wrap(ollama.Client())
+response = client.chat(model="llama3", messages=[{"role": "user", "content": "Hello"}])
+```
+
+### What It Detects
+
+On the first API call for a model, AEGIS:
+1. Discovers model files (Ollama blobs or HuggingFace cache)
+2. Takes a stat snapshot (mtime, size, inode) of each file
+3. Hashes files asynchronously in the background (SHA256)
+
+On every subsequent call, AEGIS checks the stat snapshot (essentially free — one `os.stat()` per file). If anything has changed:
+
+- **Enforce mode**: raises `ModelTamperedError`
+- **Observe mode**: logs a warning
+
+```python
+from aegis import ModelTamperedError
+
+try:
+    response = client.chat(model="llama3", messages=[...])
+except ModelTamperedError as e:
+    print(f"Model {e.model_name} tampered: {e.detail}")
+```
+
+### Tiered Detection Strategy
+
+| Tier | What | Cost | When |
+|------|------|------|------|
+| **Stat check** | mtime, size, inode | ~1 microsecond per file | Every API call |
+| **inotify** | Real-time file change notifications | Zero (kernel push) | Linux only, automatic |
+| **SHA256 hash** | Full content verification | Proportional to file size | On model registration |
+| **Periodic re-hash** | Catches mmap modifications | Same as above | Every hour (configurable) |
+
+inotify gracefully degrades on non-Linux platforms — stat checks and hashing still provide protection.
+
+<details>
+<summary>Integrity configuration</summary>
+
+```yaml
+# aegis.yaml
+integrity:
+  hash_on_load: async        # "sync" (blocks until hashed), "async" (background), or "off"
+  rehash_interval_seconds: 3600   # Re-hash all files periodically (0 to disable)
+  inotify_enabled: true       # Use inotify on Linux (auto-disabled on other platforms)
+  ollama_models_path: ""      # Override Ollama models directory (default: auto-detect)
+  hf_cache_path: ""           # Override HuggingFace cache directory (default: auto-detect)
+```
+
+Environment variable overrides:
+```bash
+AEGIS_INTEGRITY_HASH_ON_LOAD=sync
+AEGIS_INTEGRITY_REHASH_INTERVAL=1800
+```
+
+</details>
+
+<details>
+<summary>Provenance verification</summary>
+
+When AEGIS discovers Ollama model files, it reads the manifest to get expected SHA256 digests for each blob. After hashing, AEGIS compares against these digests to verify provenance:
+
+- **VERIFIED_MANIFEST** — computed hash matches the manifest digest
+- **UNVERIFIED** — no manifest digest available, or hash doesn't match
+- **PENDING** — hash not yet computed (async mode, not finished)
+
+```python
+shield = Shield()
+monitor = shield.integrity_monitor
+if monitor is not None:
+    status = monitor.get_status("llama3")
+    if status:
+        for f in status.files:
+            print(f"{f.path}: {f.provenance.value}")
+```
+
+</details>
+
 ## Configuration
 
 ### Config File
@@ -534,6 +625,7 @@ shield = Shield(
 | `memory` | Guards against memory poisoning | Agents with persistent memory across sessions |
 | `skills` | Sandboxes skill execution | Agents with dynamic skill loading |
 | `recovery` | Quarantine and rollback | Production systems needing auto-containment |
+| `integrity` | Detects model file tampering | Ollama or vLLM with local model files |
 
 ## Killswitch
 

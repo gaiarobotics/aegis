@@ -103,8 +103,10 @@ class TestEndToEndPipeline:
         """Exceeding budget should deny subsequent actions."""
         from aegis.core.config import AegisConfig
 
-        cfg = AegisConfig(mode="enforce")
-        cfg.broker["budgets"]["max_write_tool_calls"] = 2
+        cfg = AegisConfig(
+            mode="enforce",
+            broker={"budgets": {"max_write_tool_calls": 2}},
+        )
         shield = Shield(config=cfg)
 
         # Register a tool
@@ -377,22 +379,26 @@ class TestIdentityBehaviorIntegration:
 
     def test_skills_loader_integration(self):
         """Skills loader validates and loads skill code safely."""
-        import json
+        import hashlib
+        import os
+        import tempfile
+
         from aegis.skills import SkillLoader, SkillManifest
 
         loader = SkillLoader()
 
         # Create a valid skill file
-        import tempfile
+        skill_code = "def greet(name):\n    return f'Hello {name}'\n"
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("def greet(name):\n    return f'Hello {name}'\n")
+            f.write(skill_code)
             skill_path = f.name
 
+        skill_hash = hashlib.sha256(skill_code.encode()).hexdigest()
         manifest = SkillManifest(
             name="greeter",
             version="1.0.0",
             publisher="test",
-            hashes={},
+            hashes={os.path.basename(skill_path): skill_hash},
             signature=None,
             capabilities={"network": False, "filesystem": False, "tools": [], "read_write": "read"},
             secrets=[],
@@ -400,7 +406,6 @@ class TestIdentityBehaviorIntegration:
             sandbox=True,
         )
 
-        import os
         try:
             result = loader.load_skill(skill_path, manifest)
             assert result.approved is True

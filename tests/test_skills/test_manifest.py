@@ -61,7 +61,7 @@ class TestRejectInvalidManifest:
             name="",
             version="1.0.0",
             publisher="acme",
-            hashes={},
+            hashes={"main.py": "abc123"},
             signature=None,
             capabilities={
                 "network": False,
@@ -84,7 +84,7 @@ class TestRejectInvalidManifest:
             name="my-skill",
             version="",
             publisher="acme",
-            hashes={},
+            hashes={"main.py": "abc123"},
             signature=None,
             capabilities={
                 "network": False,
@@ -99,6 +99,28 @@ class TestRejectInvalidManifest:
         result = validate_manifest(manifest)
         assert result.valid is False
         assert any("version" in e.lower() for e in result.errors)
+
+    def test_reject_missing_publisher(self):
+        """Manifest with empty publisher should fail validation."""
+        manifest = SkillManifest(
+            name="my-skill", version="1.0.0", publisher="",
+            hashes={"main.py": "abc"}, signature=None,
+            capabilities={}, secrets=[], budgets=None, sandbox=True,
+        )
+        result = validate_manifest(manifest)
+        assert result.valid is False
+        assert any("publisher" in e.lower() for e in result.errors)
+
+    def test_reject_empty_hashes(self):
+        """Manifest with empty hashes should fail validation."""
+        manifest = SkillManifest(
+            name="my-skill", version="1.0.0", publisher="acme",
+            hashes={}, signature=None,
+            capabilities={}, secrets=[], budgets=None, sandbox=True,
+        )
+        result = validate_manifest(manifest)
+        assert result.valid is False
+        assert any("hashes" in e.lower() for e in result.errors)
 
     def test_valid_manifest_passes(self):
         """A fully valid manifest should pass validation."""

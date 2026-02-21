@@ -61,9 +61,9 @@ AEGIS does not assume any single layer is reliable. Instead, it layers seven ind
 
 The compound probability of bypassing all layers is substantially lower than bypassing any individual one. This is the core value proposition: **partial failure of any layer does not mean total compromise**.
 
-## Observe Mode: Safe Adoption
+## Observe Mode: Safe Evaluation
 
-AEGIS supports an `observe` mode that logs all detections and would-be blocks without actually enforcing them. This allows teams to:
+AEGIS defaults to `enforce` mode so that developers are protected out of the box. For teams that want to evaluate detection accuracy before enabling enforcement, AEGIS supports an `observe` mode that logs all detections and would-be blocks without actually enforcing them. This allows teams to:
 
 - Deploy AEGIS alongside an existing multi-agent system with zero behavioral change.
 - Evaluate detection accuracy against real traffic before enabling enforcement.

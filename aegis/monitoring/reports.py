@@ -76,20 +76,26 @@ class ReportBase:
                 )
         return False
 
+    @staticmethod
+    def _esc(s: str) -> str:
+        """Escape backslash and pipe in a field before joining with ``|``."""
+        return s.replace("\\", "\\\\").replace("|", "\\|")
+
     def _canonical_bytes(self) -> bytes:
         """Build a canonical byte representation for signing.
 
         Includes all fields except ``signature``.
+        Each field is escaped to prevent separator confusion.
         """
         parts = [
-            self.report_id,
-            self.agent_id,
-            self.operator_id,
-            str(self.timestamp),
-            self.report_type,
-            self.key_type,
+            self._esc(self.report_id),
+            self._esc(self.agent_id),
+            self._esc(self.operator_id),
+            self._esc(str(self.timestamp)),
+            self._esc(self.report_type),
+            self._esc(self.key_type),
         ]
-        parts.extend(self._extra_canonical_parts())
+        parts.extend(self._esc(p) for p in self._extra_canonical_parts())
         return "|".join(parts).encode("utf-8")
 
     def _extra_canonical_parts(self) -> list[str]:
@@ -103,12 +109,21 @@ class ReportBase:
         d["signature"] = base64.b64encode(self.signature).decode("ascii")
         return d
 
+    _VALID_KEY_TYPES = {"hmac-sha256", "ed25519"}
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ReportBase":
-        """Deserialize from a dictionary."""
+        """Deserialize from a dictionary.
+
+        Raises:
+            ValueError: If key_type is not a supported type.
+        """
         data = dict(data)  # shallow copy
         if "signature" in data and isinstance(data["signature"], str):
             data["signature"] = base64.b64decode(data["signature"])
+        key_type = data.get("key_type", "hmac-sha256")
+        if key_type not in cls._VALID_KEY_TYPES:
+            raise ValueError(f"Unsupported key_type: {key_type!r}")
         return cls(**data)
 
 

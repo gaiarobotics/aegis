@@ -27,7 +27,7 @@ One line. No config needed. AEGIS auto-detects your provider, scans inputs for p
 
 ## What It Does
 
-AEGIS layers seven independent defense mechanisms so that bypassing any single one doesn't mean total compromise:
+AEGIS layers eight independent defense mechanisms so that bypassing any single one doesn't mean total compromise:
 
 | Module | Purpose |
 |--------|---------|
@@ -37,21 +37,22 @@ AEGIS layers seven independent defense mechanisms so that bypassing any single o
 | **Behavior** | Fingerprints agent behavior and detects drift from baseline |
 | **Memory** | Guards against memory poisoning with category restrictions and taint tracking |
 | **Recovery** | Auto-quarantines compromised agents and rolls back to known-good state |
+| **Integrity** | Detects tampering of local model files (Ollama, vLLM) via stat checks, hashing, and inotify |
 | **Monitoring** | Optional reporting to a central monitoring service for network-wide visibility |
 
 ## Modes
 
 | Mode | Behavior |
 |------|----------|
-| `observe` (default) | Detects and logs threats, but never blocks - safe for evaluation |
-| `enforce` | Blocks detected threats by raising `ThreatBlockedError` |
+| `enforce` (default) | Blocks detected threats by raising `ThreatBlockedError` |
+| `observe` | Detects and logs threats, but never blocks - useful for evaluation |
 
 ```python
-# Start safe
-client = aegis.wrap(my_client, mode="observe")
+# Protected by default
+client = aegis.wrap(my_client)
 
-# Switch to enforcement when confident
-client = aegis.wrap(my_client, mode="enforce")
+# Use observe mode to evaluate detections before enforcing
+client = aegis.wrap(my_client, mode="observe")
 ```
 
 ## Supported Providers
@@ -60,6 +61,8 @@ client = aegis.wrap(my_client, mode="enforce")
 |----------|-------------------|
 | **Anthropic** | `client.messages.create()` |
 | **OpenAI** | `client.chat.completions.create()` |
+| **Ollama** | `client.chat()` and `client.generate()` |
+| **vLLM** | `llm.generate()` and `llm.chat()` |
 | **Generic** | `client.create()` or `client.generate()` |
 
 ## Optional Extras

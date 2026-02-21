@@ -19,7 +19,7 @@ class TestTier0Metadata:
         info = _extract_metadata(msg)
         assert info is not None
         assert info.agent_id == "Alice"
-        assert info.confidence == 1.0
+        assert info.confidence == 0.85
         assert info.tier == 0
         assert info.source_field == "name"
 
@@ -190,6 +190,43 @@ class TestExtractSpeakers:
         ]
         result = extract_speakers(messages)
         assert result.agent_ids == ["Alice", "Bob"]
+
+
+class TestAgentIdValidation:
+    """Validate agent IDs against _VALID_AGENT_ID regex."""
+
+    def test_valid_agent_id_accepted(self):
+        """Normal IDs like 'Alice' pass validation."""
+        msg = {"role": "user", "name": "Alice", "content": "Hello"}
+        info = _extract_metadata(msg)
+        assert info is not None
+        assert info.agent_id == "Alice"
+
+    def test_invalid_agent_id_rejected(self):
+        """IDs with special chars like 'Alice; DROP TABLE' return None."""
+        msg = {"role": "user", "name": "Alice; DROP TABLE", "content": "Hello"}
+        info = _extract_metadata(msg)
+        assert info is None
+
+    def test_metadata_confidence_reduced(self):
+        """Metadata confidence should be 0.85, not 1.0."""
+        msg = {"role": "user", "name": "Alice", "content": "Hello"}
+        info = _extract_metadata(msg)
+        assert info is not None
+        assert info.confidence == 0.85
+
+    def test_empty_agent_id_rejected(self):
+        """Empty string is skipped."""
+        msg = {"role": "user", "name": "", "content": "Hello"}
+        info = _extract_metadata(msg)
+        assert info is None
+
+    def test_long_agent_id_rejected(self):
+        """200+ char ID is rejected (128 char limit)."""
+        long_id = "A" * 200
+        msg = {"role": "user", "name": long_id, "content": "Hello"}
+        info = _extract_metadata(msg)
+        assert info is None
 
 
 class TestExtractionResult:

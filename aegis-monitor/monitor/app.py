@@ -50,6 +50,8 @@ async def lifespan(app: FastAPI):
         )
         if agent.is_compromised:
             app.state.graph.mark_compromised(agent.agent_id)
+        if agent.is_killswitched:
+            app.state.graph.mark_killswitched(agent.agent_id)
 
     yield
 
@@ -249,6 +251,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     graph_state = graph.get_graph_state()
     compromised = sum(1 for n in graph_state["nodes"] if n["is_compromised"])
     quarantined = sum(1 for n in graph_state["nodes"] if n["is_quarantined"])
+    killswitched = sum(1 for n in graph_state["nodes"] if n["is_killswitched"])
 
     threat_events = db.get_events(event_type="threat", limit=0)
 
@@ -264,6 +267,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
         "total_agents": len(graph_state["nodes"]),
         "compromised_agents": compromised,
         "quarantined_agents": quarantined,
+        "killswitched_agents": killswitched,
         "cluster_count": len(real_clusters),
         "clusters": cluster_info,
     }
@@ -287,6 +291,7 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
         "trust_score": agent.trust_score,
         "is_compromised": agent.is_compromised,
         "is_quarantined": agent.is_quarantined,
+        "is_killswitched": agent.is_killswitched,
         "at_risk_agents": at_risk,
     }
 
@@ -322,6 +327,17 @@ async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)
         created_by=data.get("created_by", ""),
     )
     db.insert_killswitch_rule(rule)
+
+    # Update agent killswitched status in DB and graph
+    graph: AgentGraph = app.state.graph
+    if rule.blocked and rule.scope == "agent" and rule.target:
+        db.set_agent_killswitched(rule.target, True)
+        graph.mark_killswitched(rule.target, True)
+    elif rule.blocked and rule.scope == "swarm":
+        # Mark all known agents as killswitched
+        for agent in db.get_all_agents():
+            db.set_agent_killswitched(agent.agent_id, True)
+            graph.mark_killswitched(agent.agent_id, True)
 
     await _broadcast(app.state, {
         "type": "killswitch",
@@ -361,9 +377,17 @@ async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
 async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_key)):
     """Remove a killswitch rule."""
     db: Database = app.state.db
+    graph: AgentGraph = app.state.graph
     deleted = db.delete_killswitch_rule(rule_id)
 
     if deleted:
+        # Re-evaluate killswitch status for all agents
+        for agent in db.get_all_agents():
+            still_blocked, _, _ = db.check_killswitch(agent.agent_id, agent.operator_id)
+            if not still_blocked and agent.is_killswitched:
+                db.set_agent_killswitched(agent.agent_id, False)
+                graph.mark_killswitched(agent.agent_id, False)
+
         await _broadcast(app.state, {
             "type": "killswitch",
             "action": "deleted",

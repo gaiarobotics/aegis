@@ -17,6 +17,7 @@ class AgentNode:
     trust_score: float = 0.0
     is_compromised: bool = False
     is_quarantined: bool = False
+    is_killswitched: bool = False
     last_heartbeat: float = field(default_factory=time.time)
     metadata: dict[str, Any] = field(default_factory=dict)
 

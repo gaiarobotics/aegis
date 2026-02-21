@@ -19,9 +19,10 @@ CREATE TABLE IF NOT EXISTS agents (
     trust_tier     INTEGER NOT NULL DEFAULT 0,
     trust_score    REAL NOT NULL DEFAULT 0.0,
     is_compromised INTEGER NOT NULL DEFAULT 0,
-    is_quarantined INTEGER NOT NULL DEFAULT 0,
-    last_heartbeat REAL NOT NULL DEFAULT 0,
-    metadata       TEXT NOT NULL DEFAULT '{}'
+    is_quarantined  INTEGER NOT NULL DEFAULT 0,
+    is_killswitched INTEGER NOT NULL DEFAULT 0,
+    last_heartbeat  REAL NOT NULL DEFAULT 0,
+    metadata        TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -111,16 +112,18 @@ class Database:
         conn.execute(
             """INSERT INTO agents
                    (agent_id, operator_id, trust_tier, trust_score,
-                    is_compromised, is_quarantined, last_heartbeat, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    is_compromised, is_quarantined, is_killswitched,
+                    last_heartbeat, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET
-                   operator_id    = excluded.operator_id,
-                   trust_tier     = excluded.trust_tier,
-                   trust_score    = excluded.trust_score,
-                   is_compromised = excluded.is_compromised,
-                   is_quarantined = excluded.is_quarantined,
-                   last_heartbeat = excluded.last_heartbeat,
-                   metadata       = excluded.metadata
+                   operator_id     = excluded.operator_id,
+                   trust_tier      = excluded.trust_tier,
+                   trust_score     = excluded.trust_score,
+                   is_compromised  = excluded.is_compromised,
+                   is_quarantined  = excluded.is_quarantined,
+                   is_killswitched = excluded.is_killswitched,
+                   last_heartbeat  = excluded.last_heartbeat,
+                   metadata        = excluded.metadata
             """,
             (
                 node.agent_id,
@@ -129,6 +132,7 @@ class Database:
                 node.trust_score,
                 int(node.is_compromised),
                 int(node.is_quarantined),
+                int(node.is_killswitched),
                 node.last_heartbeat,
                 json.dumps(node.metadata),
             ),
@@ -158,6 +162,7 @@ class Database:
             trust_score=row["trust_score"],
             is_compromised=bool(row["is_compromised"]),
             is_quarantined=bool(row["is_quarantined"]),
+            is_killswitched=bool(row["is_killswitched"]),
             last_heartbeat=row["last_heartbeat"],
             metadata=json.loads(row["metadata"]),
         )
@@ -302,6 +307,27 @@ class Database:
             )
             for r in rows
         ]
+
+    def set_agent_killswitched(self, agent_id: str, killswitched: bool) -> None:
+        """Set the is_killswitched flag on an agent (creates agent if needed)."""
+        conn = self._get_conn()
+        # Try update first
+        cur = conn.execute(
+            "UPDATE agents SET is_killswitched = ? WHERE agent_id = ?",
+            (int(killswitched), agent_id),
+        )
+        if cur.rowcount == 0 and killswitched:
+            # Agent doesn't exist yet — create it with killswitched flag
+            conn.execute(
+                """INSERT INTO agents
+                       (agent_id, operator_id, trust_tier, trust_score,
+                        is_compromised, is_quarantined, is_killswitched,
+                        last_heartbeat, metadata)
+                   VALUES (?, '', 0, 0.0, 0, 0, ?, 0, '{}')
+                """,
+                (agent_id, int(killswitched)),
+            )
+        conn.commit()
 
     # ---- Killswitch Rules ----
 

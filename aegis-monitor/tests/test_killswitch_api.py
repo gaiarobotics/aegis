@@ -169,6 +169,110 @@ class TestKillswitchRulesCRUD:
         assert rules[0]["rule_id"] == "my-custom-id"
 
 
+class TestKillswitchAgentStatus:
+    def test_agent_marked_killswitched_on_block(self, client):
+        """Blocking an agent should set is_killswitched on the agent."""
+        # Create agent first
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "agent-ks",
+            "trust_tier": 2,
+        })
+
+        # Block agent
+        client.post("/api/v1/killswitch/rules", json={
+            "scope": "agent",
+            "target": "agent-ks",
+            "blocked": True,
+            "reason": "test block",
+        })
+
+        # Check trust endpoint shows killswitched
+        resp = client.get("/api/v1/trust/agent-ks")
+        data = resp.json()
+        assert data["is_killswitched"] is True
+
+        # Check graph shows killswitched
+        resp = client.get("/api/v1/graph")
+        nodes = {n["id"]: n for n in resp.json()["nodes"]}
+        assert nodes["agent-ks"]["is_killswitched"] is True
+        assert nodes["agent-ks"]["color"] == "#e67e22"  # orange
+
+    def test_agent_unkillswitched_on_rule_delete(self, client):
+        """Deleting the rule should clear is_killswitched."""
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "agent-ks2",
+            "trust_tier": 1,
+        })
+
+        create_resp = client.post("/api/v1/killswitch/rules", json={
+            "scope": "agent",
+            "target": "agent-ks2",
+            "blocked": True,
+        })
+        rule_id = create_resp.json()["rule_id"]
+
+        # Verify killswitched
+        resp = client.get("/api/v1/trust/agent-ks2")
+        assert resp.json()["is_killswitched"] is True
+
+        # Delete rule
+        client.delete(f"/api/v1/killswitch/rules/{rule_id}")
+
+        # Verify unkillswitched
+        resp = client.get("/api/v1/trust/agent-ks2")
+        assert resp.json()["is_killswitched"] is False
+
+        # Graph node too
+        resp = client.get("/api/v1/graph")
+        nodes = {n["id"]: n for n in resp.json()["nodes"]}
+        assert nodes["agent-ks2"]["is_killswitched"] is False
+
+    def test_killswitched_distinct_from_quarantined(self, client):
+        """Killswitched and quarantined are independent statuses."""
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "agent-q",
+            "trust_tier": 2,
+            "is_quarantined": True,
+        })
+        client.post("/api/v1/killswitch/rules", json={
+            "scope": "agent",
+            "target": "agent-q",
+            "blocked": True,
+        })
+
+        resp = client.get("/api/v1/trust/agent-q")
+        data = resp.json()
+        assert data["is_quarantined"] is True
+        assert data["is_killswitched"] is True
+
+    def test_metrics_include_killswitched_count(self, client):
+        client.post("/api/v1/heartbeat", json={"agent_id": "a1"})
+        client.post("/api/v1/heartbeat", json={"agent_id": "a2"})
+        client.post("/api/v1/killswitch/rules", json={
+            "scope": "agent", "target": "a1", "blocked": True,
+        })
+
+        resp = client.get("/api/v1/metrics")
+        data = resp.json()
+        assert data["killswitched_agents"] == 1
+
+    def test_swarm_block_marks_all_agents(self, client):
+        """A swarm block should mark all known agents as killswitched."""
+        client.post("/api/v1/heartbeat", json={"agent_id": "s1"})
+        client.post("/api/v1/heartbeat", json={"agent_id": "s2"})
+
+        client.post("/api/v1/killswitch/rules", json={
+            "scope": "swarm",
+            "blocked": True,
+            "reason": "Emergency",
+        })
+
+        resp = client.get("/api/v1/trust/s1")
+        assert resp.json()["is_killswitched"] is True
+        resp = client.get("/api/v1/trust/s2")
+        assert resp.json()["is_killswitched"] is True
+
+
 class TestKillswitchDB:
     def test_db_check_killswitch_empty(self, client):
         """Direct DB check with no rules."""

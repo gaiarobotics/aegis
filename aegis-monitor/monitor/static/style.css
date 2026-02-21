@@ -8,6 +8,7 @@
     --yellow: #f1c40f;
     --red: #e74c3c;
     --blue: #3498db;
+    --orange: #e67e22;
     --gray: #95a5a6;
     --border: #2c3e50;
 }
@@ -63,6 +64,7 @@ body {
 .metric.r0 .value { color: var(--blue); }
 .metric.threats .value { color: var(--red); }
 .metric.quarantined .value { color: var(--yellow); }
+.metric.killswitched .value { color: var(--orange, #e67e22); }
 .metric.clusters .value { color: var(--green); }
 .metric.agents .value { color: var(--text); }
 

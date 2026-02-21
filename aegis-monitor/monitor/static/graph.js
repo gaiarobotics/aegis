@@ -94,6 +94,11 @@
             if (cb.checked) visibleTiers.add(parseInt(cb.dataset.value, 10));
         });
 
+        if (node.is_killswitched) {
+            var showKillswitched = document.querySelector('[data-filter="killswitched"]');
+            return showKillswitched ? showKillswitched.checked : true;
+        }
+
         const showCompromised = document.querySelector('[data-filter="compromised"]');
         if (node.is_compromised || node.is_quarantined) {
             return showCompromised ? showCompromised.checked : true;
@@ -117,6 +122,7 @@
         setText("m-r0", (data.r0 || 0).toFixed(2));
         setText("m-threats", data.active_threats || 0);
         setText("m-quarantined", data.quarantined_agents || 0);
+        setText("m-killswitched", data.killswitched_agents || 0);
         setText("m-clusters", data.cluster_count || 0);
         setText("m-agents", data.total_agents || 0);
 
@@ -147,6 +153,7 @@
             setText("popup-tier", data.trust_tier !== undefined ? "Tier " + data.trust_tier : "—");
             setText("popup-score", data.trust_score !== undefined ? data.trust_score.toFixed(1) : "—");
             setText("popup-status",
+                data.is_killswitched ? "KILLSWITCHED" :
                 data.is_compromised ? "COMPROMISED" :
                 data.is_quarantined ? "QUARANTINED" : "Active");
             setText("popup-operator", data.operator_id || "—");

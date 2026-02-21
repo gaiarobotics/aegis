@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from aegis.core import killswitch
-
 logger = logging.getLogger(__name__)
 
 
@@ -274,9 +272,6 @@ class BaseWrapper:
 
     def scan_input(self, text: str) -> dict[str, Any]:
         """Scan input text and return result dict."""
-        if killswitch.is_active():
-            return {"is_threat": False, "threat_score": 0.0}
-
         result = self._shield.scan_input(text)
         return {
             "is_threat": result.is_threat,
@@ -286,17 +281,11 @@ class BaseWrapper:
 
     def sanitize_output(self, text: str) -> str:
         """Sanitize output text and return cleaned version."""
-        if killswitch.is_active():
-            return text
-
         result = self._shield.sanitize_output(text)
         return result.cleaned_text
 
     def evaluate_action(self, action_request: Any) -> dict[str, Any]:
         """Evaluate an action request and return result dict."""
-        if killswitch.is_active():
-            return {"allowed": True, "decision": "allow", "reason": "killswitch active"}
-
         result = self._shield.evaluate_action(action_request)
         return {
             "allowed": result.allowed,

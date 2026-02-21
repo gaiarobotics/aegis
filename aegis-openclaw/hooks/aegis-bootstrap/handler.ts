@@ -8,7 +8,6 @@ interface BootstrapEvent {
 
 interface StatusResult {
   mode: string;
-  killswitch_active: boolean;
   agent_id: string;
   modules_enabled: string[];
   scanner_sensitivity: number;
@@ -67,7 +66,6 @@ export default async function handler(event: BootstrapEvent): Promise<void> {
 ## Current Configuration
 
 - **Mode:** ${status.mode}
-- **Killswitch:** ${status.killswitch_active ? "ACTIVE (all checks bypassed)" : "inactive"}
 - **Agent ID:** ${status.agent_id || "(auto-generated)"}
 - **Modules:** ${status.modules_enabled.join(", ")}
 

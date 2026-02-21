@@ -148,7 +148,6 @@ class TestStatusScript:
         data = json.loads(result.stdout)
         assert "mode" in data
         assert "modules_enabled" in data
-        assert "killswitch_active" in data
         assert isinstance(data["modules_enabled"], list)
 
     def test_status_plain(self):

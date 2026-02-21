@@ -3,8 +3,6 @@
 
 # Master controls
 mode: observe              # observe | enforce
-killswitch: false
-
 # Agent identity
 agent_id: ""               # Auto-generated if empty
 agent_name: "my-agent"

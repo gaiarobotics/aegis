@@ -627,49 +627,6 @@ shield = Shield(
 | `recovery` | Quarantine and rollback | Production systems needing auto-containment |
 | `integrity` | Detects model file tampering | Ollama or vLLM with local model files |
 
-## Killswitch
-
-An emergency bypass that instantly disables all AEGIS processing:
-
-```python
-import aegis
-
-# Activate — all scanning/blocking stops immediately
-aegis.killswitch.activate()
-
-# Check status
-aegis.killswitch.is_active()  # True
-
-# Deactivate — resume normal protection
-aegis.killswitch.deactivate()
-```
-
-Also activatable via environment variable:
-
-```bash
-AEGIS_KILLSWITCH=1
-```
-
-Or as a context manager for temporary bypass:
-
-```python
-with aegis.killswitch.disabled():
-    # AEGIS is bypassed within this block
-    result = shield.scan_input("anything")  # Always returns clean
-```
-
-<details>
-<summary>Killswitch activation sources</summary>
-
-The killswitch checks these sources in order (first match wins):
-
-1. **Thread-local** — `killswitch.disabled()` context manager (scoped to current thread)
-2. **Environment variable** — `AEGIS_KILLSWITCH=1`
-3. **Programmatic** — `killswitch.activate()` (global, in-process)
-4. **Config file** — `killswitch: true` in aegis.yaml
-
-</details>
-
 ## ML-Based Scanning (Optional)
 
 For higher detection accuracy, enable ML-based scanning via [LLM Guard](https://llm-guard.com/):

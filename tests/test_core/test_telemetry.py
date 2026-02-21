@@ -2,7 +2,6 @@ import json
 import os
 from pathlib import Path
 
-from aegis.core import killswitch
 from aegis.core.telemetry import TelemetryLogger, redact
 
 
@@ -73,15 +72,6 @@ class TestTelemetryLogger:
         lines = log_path.read_text().strip().split("\n")
         assert len(lines) == 2
 
-    def test_killswitch_noop(self, tmp_path):
-        log_path = tmp_path / ".aegis" / "telemetry.jsonl"
-        logger = TelemetryLogger(log_path=str(log_path))
-        killswitch.activate()
-        try:
-            logger.log_event("test", msg="should not appear")
-            assert not log_path.exists() or log_path.read_text().strip() == ""
-        finally:
-            killswitch.deactivate()
 
 
 class TestNestedRedaction:

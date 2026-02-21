@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from aegis.core import killswitch
 from aegis.core.config import AegisConfig, load_config
 from aegis.core.telemetry import TelemetryLogger
 
@@ -217,10 +216,8 @@ class Shield:
         In enforce mode, raises ModelTamperedError if tampering detected.
         In observe mode, logs the tampering but allows inference to proceed.
 
-        No-op when killswitch is active or integrity module is disabled.
+        No-op when integrity module is disabled.
         """
-        if killswitch.is_active():
-            return
         if self._integrity_monitor is None:
             return
 
@@ -337,12 +334,7 @@ class Shield:
         2. Identity (NK cell) assesses context if available
         3. Behavior tracker records event
         4. Recovery auto-quarantine if thresholds exceeded
-
-        Returns clean result when killswitch is active.
         """
-        if killswitch.is_active():
-            return ScanResult()
-
         result = ScanResult()
 
         # Step 1: Scanner
@@ -436,12 +428,9 @@ class Shield:
     def evaluate_action(self, action_request) -> ActionResult:
         """Evaluate an action request through the broker.
 
-        Returns allow-all result when killswitch is active or broker absent.
+        Returns allow-all result when broker is absent.
         In observe mode, threats are logged but not blocked.
         """
-        if killswitch.is_active():
-            return ActionResult(allowed=True, decision="allow", reason="killswitch active")
-
         if self._broker is None:
             return ActionResult(allowed=True, decision="allow", reason="no broker configured")
 
@@ -493,11 +482,8 @@ class Shield:
     def sanitize_output(self, text: str) -> SanitizeResult:
         """Sanitize model output through the scanner.
 
-        Returns text unchanged when killswitch is active or scanner absent.
+        Returns text unchanged when scanner is absent.
         """
-        if killswitch.is_active():
-            return SanitizeResult(cleaned_text=text)
-
         if self._scanner is None:
             return SanitizeResult(cleaned_text=text)
 
@@ -525,10 +511,8 @@ class Shield:
         """Record a trust interaction for an agent.
 
         Resolves the agent_id to a canonical form before recording.
-        No-op when identity module is disabled or killswitch is active.
+        No-op when identity module is disabled.
         """
-        if killswitch.is_active():
-            return
         if self._trust_manager is None:
             return
         canonical = self.resolve_agent_id(agent_id)
@@ -550,8 +534,6 @@ class Shield:
 
         Returns a dict with drift metrics or an empty dict on early exit.
         """
-        if killswitch.is_active():
-            return {}
         if self._behavior_tracker is None:
             return {}
 
@@ -686,11 +668,8 @@ class Shield:
     ) -> list[dict[str, Any]]:
         """Wrap messages with provenance tags via the scanner envelope.
 
-        Returns messages unchanged when killswitch is active or scanner absent.
+        Returns messages unchanged when scanner is absent.
         """
-        if killswitch.is_active():
-            return messages
-
         if self._scanner is None:
             return messages
 

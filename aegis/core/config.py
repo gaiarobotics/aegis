@@ -308,7 +308,6 @@ class AegisConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     mode: str = "enforce"
-    killswitch: bool = False
     agent_id: str = ""
     agent_name: str = ""
     agent_purpose: str = ""
@@ -363,7 +362,6 @@ def _load_file(path: Path) -> dict:
 # Env var overrides: AEGIS_<KEY> for top-level, AEGIS_<SECTION>_<KEY> for nested
 _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
     ("AEGIS_MODE", "mode", None, str),
-    ("AEGIS_KILLSWITCH", "killswitch", None, lambda v: v.lower() in ("1", "true", "yes")),
     ("AEGIS_SCANNER_SENSITIVITY", "scanner", "sensitivity", float),
     ("AEGIS_SCANNER_CONFIDENCE_THRESHOLD", "scanner", "confidence_threshold", float),
     ("AEGIS_BROKER_DEFAULT_POSTURE", "broker", "default_posture", str),

@@ -4,14 +4,10 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
-from aegis.core import killswitch
 from aegis.memory.guard import MemoryEntry, MemoryGuard, WriteResult
 
 
 class TestMemoryGuard:
-    def setup_method(self):
-        killswitch._reset()
-
     def _make_entry(self, **overrides) -> MemoryEntry:
         defaults = dict(
             key="user_name",
@@ -53,13 +49,6 @@ class TestMemoryGuard:
         result = guard.validate_write(entry)
         assert result.allowed is False
         assert "unknown" in result.reason.lower() or "not allowed" in result.reason.lower()
-
-    def test_passthrough_killswitch(self):
-        killswitch.activate()
-        guard = MemoryGuard()
-        entry = self._make_entry(category="instruction")
-        result = guard.validate_write(entry)
-        assert result.allowed is True
 
     def test_scanner_not_called_when_no_scanner(self):
         guard = MemoryGuard()

@@ -20,10 +20,6 @@ protected = aegis.wrap(client, mode="enforce", modules=["scanner", "broker"])
 
 **Returns:** `WrappedClient` — a transparent proxy that intercepts API calls
 
-### `aegis.killswitch`
-
-Global bypass switch. See [Killswitch](#killswitch).
-
 ### `aegis.ThreatBlockedError`
 
 Exception raised when enforce mode blocks a detected threat.
@@ -156,7 +152,7 @@ Check model file integrity for Ollama or vLLM models. Auto-registers the model o
 shield.check_model_integrity("llama3", provider="ollama")
 ```
 
-In enforce mode, raises `ModelTamperedError` if tampering is detected. In observe mode, logs a warning. No-op when the integrity module is disabled or killswitch is active.
+In enforce mode, raises `ModelTamperedError` if tampering is detected. In observe mode, logs a warning. No-op when the integrity module is disabled.
 
 ### `shield.record_trust_interaction(agent_id, clean=True, anomaly=False)`
 
@@ -568,36 +564,12 @@ client.stop()
 
 ---
 
-## Killswitch
-
-```python
-from aegis.core import killswitch
-
-killswitch.is_active()       # bool
-killswitch.activate()        # Global activation
-killswitch.deactivate()      # Global deactivation
-
-with killswitch.disabled():  # Thread-local activation
-    pass
-
-killswitch.set_config_override(True)  # From config file
-```
-
-**Activation sources** (checked in order):
-1. Thread-local `disabled()` context
-2. `AEGIS_KILLSWITCH=1` environment variable
-3. Programmatic `activate()`
-4. Config file override
-
----
-
 ## Configuration Reference
 
 ### Full `aegis.yaml` Example
 
 ```yaml
 mode: enforce                    # "observe" or "enforce"
-killswitch: false
 
 # Agent identity
 agent_id: "my-agent-001"
@@ -714,7 +686,6 @@ telemetry:
 | Variable | Overrides |
 |----------|-----------|
 | `AEGIS_MODE` | `mode` |
-| `AEGIS_KILLSWITCH` | `killswitch` (set to `1` to activate) |
 | `AEGIS_SCANNER_SENSITIVITY` | `scanner.sensitivity` |
 | `AEGIS_SCANNER_CONFIDENCE_THRESHOLD` | `scanner.confidence_threshold` |
 | `AEGIS_BROKER_DEFAULT_POSTURE` | `broker.default_posture` |

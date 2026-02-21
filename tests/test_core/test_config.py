@@ -11,10 +11,6 @@ class TestDefaultConfig:
         cfg = AegisConfig()
         assert cfg.mode == "enforce"
 
-    def test_default_killswitch_false(self):
-        cfg = AegisConfig()
-        assert cfg.killswitch is False
-
     def test_default_modules_all_true(self):
         cfg = AegisConfig()
         for mod in ("scanner", "broker", "identity", "memory", "behavior", "skills", "recovery"):
@@ -36,12 +32,11 @@ class TestDefaultConfig:
 
 class TestLoadFromYaml:
     def test_load_yaml(self, tmp_path):
-        yaml_content = "mode: enforce\nkillswitch: true\nscanner:\n  sensitivity: 0.9\n"
+        yaml_content = "mode: enforce\nscanner:\n  sensitivity: 0.9\n"
         config_file = tmp_path / "aegis.yaml"
         config_file.write_text(yaml_content)
         cfg = load_config(str(config_file))
         assert cfg.mode == "enforce"
-        assert cfg.killswitch is True
         assert cfg.scanner.sensitivity == 0.9
 
     def test_partial_yaml_uses_defaults(self, tmp_path):
@@ -50,7 +45,6 @@ class TestLoadFromYaml:
         config_file.write_text(yaml_content)
         cfg = load_config(str(config_file))
         assert cfg.mode == "enforce"
-        assert cfg.killswitch is False  # default
         assert cfg.scanner.sensitivity == 0.5  # default
 
 
@@ -170,20 +164,6 @@ class TestDeepMerge:
 
 
 class TestAllEnvVarOverrides:
-    def test_killswitch_override_true(self, tmp_path, monkeypatch):
-        config_file = tmp_path / "aegis.yaml"
-        config_file.write_text("killswitch: false\n")
-        monkeypatch.setenv("AEGIS_KILLSWITCH", "true")
-        cfg = load_config(str(config_file))
-        assert cfg.killswitch is True
-
-    def test_killswitch_override_false(self, tmp_path, monkeypatch):
-        config_file = tmp_path / "aegis.yaml"
-        config_file.write_text("killswitch: true\n")
-        monkeypatch.setenv("AEGIS_KILLSWITCH", "no")
-        cfg = load_config(str(config_file))
-        assert cfg.killswitch is False
-
     def test_scanner_confidence_threshold_override(self, tmp_path, monkeypatch):
         config_file = tmp_path / "aegis.yaml"
         config_file.write_text("scanner:\n  confidence_threshold: 0.7\n")

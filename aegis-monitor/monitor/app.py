@@ -20,7 +20,7 @@ from monitor.config import MonitorConfig
 from monitor.db import Database
 from monitor.epidemiology import R0Estimator
 from monitor.graph import AgentGraph
-from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, StoredEvent
+from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -390,6 +390,109 @@ async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_ke
 
         await _broadcast(app.state, {
             "type": "killswitch",
+            "action": "deleted",
+            "rule_id": rule_id,
+        })
+
+    return {"status": "ok" if deleted else "not_found"}
+
+
+# ------------------------------------------------------------------
+# Quarantine endpoints
+# ------------------------------------------------------------------
+
+@app.get("/api/v1/quarantine/status")
+async def quarantine_status(
+    agent_id: str = "",
+    operator_id: str = "",
+    _key: str = Depends(verify_api_key),
+):
+    """Agent polling endpoint — returns quarantine status."""
+    db: Database = app.state.db
+    quarantined, reason, scope, severity = db.check_quarantine(agent_id, operator_id)
+    return {"quarantined": quarantined, "reason": reason, "scope": scope, "severity": severity}
+
+
+@app.post("/api/v1/quarantine/rules")
+async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)):
+    """Create a quarantine rule."""
+    db: Database = app.state.db
+    rule_id = data.get("rule_id", str(uuid.uuid4()))
+    rule = QuarantineRule(
+        rule_id=rule_id,
+        scope=data.get("scope", "agent"),
+        target=data.get("target", ""),
+        quarantined=data.get("quarantined", True),
+        reason=data.get("reason", ""),
+        severity=data.get("severity", "low"),
+        created_at=data.get("created_at", time.time()),
+        created_by=data.get("created_by", ""),
+    )
+    db.insert_quarantine_rule(rule)
+
+    # Update agent quarantine status in DB and graph
+    graph: AgentGraph = app.state.graph
+    if rule.quarantined and rule.scope == "agent" and rule.target:
+        db.set_agent_quarantined(rule.target, True)
+        graph.mark_quarantined(rule.target, True)
+    elif rule.quarantined and rule.scope == "swarm":
+        for agent in db.get_all_agents():
+            db.set_agent_quarantined(agent.agent_id, True)
+            graph.mark_quarantined(agent.agent_id, True)
+
+    await _broadcast(app.state, {
+        "type": "quarantine",
+        "action": "created",
+        "rule_id": rule_id,
+        "scope": rule.scope,
+        "target": rule.target,
+        "quarantined": rule.quarantined,
+        "reason": rule.reason,
+        "severity": rule.severity,
+    })
+
+    return {"rule_id": rule_id, "status": "ok"}
+
+
+@app.get("/api/v1/quarantine/rules")
+async def list_quarantine_rules(_key: str = Depends(verify_api_key)):
+    """List all active quarantine rules."""
+    db: Database = app.state.db
+    rules = db.get_quarantine_rules()
+    return {
+        "rules": [
+            {
+                "rule_id": r.rule_id,
+                "scope": r.scope,
+                "target": r.target,
+                "quarantined": r.quarantined,
+                "reason": r.reason,
+                "severity": r.severity,
+                "created_at": r.created_at,
+                "created_by": r.created_by,
+            }
+            for r in rules
+        ]
+    }
+
+
+@app.delete("/api/v1/quarantine/rules/{rule_id}")
+async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+    """Remove a quarantine rule (release quarantine)."""
+    db: Database = app.state.db
+    graph: AgentGraph = app.state.graph
+    deleted = db.delete_quarantine_rule(rule_id)
+
+    if deleted:
+        # Re-evaluate quarantine status for all agents
+        for agent in db.get_all_agents():
+            still_quarantined, _, _, _ = db.check_quarantine(agent.agent_id, agent.operator_id)
+            if not still_quarantined and agent.is_quarantined:
+                db.set_agent_quarantined(agent.agent_id, False)
+                graph.mark_quarantined(agent.agent_id, False)
+
+        await _broadcast(app.state, {
+            "type": "quarantine",
             "action": "deleted",
             "rule_id": rule_id,
         })

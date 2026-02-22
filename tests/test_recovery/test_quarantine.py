@@ -1,12 +1,12 @@
 """Tests for RecoveryQuarantine."""
 
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from aegis.core.config import RecoveryConfig
-from aegis.recovery.quarantine import RecoveryQuarantine
+from aegis.recovery.quarantine import RecoveryQuarantine, _COOLDOWN_SECONDS
 
 
 class TestRecoveryQuarantine:
@@ -150,6 +150,49 @@ class TestRecoveryQuarantine:
         result = q.auto_quarantine(drift_result=drift_result)
         assert result is True
         assert q.is_quarantined() is True
+
+
+class TestRecoveryQuarantineCooldown:
+    def test_cooldown_hostile_nk_no_auto_release(self):
+        """Hostile NK quarantine (high severity) does NOT auto-release."""
+        q = RecoveryQuarantine()
+        nk_verdict = MagicMock()
+        nk_verdict.verdict = "hostile"
+        q.auto_quarantine(nk_verdict=nk_verdict)
+        assert q.severity == "high"
+        assert q.is_quarantined() is True
+
+        # Even after a long time, still quarantined
+        with patch("aegis.recovery.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = q._quarantine_time + 100000
+            assert q.is_quarantined() is True
+
+    def test_cooldown_drift_auto_release(self):
+        """Drift quarantine (medium severity) auto-releases after cooldown."""
+        q = RecoveryQuarantine()
+        drift_result = MagicMock()
+        drift_result.is_drifting = True
+        drift_result.max_sigma = 4.0
+        q.auto_quarantine(drift_result=drift_result)
+        assert q.severity == "medium"
+        assert q.is_quarantined() is True
+
+        with patch("aegis.recovery.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = q._quarantine_time + _COOLDOWN_SECONDS["medium"] + 1
+            assert q.is_quarantined() is False
+
+    def test_cooldown_drift_not_expired(self):
+        """Before cooldown expires, drift quarantine remains active."""
+        q = RecoveryQuarantine()
+        drift_result = MagicMock()
+        drift_result.is_drifting = True
+        drift_result.max_sigma = 4.0
+        q.auto_quarantine(drift_result=drift_result)
+        assert q.is_quarantined() is True
+
+        with patch("aegis.recovery.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = q._quarantine_time + _COOLDOWN_SECONDS["medium"] - 1
+            assert q.is_quarantined() is True
 
 
 class TestRecoveryQuarantineExitToken:

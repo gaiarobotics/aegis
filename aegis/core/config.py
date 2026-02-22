@@ -73,7 +73,7 @@ class ScannerConfig(BaseModel):
     outbound_sanitizer: bool = True
     sensitivity: float = 0.5
     block_on_threat: bool = False
-    confidence_threshold: float = 0.7
+    confidence_threshold: float = 0.8
     signatures: ScannerSignaturesConfig = Field(default_factory=ScannerSignaturesConfig)
     llm_guard: LLMGuardConfig = Field(default_factory=LLMGuardConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
@@ -89,13 +89,13 @@ class BudgetLimitsConfig(BaseModel):
     max_write_tool_calls: int = 20
     max_posts_messages: int = 5
     max_external_http_writes: int = 10
-    max_new_domains: int = 3
+    max_new_domains: int = 10
 
 
 class QuarantineTriggersConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    repeated_denied_writes: int = 5
-    new_domain_burst: int = 3
+    repeated_denied_writes: int = 50
+    new_domain_burst: int = 10
     tool_rate_spike_sigma: float = 3.0
     drift_score_threshold: float = 3.0
 
@@ -103,6 +103,7 @@ class QuarantineTriggersConfig(BaseModel):
 class BrokerConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     default_posture: str = "deny_write"
+    auto_register_unknown: bool = True
     budgets: BudgetLimitsConfig = Field(default_factory=BudgetLimitsConfig)
     quarantine_triggers: QuarantineTriggersConfig = Field(
         default_factory=QuarantineTriggersConfig,
@@ -300,8 +301,8 @@ class SelfIntegrityConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     enabled: bool = True
     check_interval_seconds: float = 5
-    on_tamper: str = "exit"        # "exit" | "block" | "log"
-    watch_package: bool = True     # Watch aegis/ source files
+    on_tamper: str = "block"       # "exit" | "block" | "log"
+    watch_package: bool = False    # Watch aegis/ source files
     watch_config: bool = True      # Watch the config file used at startup
 
 

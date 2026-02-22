@@ -138,7 +138,7 @@ class TestDeepMerge:
         assert cfg.scanner.sensitivity == 0.9
         # other scanner defaults preserved
         assert cfg.scanner.pattern_matching is True
-        assert cfg.scanner.confidence_threshold == 0.7
+        assert cfg.scanner.confidence_threshold == 0.8
         assert cfg.scanner.signatures.use_bundled is True
 
     def test_deep_merge_nested_dict(self, tmp_path):

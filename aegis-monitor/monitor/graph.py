@@ -97,6 +97,22 @@ class AgentGraph:
                 last_heartbeat=0,
             )
 
+    def mark_quarantined(self, agent_id: str, quarantined: bool = True) -> None:
+        """Set the quarantined flag on an agent in the graph."""
+        if agent_id in self._g:
+            self._g.nodes[agent_id]["is_quarantined"] = quarantined
+        elif quarantined:
+            self._g.add_node(
+                agent_id,
+                trust_tier=0,
+                trust_score=0.0,
+                is_compromised=False,
+                is_quarantined=True,
+                is_killswitched=False,
+                operator_id="",
+                last_heartbeat=0,
+            )
+
     def mark_killswitched(self, agent_id: str, killswitched: bool = True) -> None:
         """Set the killswitched flag on an agent in the graph."""
         if agent_id in self._g:

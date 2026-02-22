@@ -37,7 +37,7 @@ def config_file(tmp_path):
 
 class TestBaselines:
     def test_baseline_computed(self, package_dir):
-        cfg = SelfIntegrityConfig(enabled=True)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir,
         )
@@ -74,7 +74,7 @@ class TestBaselines:
         assert len(watcher.baselines) > 0  # package files present
 
     def test_empty_config_path(self, package_dir):
-        cfg = SelfIntegrityConfig(enabled=True, watch_config=True)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True, watch_config=True)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir, config_path="",
         )
@@ -86,7 +86,7 @@ class TestBaselines:
 class TestTamperDetection:
     def test_no_tamper_no_callback(self, package_dir):
         callback = MagicMock()
-        cfg = SelfIntegrityConfig(enabled=True, check_interval_seconds=1)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True, check_interval_seconds=1)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir, on_tamper=callback,
         )
@@ -95,7 +95,7 @@ class TestTamperDetection:
 
     def test_tamper_triggers_callback(self, package_dir):
         callback = MagicMock()
-        cfg = SelfIntegrityConfig(enabled=True, check_interval_seconds=1)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True, check_interval_seconds=1)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir, on_tamper=callback,
         )
@@ -110,7 +110,7 @@ class TestTamperDetection:
 
     def test_deleted_file_triggers_callback(self, package_dir):
         callback = MagicMock()
-        cfg = SelfIntegrityConfig(enabled=True, check_interval_seconds=1)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True, check_interval_seconds=1)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir, on_tamper=callback,
         )
@@ -125,7 +125,7 @@ class TestTamperDetection:
 
     def test_config_file_tamper(self, package_dir, config_file):
         callback = MagicMock()
-        cfg = SelfIntegrityConfig(enabled=True, check_interval_seconds=1)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True, check_interval_seconds=1)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir,
             config_path=str(config_file), on_tamper=callback,
@@ -141,7 +141,7 @@ class TestTamperDetection:
 
 class TestBackgroundThread:
     def test_start_stop(self, package_dir):
-        cfg = SelfIntegrityConfig(enabled=True, check_interval_seconds=60)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True, check_interval_seconds=60)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir,
         )
@@ -153,7 +153,7 @@ class TestBackgroundThread:
 
     def test_background_detects_tamper(self, package_dir):
         callback = MagicMock()
-        cfg = SelfIntegrityConfig(enabled=True, check_interval_seconds=0.1)
+        cfg = SelfIntegrityConfig(enabled=True, watch_package=True, check_interval_seconds=0.1)
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir, on_tamper=callback,
         )
@@ -174,7 +174,7 @@ class TestBackgroundThread:
             watcher.stop()
 
     def test_disabled_config_no_thread(self, package_dir):
-        cfg = SelfIntegrityConfig(enabled=False)
+        cfg = SelfIntegrityConfig(enabled=False, watch_package=True)
         # Watcher can still be created, but Shield won't start it
         watcher = SelfIntegrityWatcher(
             config=cfg, package_dir=package_dir,

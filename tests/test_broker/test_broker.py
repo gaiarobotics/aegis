@@ -223,6 +223,38 @@ class TestDenyWritePostureBlocksWrites:
         assert "quarantine" in resp.reason.lower()
 
 
+class TestBrokerAutoRegister:
+    def test_auto_register_unknown_tool_read(self):
+        """Unknown tool with a read request should be auto-registered and allowed."""
+        broker = Broker()
+        req = _make_request(target="new_tool", read_write="read")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.ALLOW
+        # Tool should now be registered
+        assert broker._registry.get("new_tool") is not None
+
+    def test_auto_register_unknown_tool_write_denied(self):
+        """Unknown tool auto-registered as read-only should deny writes."""
+        broker = Broker()
+        req = _make_request(target="new_tool", read_write="write")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.DENY
+        # Tool is registered but as read-only
+        manifest = broker._registry.get("new_tool")
+        assert manifest is not None
+        assert manifest.read_write == "read"
+
+    def test_auto_register_disabled(self):
+        """With auto_register_unknown=False, unknown tools are denied."""
+        cfg = AegisConfig()
+        cfg.broker.auto_register_unknown = False
+        broker = Broker(config=cfg)
+        req = _make_request(target="new_tool", read_write="read")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.DENY
+        assert "manifest" in resp.reason.lower() or "not_registered" in resp.policy_rule
+
+
 class TestBrokerDeniedWriteConcurrency:
     def test_denied_write_count_under_lock(self):
         """_record_denied_write should capture count under lock and pass to check_triggers."""

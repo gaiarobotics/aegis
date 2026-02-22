@@ -78,14 +78,26 @@ class Broker:
         # Step 2: Check manifest
         manifest = self._registry.get(action_request.target)
         if manifest is None:
-            # No manifest registered for this target
-            self._record_denied_write(action_request)
-            return ActionResponse(
-                request_id=action_request.id,
-                decision=ActionDecision.DENY,
-                reason=f"No manifest registered for target: {action_request.target}",
-                policy_rule="manifest.not_registered",
-            )
+            if self._config.broker.auto_register_unknown:
+                # Auto-register unknown tool as read-only
+                auto_manifest = ToolManifest(
+                    name=action_request.target,
+                    allowed_actions=[action_request.action_type],
+                    allowed_domains=[],
+                    allowed_paths=[],
+                    read_write="read",
+                )
+                self._registry.register(auto_manifest)
+                manifest = auto_manifest
+            else:
+                # No manifest registered for this target
+                self._record_denied_write(action_request)
+                return ActionResponse(
+                    request_id=action_request.id,
+                    decision=ActionDecision.DENY,
+                    reason=f"No manifest registered for target: {action_request.target}",
+                    policy_rule="manifest.not_registered",
+                )
 
         if not self._registry.check_action(action_request, manifest):
             self._record_denied_write(action_request)

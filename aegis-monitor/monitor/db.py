@@ -10,7 +10,7 @@ import sqlite3
 import threading
 from typing import Any
 
-from monitor.models import AgentEdge, AgentNode, CompromiseRecord, KillswitchRule, StoredEvent
+from monitor.models import AgentEdge, AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -70,6 +70,18 @@ CREATE TABLE IF NOT EXISTS killswitch_rules (
     created_by TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_ks_scope ON killswitch_rules(scope);
+
+CREATE TABLE IF NOT EXISTS quarantine_rules (
+    rule_id    TEXT PRIMARY KEY,
+    scope      TEXT NOT NULL DEFAULT 'agent',
+    target     TEXT NOT NULL DEFAULT '',
+    quarantined INTEGER NOT NULL DEFAULT 1,
+    reason     TEXT NOT NULL DEFAULT '',
+    severity   TEXT NOT NULL DEFAULT 'low',
+    created_at REAL NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_qr_scope ON quarantine_rules(scope);
 """
 
 
@@ -409,6 +421,108 @@ class Database:
                 return True, row["reason"], "agent"
 
         return False, "", ""
+
+    # ---- Quarantine Rules ----
+
+    def insert_quarantine_rule(self, rule: QuarantineRule) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO quarantine_rules
+                   (rule_id, scope, target, quarantined, reason, severity, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rule.rule_id,
+                rule.scope,
+                rule.target,
+                int(rule.quarantined),
+                rule.reason,
+                rule.severity,
+                rule.created_at,
+                rule.created_by,
+            ),
+        )
+        conn.commit()
+
+    def get_quarantine_rules(self) -> list[QuarantineRule]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM quarantine_rules ORDER BY created_at DESC"
+        ).fetchall()
+        return [
+            QuarantineRule(
+                rule_id=r["rule_id"],
+                scope=r["scope"],
+                target=r["target"],
+                quarantined=bool(r["quarantined"]),
+                reason=r["reason"],
+                severity=r["severity"],
+                created_at=r["created_at"],
+                created_by=r["created_by"],
+            )
+            for r in rows
+        ]
+
+    def delete_quarantine_rule(self, rule_id: str) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute(
+            "DELETE FROM quarantine_rules WHERE rule_id = ?", (rule_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def check_quarantine(self, agent_id: str, operator_id: str) -> tuple[bool, str, str, str]:
+        """Check quarantine status for an agent.
+
+        Priority: swarm rules first, then operator, then agent.
+        Returns (quarantined, reason, scope, severity).
+        """
+        conn = self._get_conn()
+        # Check swarm-level first
+        row = conn.execute(
+            "SELECT * FROM quarantine_rules WHERE scope = 'swarm' AND quarantined = 1 LIMIT 1"
+        ).fetchone()
+        if row:
+            return True, row["reason"], "swarm", row["severity"]
+
+        # Check operator-level
+        if operator_id:
+            row = conn.execute(
+                "SELECT * FROM quarantine_rules WHERE scope = 'operator' AND target = ? AND quarantined = 1 LIMIT 1",
+                (operator_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "operator", row["severity"]
+
+        # Check agent-level
+        if agent_id:
+            row = conn.execute(
+                "SELECT * FROM quarantine_rules WHERE scope = 'agent' AND target = ? AND quarantined = 1 LIMIT 1",
+                (agent_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "agent", row["severity"]
+
+        return False, "", "", ""
+
+    def set_agent_quarantined(self, agent_id: str, quarantined: bool) -> None:
+        """Set the is_quarantined flag on an agent (creates agent if needed)."""
+        conn = self._get_conn()
+        cur = conn.execute(
+            "UPDATE agents SET is_quarantined = ? WHERE agent_id = ?",
+            (int(quarantined), agent_id),
+        )
+        if cur.rowcount == 0 and quarantined:
+            conn.execute(
+                """INSERT INTO agents
+                       (agent_id, operator_id, trust_tier, trust_score,
+                        is_compromised, is_quarantined, is_killswitched,
+                        last_heartbeat, metadata)
+                   VALUES (?, '', 0, 0.0, 0, ?, 0, 0, '{}')
+                """,
+                (agent_id, int(quarantined)),
+            )
+        conn.commit()
 
     def count_compromised_agents(self) -> int:
         conn = self._get_conn()

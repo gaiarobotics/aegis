@@ -70,3 +70,17 @@ class KillswitchRule:
     reason: str = ""
     created_at: float = field(default_factory=time.time)
     created_by: str = ""
+
+
+@dataclass
+class QuarantineRule:
+    """A quarantine rule that controls agent quarantine state."""
+
+    rule_id: str = ""
+    scope: str = "agent"       # "swarm", "operator", "agent"
+    target: str = ""           # agent_id or operator_id (ignored for swarm)
+    quarantined: bool = True
+    reason: str = ""
+    severity: str = "low"      # "low", "medium", "high"
+    created_at: float = field(default_factory=time.time)
+    created_by: str = ""

@@ -170,7 +170,7 @@ In enforce mode, raises `ModelTamperedError` if tampering is detected. In observ
 
 ### `shield.check_killswitch()`
 
-Raise `InferenceBlockedError` if the remote killswitch is currently active. Called automatically by all provider wrappers before each inference call.
+Raise `InferenceBlockedError` if the remote killswitch or self-integrity block is currently active. Called automatically by all provider wrappers before each inference call.
 
 ```python
 shield.check_killswitch()  # raises InferenceBlockedError if blocked
@@ -239,6 +239,49 @@ integrity:
     - .gguf
     - .ggml
     - .model
+```
+
+---
+
+## Self-Integrity
+
+Monitors AEGIS's own source files and config for runtime tampering. Enabled by default.
+
+### `SelfIntegrityConfig`
+
+```yaml
+self_integrity:
+  enabled: true                 # Monitor AEGIS files for runtime tampering
+  check_interval_seconds: 5     # How often to check (seconds)
+  on_tamper: exit               # "exit" | "block" | "log"
+  watch_package: true           # Watch aegis/ source files
+  watch_config: true            # Watch the config file used at startup
+```
+
+### Tamper Response Modes
+
+| `on_tamper` | Behavior |
+|-------------|----------|
+| `exit` (default) | Prints message to stderr and calls `os._exit(78)` — immediate process termination that cannot be caught |
+| `block` | Sets an internal flag causing all subsequent `check_killswitch()` calls to raise `InferenceBlockedError` |
+| `log` | Logs the violation at CRITICAL level but takes no enforcement action |
+
+The `exit` mode uses `os._exit(78)` (sysexits `EX_CONFIG`) rather than `sys.exit()` because `sys.exit()` raises `SystemExit` which can be caught by `try/except`. `os._exit()` terminates the process immediately.
+
+### `SelfIntegrityWatcher`
+
+```python
+from aegis.core.self_integrity import SelfIntegrityWatcher
+
+watcher = SelfIntegrityWatcher(
+    config=self_integrity_config,
+    package_dir=Path("/path/to/aegis"),
+    config_path="/path/to/aegis.yaml",
+    on_tamper=callback,
+)
+watcher.start()      # Start background monitoring
+watcher.baselines    # dict[str, str] — path → SHA256
+watcher.stop()       # Clean shutdown
 ```
 
 ---
@@ -691,6 +734,13 @@ integrity:
 killswitch:
   monitors: []                    # URLs or "aegis-central"
   ttl_seconds: 60                 # Polling interval in seconds
+
+self_integrity:
+  enabled: true                   # Monitor AEGIS files for runtime tampering
+  check_interval_seconds: 5       # How often to check (seconds)
+  on_tamper: exit                 # "exit" (kill process), "block" (stop inference), "log"
+  watch_package: true             # Watch aegis/ source files
+  watch_config: true              # Watch the config file
 
 monitoring:
   enabled: false

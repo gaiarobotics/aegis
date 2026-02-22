@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from aegis.core.config import AegisConfig, load_config
@@ -123,10 +126,13 @@ class Shield:
         self._isolation_forest = None
         self._integrity_monitor = None
         self._killswitch = None
+        self._self_integrity = None
+        self._self_integrity_blocked = False
 
         self._init_modules()
         self._init_monitoring()
         self._init_killswitch()
+        self._init_self_integrity()
 
     def _init_modules(self) -> None:
         """Instantiate enabled modules with graceful degradation."""
@@ -319,15 +325,50 @@ class Shield:
         except Exception:
             logger.debug("Remote killswitch init failed", exc_info=True)
 
+    def _init_self_integrity(self) -> None:
+        """Initialize self-integrity watcher if enabled."""
+        si_cfg = self._config.self_integrity
+        if not si_cfg.enabled:
+            return
+        try:
+            from aegis.core.self_integrity import SelfIntegrityWatcher
+            import aegis
+            package_dir = Path(aegis.__file__).parent
+            self._self_integrity = SelfIntegrityWatcher(
+                config=si_cfg,
+                package_dir=package_dir,
+                config_path=self._config.config_path,
+                on_tamper=self._on_self_tamper,
+            )
+            self._self_integrity.start()
+        except Exception:
+            logger.debug("Self-integrity watcher init failed", exc_info=True)
+
+    def _on_self_tamper(self, path: str) -> None:
+        """Callback when AEGIS file tampering is detected."""
+        action = self._config.self_integrity.on_tamper
+        msg = f"AEGIS self-integrity violation: {path}"
+        if action == "exit":
+            print(msg, file=sys.stderr, flush=True)
+            os._exit(78)  # EX_CONFIG — cannot be caught
+        elif action == "block":
+            self._self_integrity_blocked = True
+        else:  # "log"
+            logger.critical(msg)
+
     @property
     def is_blocked(self) -> bool:
-        """True if the remote killswitch is currently blocking inference."""
+        """True if the remote killswitch or self-integrity is blocking inference."""
+        if self._self_integrity_blocked:
+            return True
         if self._killswitch is None:
             return False
         return self._killswitch.is_blocked()
 
     def check_killswitch(self) -> None:
-        """Raise InferenceBlockedError if remote killswitch is active."""
+        """Raise InferenceBlockedError if remote killswitch or self-integrity block is active."""
+        if self._self_integrity_blocked:
+            raise InferenceBlockedError("AEGIS files tampered — inference blocked")
         if self._killswitch is not None and self._killswitch.is_blocked():
             raise InferenceBlockedError(self._killswitch.block_reason)
 

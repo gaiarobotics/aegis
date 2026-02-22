@@ -293,6 +293,19 @@ class KillswitchConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Self-Integrity sub-models
+# ---------------------------------------------------------------------------
+
+class SelfIntegrityConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    check_interval_seconds: float = 5
+    on_tamper: str = "exit"        # "exit" | "block" | "log"
+    watch_package: bool = True     # Watch aegis/ source files
+    watch_config: bool = True      # Watch the config file used at startup
+
+
+# ---------------------------------------------------------------------------
 # Modules toggle
 # ---------------------------------------------------------------------------
 
@@ -322,6 +335,7 @@ class AegisConfig(BaseModel):
     agent_name: str = ""
     agent_purpose: str = ""
     operator_id: str = ""
+    config_path: str = ""
     modules: dict[str, bool] = Field(default_factory=lambda: dict(_DEFAULT_MODULES))
     scanner: ScannerConfig = Field(default_factory=ScannerConfig)
     broker: BrokerConfig = Field(default_factory=BrokerConfig)
@@ -334,6 +348,7 @@ class AegisConfig(BaseModel):
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     killswitch: KillswitchConfig = Field(default_factory=KillswitchConfig)
+    self_integrity: SelfIntegrityConfig = Field(default_factory=SelfIntegrityConfig)
 
     def is_module_enabled(self, name: str) -> bool:
         return self.modules.get(name, False)
@@ -413,16 +428,22 @@ def load_config(path: str | Path | None = None) -> AegisConfig:
     Environment variables (AEGIS_*) override file values.
     """
     raw: dict = {}
+    resolved_path: str = ""
 
     if path is not None:
         p = Path(path)
         if p.is_file():
             raw = _load_file(p)
+            resolved_path = str(p.resolve())
     else:
         discovered = _discover_config_file()
         if discovered is not None:
             raw = _load_file(discovered)
+            resolved_path = str(discovered.resolve())
 
     raw = _apply_env_overrides(raw)
 
-    return AegisConfig.model_validate(raw)
+    config = AegisConfig.model_validate(raw)
+    if resolved_path:
+        config.config_path = resolved_path
+    return config

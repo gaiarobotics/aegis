@@ -113,6 +113,14 @@ killswitch:
   #   - "https://my-monitor.example.com/api/v1/killswitch/status"
   ttl_seconds: 60               # How often to poll monitors (seconds)
 
+# -- Self-Integrity -------------------------------------------
+self_integrity:
+  enabled: true                   # Monitor AEGIS files for runtime tampering
+  check_interval_seconds: 5       # How often to check (seconds)
+  on_tamper: exit                 # "exit" (kill process), "block" (stop inference), "log"
+  watch_package: true             # Watch aegis/ source files
+  watch_config: true              # Watch the config file
+
 # -- Telemetry -----------------------------------------------
 telemetry:
   local_log: true

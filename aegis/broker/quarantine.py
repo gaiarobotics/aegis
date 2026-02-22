@@ -3,8 +3,37 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from aegis.core.config import AegisConfig
+
+
+# Severity tiers determine cooldown behavior:
+# - "low": auto-release after short cooldown (e.g., denied writes from tool discovery)
+# - "medium": auto-release after longer cooldown (e.g., new domain burst)
+# - "high": requires manual release (e.g., behavioral drift anomaly)
+_REASON_SEVERITY: dict[str, str] = {
+    "denied_writes": "low",
+    "new_domain_burst": "medium",
+    "drift_score": "high",
+}
+
+_COOLDOWN_SECONDS: dict[str, float] = {
+    "low": 60.0,
+    "medium": 300.0,
+}
+
+
+def _classify_severity(reason: str) -> str:
+    """Classify quarantine severity from the reason string."""
+    reason_lower = reason.lower()
+    if "denied" in reason_lower and "write" in reason_lower:
+        return "low"
+    if "domain" in reason_lower:
+        return "medium"
+    if "drift" in reason_lower:
+        return "high"
+    return "medium"  # Default to medium for unknown reasons
 
 
 class QuarantineManager:
@@ -26,12 +55,16 @@ class QuarantineManager:
         self._lock = threading.Lock()
         self._quarantined: bool = False
         self._reason: str | None = None
+        self._severity: str = "low"
+        self._quarantine_time: float | None = None
 
     def enter_quarantine(self, reason: str) -> None:
         """Activate read-only quarantine mode."""
         with self._lock:
             self._quarantined = True
             self._reason = reason
+            self._severity = _classify_severity(reason)
+            self._quarantine_time = time.monotonic()
 
     def exit_quarantine(self, token: str | None = None) -> None:
         """Deactivate quarantine mode.
@@ -48,10 +81,27 @@ class QuarantineManager:
                 raise ValueError("Invalid exit token")
             self._quarantined = False
             self._reason = None
+            self._severity = "low"
+            self._quarantine_time = None
 
     def is_quarantined(self) -> bool:
-        """Check whether quarantine mode is active."""
+        """Check whether quarantine mode is active.
+
+        Automatically releases quarantine if the cooldown has expired
+        for low/medium severity quarantines.
+        """
         with self._lock:
+            if not self._quarantined:
+                return False
+            # Check cooldown for auto-release
+            if self._quarantine_time is not None and self._severity in _COOLDOWN_SECONDS:
+                elapsed = time.monotonic() - self._quarantine_time
+                if elapsed >= _COOLDOWN_SECONDS[self._severity]:
+                    self._quarantined = False
+                    self._reason = None
+                    self._severity = "low"
+                    self._quarantine_time = None
+                    return False
             return self._quarantined
 
     @property
@@ -59,6 +109,12 @@ class QuarantineManager:
         """Return the reason quarantine was activated, or None."""
         with self._lock:
             return self._reason
+
+    @property
+    def severity(self) -> str:
+        """Return the severity tier of the current quarantine."""
+        with self._lock:
+            return self._severity
 
     def check_triggers(
         self,

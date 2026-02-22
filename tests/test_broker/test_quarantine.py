@@ -1,8 +1,11 @@
 """Tests for broker quarantine mode."""
 
+import time
+from unittest.mock import patch
+
 import pytest
 
-from aegis.broker.quarantine import QuarantineManager
+from aegis.broker.quarantine import QuarantineManager, _COOLDOWN_SECONDS
 from aegis.core.config import AegisConfig
 
 
@@ -37,22 +40,22 @@ class TestQuarantineBasics:
 class TestQuarantineTriggers:
     def test_trigger_on_denied_writes(self):
         qm = QuarantineManager()
-        qm.check_triggers(denied_count=5, new_domain_count=0)
+        qm.check_triggers(denied_count=50, new_domain_count=0)
         assert qm.is_quarantined() is True
 
     def test_no_trigger_below_denied_threshold(self):
         qm = QuarantineManager()
-        qm.check_triggers(denied_count=4, new_domain_count=0)
+        qm.check_triggers(denied_count=49, new_domain_count=0)
         assert qm.is_quarantined() is False
 
     def test_trigger_on_new_domain_burst(self):
         qm = QuarantineManager()
-        qm.check_triggers(denied_count=0, new_domain_count=3)
+        qm.check_triggers(denied_count=0, new_domain_count=10)
         assert qm.is_quarantined() is True
 
     def test_no_trigger_below_domain_threshold(self):
         qm = QuarantineManager()
-        qm.check_triggers(denied_count=0, new_domain_count=2)
+        qm.check_triggers(denied_count=0, new_domain_count=9)
         assert qm.is_quarantined() is False
 
     def test_trigger_on_drift_score(self):
@@ -160,6 +163,54 @@ class TestQuarantineExitToken:
             qm.exit_quarantine(token="bad")
         qm.exit_quarantine(token="my-token")
         assert qm.is_quarantined() is False
+
+
+class TestQuarantineCooldown:
+    def test_cooldown_low_severity(self):
+        """Low-severity quarantine (denied writes) auto-releases after cooldown."""
+        qm = QuarantineManager()
+        qm.enter_quarantine("Repeated denied writes: 50 >= 50")
+        assert qm.severity == "low"
+        assert qm.is_quarantined() is True
+
+        # Simulate time passing beyond cooldown
+        with patch("aegis.broker.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = qm._quarantine_time + _COOLDOWN_SECONDS["low"] + 1
+            assert qm.is_quarantined() is False
+
+    def test_cooldown_medium_severity(self):
+        """Medium-severity quarantine (domain burst) auto-releases after cooldown."""
+        qm = QuarantineManager()
+        qm.enter_quarantine("New domain burst: 10 >= 10")
+        assert qm.severity == "medium"
+        assert qm.is_quarantined() is True
+
+        with patch("aegis.broker.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = qm._quarantine_time + _COOLDOWN_SECONDS["medium"] + 1
+            assert qm.is_quarantined() is False
+
+    def test_cooldown_high_severity_no_auto_release(self):
+        """High-severity quarantine (drift) does NOT auto-release."""
+        qm = QuarantineManager()
+        qm.enter_quarantine("Drift score exceeded: 4.0 >= 3.0")
+        assert qm.severity == "high"
+        assert qm.is_quarantined() is True
+
+        # Even after a long time, still quarantined
+        with patch("aegis.broker.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = qm._quarantine_time + 100000
+            assert qm.is_quarantined() is True
+
+    def test_cooldown_not_expired_still_quarantined(self):
+        """Before cooldown expires, quarantine remains active."""
+        qm = QuarantineManager()
+        qm.enter_quarantine("Repeated denied writes: 50 >= 50")
+        assert qm.is_quarantined() is True
+
+        # Still within cooldown
+        with patch("aegis.broker.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = qm._quarantine_time + _COOLDOWN_SECONDS["low"] - 1
+            assert qm.is_quarantined() is True
 
 
 class TestQuarantineThreadSafety:

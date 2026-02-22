@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from aegis.core import killswitch
 from aegis.core.config import AegisConfig
 from aegis.scanner.envelope import PromptEnvelope
 from aegis.scanner.llm_guard import LLMGuardAdapter, LLMGuardResult
@@ -86,12 +85,8 @@ class Scanner:
             text: The input text to scan.
 
         Returns:
-            ScanResult with combined findings. Returns clean/empty result
-            when killswitch is active.
+            ScanResult with combined findings.
         """
-        if killswitch.is_active():
-            return ScanResult()
-
         matches: list[ThreatMatch] = []
         semantic_result: Optional[SemanticResult] = None
         llm_guard_result: Optional[LLMGuardResult] = None
@@ -133,23 +128,15 @@ class Scanner:
     ) -> list[dict[str, Any]]:
         """Wrap messages with provenance tags.
 
-        Delegates to PromptEnvelope. Returns messages unchanged when
-        killswitch is active.
+        Delegates to PromptEnvelope.
         """
-        if killswitch.is_active():
-            return messages
-
         return self._envelope.wrap_messages(messages, provenance_map=provenance_map)
 
     def sanitize_output(self, text: str) -> SanitizeResult:
         """Sanitize model output text.
 
-        Delegates to OutboundSanitizer. Returns clean result when
-        killswitch is active.
+        Delegates to OutboundSanitizer.
         """
-        if killswitch.is_active():
-            return SanitizeResult(cleaned_text=text, modifications=[])
-
         result = self._sanitizer.sanitize(text)
 
         # PII redaction on output

@@ -38,6 +38,8 @@ class VLLMWrapper(BaseWrapper):
             def intercept_generate(*args: Any, **kwargs: Any) -> Any:
                 from aegis.shield import ThreatBlockedError
 
+                shield.check_killswitch()
+
                 # vLLM generate accepts prompts as first positional arg or keyword
                 prompts = args[0] if args else kwargs.get("prompts")
                 if prompts is None:
@@ -86,6 +88,8 @@ class VLLMWrapper(BaseWrapper):
 
             def intercept_chat(*args: Any, **kwargs: Any) -> Any:
                 from aegis.shield import ThreatBlockedError
+
+                shield.check_killswitch()
 
                 messages = kwargs.get("messages", [])
 

@@ -10,7 +10,7 @@ import sqlite3
 import threading
 from typing import Any
 
-from monitor.models import AgentEdge, AgentNode, CompromiseRecord, StoredEvent
+from monitor.models import AgentEdge, AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -19,9 +19,10 @@ CREATE TABLE IF NOT EXISTS agents (
     trust_tier     INTEGER NOT NULL DEFAULT 0,
     trust_score    REAL NOT NULL DEFAULT 0.0,
     is_compromised INTEGER NOT NULL DEFAULT 0,
-    is_quarantined INTEGER NOT NULL DEFAULT 0,
-    last_heartbeat REAL NOT NULL DEFAULT 0,
-    metadata       TEXT NOT NULL DEFAULT '{}'
+    is_quarantined  INTEGER NOT NULL DEFAULT 0,
+    is_killswitched INTEGER NOT NULL DEFAULT 0,
+    last_heartbeat  REAL NOT NULL DEFAULT 0,
+    metadata        TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -58,6 +59,29 @@ CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_compromises_compromised ON compromises(compromised_agent_id);
 CREATE INDEX IF NOT EXISTS idx_compromises_ts ON compromises(timestamp);
+
+CREATE TABLE IF NOT EXISTS killswitch_rules (
+    rule_id    TEXT PRIMARY KEY,
+    scope      TEXT NOT NULL DEFAULT 'agent',
+    target     TEXT NOT NULL DEFAULT '',
+    blocked    INTEGER NOT NULL DEFAULT 1,
+    reason     TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_ks_scope ON killswitch_rules(scope);
+
+CREATE TABLE IF NOT EXISTS quarantine_rules (
+    rule_id    TEXT PRIMARY KEY,
+    scope      TEXT NOT NULL DEFAULT 'agent',
+    target     TEXT NOT NULL DEFAULT '',
+    quarantined INTEGER NOT NULL DEFAULT 1,
+    reason     TEXT NOT NULL DEFAULT '',
+    severity   TEXT NOT NULL DEFAULT 'low',
+    created_at REAL NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_qr_scope ON quarantine_rules(scope);
 """
 
 
@@ -100,16 +124,18 @@ class Database:
         conn.execute(
             """INSERT INTO agents
                    (agent_id, operator_id, trust_tier, trust_score,
-                    is_compromised, is_quarantined, last_heartbeat, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    is_compromised, is_quarantined, is_killswitched,
+                    last_heartbeat, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET
-                   operator_id    = excluded.operator_id,
-                   trust_tier     = excluded.trust_tier,
-                   trust_score    = excluded.trust_score,
-                   is_compromised = excluded.is_compromised,
-                   is_quarantined = excluded.is_quarantined,
-                   last_heartbeat = excluded.last_heartbeat,
-                   metadata       = excluded.metadata
+                   operator_id     = excluded.operator_id,
+                   trust_tier      = excluded.trust_tier,
+                   trust_score     = excluded.trust_score,
+                   is_compromised  = excluded.is_compromised,
+                   is_quarantined  = excluded.is_quarantined,
+                   is_killswitched = excluded.is_killswitched,
+                   last_heartbeat  = excluded.last_heartbeat,
+                   metadata        = excluded.metadata
             """,
             (
                 node.agent_id,
@@ -118,6 +144,7 @@ class Database:
                 node.trust_score,
                 int(node.is_compromised),
                 int(node.is_quarantined),
+                int(node.is_killswitched),
                 node.last_heartbeat,
                 json.dumps(node.metadata),
             ),
@@ -147,6 +174,7 @@ class Database:
             trust_score=row["trust_score"],
             is_compromised=bool(row["is_compromised"]),
             is_quarantined=bool(row["is_quarantined"]),
+            is_killswitched=bool(row["is_killswitched"]),
             last_heartbeat=row["last_heartbeat"],
             metadata=json.loads(row["metadata"]),
         )
@@ -291,6 +319,210 @@ class Database:
             )
             for r in rows
         ]
+
+    def set_agent_killswitched(self, agent_id: str, killswitched: bool) -> None:
+        """Set the is_killswitched flag on an agent (creates agent if needed)."""
+        conn = self._get_conn()
+        # Try update first
+        cur = conn.execute(
+            "UPDATE agents SET is_killswitched = ? WHERE agent_id = ?",
+            (int(killswitched), agent_id),
+        )
+        if cur.rowcount == 0 and killswitched:
+            # Agent doesn't exist yet — create it with killswitched flag
+            conn.execute(
+                """INSERT INTO agents
+                       (agent_id, operator_id, trust_tier, trust_score,
+                        is_compromised, is_quarantined, is_killswitched,
+                        last_heartbeat, metadata)
+                   VALUES (?, '', 0, 0.0, 0, 0, ?, 0, '{}')
+                """,
+                (agent_id, int(killswitched)),
+            )
+        conn.commit()
+
+    # ---- Killswitch Rules ----
+
+    def insert_killswitch_rule(self, rule: KillswitchRule) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO killswitch_rules
+                   (rule_id, scope, target, blocked, reason, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rule.rule_id,
+                rule.scope,
+                rule.target,
+                int(rule.blocked),
+                rule.reason,
+                rule.created_at,
+                rule.created_by,
+            ),
+        )
+        conn.commit()
+
+    def get_killswitch_rules(self) -> list[KillswitchRule]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM killswitch_rules ORDER BY created_at DESC"
+        ).fetchall()
+        return [
+            KillswitchRule(
+                rule_id=r["rule_id"],
+                scope=r["scope"],
+                target=r["target"],
+                blocked=bool(r["blocked"]),
+                reason=r["reason"],
+                created_at=r["created_at"],
+                created_by=r["created_by"],
+            )
+            for r in rows
+        ]
+
+    def delete_killswitch_rule(self, rule_id: str) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute(
+            "DELETE FROM killswitch_rules WHERE rule_id = ?", (rule_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def check_killswitch(self, agent_id: str, operator_id: str) -> tuple[bool, str, str]:
+        """Check killswitch status for an agent.
+
+        Priority: swarm rules first, then operator, then agent.
+        Returns (blocked, reason, scope).
+        """
+        conn = self._get_conn()
+        # Check swarm-level first
+        row = conn.execute(
+            "SELECT * FROM killswitch_rules WHERE scope = 'swarm' AND blocked = 1 LIMIT 1"
+        ).fetchone()
+        if row:
+            return True, row["reason"], "swarm"
+
+        # Check operator-level
+        if operator_id:
+            row = conn.execute(
+                "SELECT * FROM killswitch_rules WHERE scope = 'operator' AND target = ? AND blocked = 1 LIMIT 1",
+                (operator_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "operator"
+
+        # Check agent-level
+        if agent_id:
+            row = conn.execute(
+                "SELECT * FROM killswitch_rules WHERE scope = 'agent' AND target = ? AND blocked = 1 LIMIT 1",
+                (agent_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "agent"
+
+        return False, "", ""
+
+    # ---- Quarantine Rules ----
+
+    def insert_quarantine_rule(self, rule: QuarantineRule) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO quarantine_rules
+                   (rule_id, scope, target, quarantined, reason, severity, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rule.rule_id,
+                rule.scope,
+                rule.target,
+                int(rule.quarantined),
+                rule.reason,
+                rule.severity,
+                rule.created_at,
+                rule.created_by,
+            ),
+        )
+        conn.commit()
+
+    def get_quarantine_rules(self) -> list[QuarantineRule]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM quarantine_rules ORDER BY created_at DESC"
+        ).fetchall()
+        return [
+            QuarantineRule(
+                rule_id=r["rule_id"],
+                scope=r["scope"],
+                target=r["target"],
+                quarantined=bool(r["quarantined"]),
+                reason=r["reason"],
+                severity=r["severity"],
+                created_at=r["created_at"],
+                created_by=r["created_by"],
+            )
+            for r in rows
+        ]
+
+    def delete_quarantine_rule(self, rule_id: str) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute(
+            "DELETE FROM quarantine_rules WHERE rule_id = ?", (rule_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def check_quarantine(self, agent_id: str, operator_id: str) -> tuple[bool, str, str, str]:
+        """Check quarantine status for an agent.
+
+        Priority: swarm rules first, then operator, then agent.
+        Returns (quarantined, reason, scope, severity).
+        """
+        conn = self._get_conn()
+        # Check swarm-level first
+        row = conn.execute(
+            "SELECT * FROM quarantine_rules WHERE scope = 'swarm' AND quarantined = 1 LIMIT 1"
+        ).fetchone()
+        if row:
+            return True, row["reason"], "swarm", row["severity"]
+
+        # Check operator-level
+        if operator_id:
+            row = conn.execute(
+                "SELECT * FROM quarantine_rules WHERE scope = 'operator' AND target = ? AND quarantined = 1 LIMIT 1",
+                (operator_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "operator", row["severity"]
+
+        # Check agent-level
+        if agent_id:
+            row = conn.execute(
+                "SELECT * FROM quarantine_rules WHERE scope = 'agent' AND target = ? AND quarantined = 1 LIMIT 1",
+                (agent_id,),
+            ).fetchone()
+            if row:
+                return True, row["reason"], "agent", row["severity"]
+
+        return False, "", "", ""
+
+    def set_agent_quarantined(self, agent_id: str, quarantined: bool) -> None:
+        """Set the is_quarantined flag on an agent (creates agent if needed)."""
+        conn = self._get_conn()
+        cur = conn.execute(
+            "UPDATE agents SET is_quarantined = ? WHERE agent_id = ?",
+            (int(quarantined), agent_id),
+        )
+        if cur.rowcount == 0 and quarantined:
+            conn.execute(
+                """INSERT INTO agents
+                       (agent_id, operator_id, trust_tier, trust_score,
+                        is_compromised, is_quarantined, is_killswitched,
+                        last_heartbeat, metadata)
+                   VALUES (?, '', 0, 0.0, 0, ?, 0, 0, '{}')
+                """,
+                (agent_id, int(quarantined)),
+            )
+        conn.commit()
 
     def count_compromised_agents(self) -> int:
         conn = self._get_conn()

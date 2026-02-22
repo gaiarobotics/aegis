@@ -20,7 +20,7 @@ from monitor.config import MonitorConfig
 from monitor.db import Database
 from monitor.epidemiology import R0Estimator
 from monitor.graph import AgentGraph
-from monitor.models import AgentNode, CompromiseRecord, StoredEvent
+from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -50,6 +50,8 @@ async def lifespan(app: FastAPI):
         )
         if agent.is_compromised:
             app.state.graph.mark_compromised(agent.agent_id)
+        if agent.is_killswitched:
+            app.state.graph.mark_killswitched(agent.agent_id)
 
     yield
 
@@ -249,6 +251,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     graph_state = graph.get_graph_state()
     compromised = sum(1 for n in graph_state["nodes"] if n["is_compromised"])
     quarantined = sum(1 for n in graph_state["nodes"] if n["is_quarantined"])
+    killswitched = sum(1 for n in graph_state["nodes"] if n["is_killswitched"])
 
     threat_events = db.get_events(event_type="threat", limit=0)
 
@@ -264,6 +267,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
         "total_agents": len(graph_state["nodes"]),
         "compromised_agents": compromised,
         "quarantined_agents": quarantined,
+        "killswitched_agents": killswitched,
         "cluster_count": len(real_clusters),
         "clusters": cluster_info,
     }
@@ -287,8 +291,213 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
         "trust_score": agent.trust_score,
         "is_compromised": agent.is_compromised,
         "is_quarantined": agent.is_quarantined,
+        "is_killswitched": agent.is_killswitched,
         "at_risk_agents": at_risk,
     }
+
+
+# ------------------------------------------------------------------
+# Killswitch endpoints
+# ------------------------------------------------------------------
+
+@app.get("/api/v1/killswitch/status")
+async def killswitch_status(
+    agent_id: str = "",
+    operator_id: str = "",
+    _key: str = Depends(verify_api_key),
+):
+    """Agent polling endpoint — returns block status."""
+    db: Database = app.state.db
+    blocked, reason, scope = db.check_killswitch(agent_id, operator_id)
+    return {"blocked": blocked, "reason": reason, "scope": scope}
+
+
+@app.post("/api/v1/killswitch/rules")
+async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)):
+    """Create a killswitch rule."""
+    db: Database = app.state.db
+    rule_id = data.get("rule_id", str(uuid.uuid4()))
+    rule = KillswitchRule(
+        rule_id=rule_id,
+        scope=data.get("scope", "agent"),
+        target=data.get("target", ""),
+        blocked=data.get("blocked", True),
+        reason=data.get("reason", ""),
+        created_at=data.get("created_at", time.time()),
+        created_by=data.get("created_by", ""),
+    )
+    db.insert_killswitch_rule(rule)
+
+    # Update agent killswitched status in DB and graph
+    graph: AgentGraph = app.state.graph
+    if rule.blocked and rule.scope == "agent" and rule.target:
+        db.set_agent_killswitched(rule.target, True)
+        graph.mark_killswitched(rule.target, True)
+    elif rule.blocked and rule.scope == "swarm":
+        # Mark all known agents as killswitched
+        for agent in db.get_all_agents():
+            db.set_agent_killswitched(agent.agent_id, True)
+            graph.mark_killswitched(agent.agent_id, True)
+
+    await _broadcast(app.state, {
+        "type": "killswitch",
+        "action": "created",
+        "rule_id": rule_id,
+        "scope": rule.scope,
+        "target": rule.target,
+        "blocked": rule.blocked,
+        "reason": rule.reason,
+    })
+
+    return {"rule_id": rule_id, "status": "ok"}
+
+
+@app.get("/api/v1/killswitch/rules")
+async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
+    """List all active killswitch rules."""
+    db: Database = app.state.db
+    rules = db.get_killswitch_rules()
+    return {
+        "rules": [
+            {
+                "rule_id": r.rule_id,
+                "scope": r.scope,
+                "target": r.target,
+                "blocked": r.blocked,
+                "reason": r.reason,
+                "created_at": r.created_at,
+                "created_by": r.created_by,
+            }
+            for r in rules
+        ]
+    }
+
+
+@app.delete("/api/v1/killswitch/rules/{rule_id}")
+async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+    """Remove a killswitch rule."""
+    db: Database = app.state.db
+    graph: AgentGraph = app.state.graph
+    deleted = db.delete_killswitch_rule(rule_id)
+
+    if deleted:
+        # Re-evaluate killswitch status for all agents
+        for agent in db.get_all_agents():
+            still_blocked, _, _ = db.check_killswitch(agent.agent_id, agent.operator_id)
+            if not still_blocked and agent.is_killswitched:
+                db.set_agent_killswitched(agent.agent_id, False)
+                graph.mark_killswitched(agent.agent_id, False)
+
+        await _broadcast(app.state, {
+            "type": "killswitch",
+            "action": "deleted",
+            "rule_id": rule_id,
+        })
+
+    return {"status": "ok" if deleted else "not_found"}
+
+
+# ------------------------------------------------------------------
+# Quarantine endpoints
+# ------------------------------------------------------------------
+
+@app.get("/api/v1/quarantine/status")
+async def quarantine_status(
+    agent_id: str = "",
+    operator_id: str = "",
+    _key: str = Depends(verify_api_key),
+):
+    """Agent polling endpoint — returns quarantine status."""
+    db: Database = app.state.db
+    quarantined, reason, scope, severity = db.check_quarantine(agent_id, operator_id)
+    return {"quarantined": quarantined, "reason": reason, "scope": scope, "severity": severity}
+
+
+@app.post("/api/v1/quarantine/rules")
+async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)):
+    """Create a quarantine rule."""
+    db: Database = app.state.db
+    rule_id = data.get("rule_id", str(uuid.uuid4()))
+    rule = QuarantineRule(
+        rule_id=rule_id,
+        scope=data.get("scope", "agent"),
+        target=data.get("target", ""),
+        quarantined=data.get("quarantined", True),
+        reason=data.get("reason", ""),
+        severity=data.get("severity", "low"),
+        created_at=data.get("created_at", time.time()),
+        created_by=data.get("created_by", ""),
+    )
+    db.insert_quarantine_rule(rule)
+
+    # Update agent quarantine status in DB and graph
+    graph: AgentGraph = app.state.graph
+    if rule.quarantined and rule.scope == "agent" and rule.target:
+        db.set_agent_quarantined(rule.target, True)
+        graph.mark_quarantined(rule.target, True)
+    elif rule.quarantined and rule.scope == "swarm":
+        for agent in db.get_all_agents():
+            db.set_agent_quarantined(agent.agent_id, True)
+            graph.mark_quarantined(agent.agent_id, True)
+
+    await _broadcast(app.state, {
+        "type": "quarantine",
+        "action": "created",
+        "rule_id": rule_id,
+        "scope": rule.scope,
+        "target": rule.target,
+        "quarantined": rule.quarantined,
+        "reason": rule.reason,
+        "severity": rule.severity,
+    })
+
+    return {"rule_id": rule_id, "status": "ok"}
+
+
+@app.get("/api/v1/quarantine/rules")
+async def list_quarantine_rules(_key: str = Depends(verify_api_key)):
+    """List all active quarantine rules."""
+    db: Database = app.state.db
+    rules = db.get_quarantine_rules()
+    return {
+        "rules": [
+            {
+                "rule_id": r.rule_id,
+                "scope": r.scope,
+                "target": r.target,
+                "quarantined": r.quarantined,
+                "reason": r.reason,
+                "severity": r.severity,
+                "created_at": r.created_at,
+                "created_by": r.created_by,
+            }
+            for r in rules
+        ]
+    }
+
+
+@app.delete("/api/v1/quarantine/rules/{rule_id}")
+async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+    """Remove a quarantine rule (release quarantine)."""
+    db: Database = app.state.db
+    graph: AgentGraph = app.state.graph
+    deleted = db.delete_quarantine_rule(rule_id)
+
+    if deleted:
+        # Re-evaluate quarantine status for all agents
+        for agent in db.get_all_agents():
+            still_quarantined, _, _, _ = db.check_quarantine(agent.agent_id, agent.operator_id)
+            if not still_quarantined and agent.is_quarantined:
+                db.set_agent_quarantined(agent.agent_id, False)
+                graph.mark_quarantined(agent.agent_id, False)
+
+        await _broadcast(app.state, {
+            "type": "quarantine",
+            "action": "deleted",
+            "rule_id": rule_id,
+        })
+
+    return {"status": "ok" if deleted else "not_found"}
 
 
 # ------------------------------------------------------------------

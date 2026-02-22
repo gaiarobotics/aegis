@@ -3,8 +3,6 @@
 
 # Master controls
 mode: observe              # observe | enforce
-killswitch: false
-
 # Agent identity
 agent_id: ""               # Auto-generated if empty
 agent_name: "my-agent"
@@ -29,7 +27,7 @@ scanner:
   outbound_sanitizer: true   # Strip authority markers from outputs
   sensitivity: 0.5           # 0.0 (permissive) to 1.0 (paranoid)
   block_on_threat: false
-  confidence_threshold: 0.7
+  confidence_threshold: 0.8
   signatures:
     use_bundled: true
     additional_files: []
@@ -37,15 +35,16 @@ scanner:
 
 # -- Broker --------------------------------------------------
 broker:
-  default_posture: deny_write  # deny_write | allow_all | deny_all
+  default_posture: deny_write    # deny_write | allow_all | deny_all
+  auto_register_unknown: true    # Auto-register unknown tools as read-only
   budgets:
     max_write_tool_calls: 20     # Per run
     max_posts_messages: 5         # Per run
     max_external_http_writes: 10  # Per run
-    max_new_domains: 3            # Per run
+    max_new_domains: 10           # Per run
   quarantine_triggers:
-    repeated_denied_writes: 5
-    new_domain_burst: 3
+    repeated_denied_writes: 50
+    new_domain_burst: 10
     tool_rate_spike_sigma: 3.0
     drift_score_threshold: 3.0
 
@@ -106,6 +105,22 @@ recovery:
   auto_quarantine: true        # Auto-quarantine on severe anomalies
   quarantine_on_hostile_nk: true
   purge_window_hours: 24
+
+# -- Killswitch -----------------------------------------------
+killswitch:
+  monitors: []                  # List of monitor URLs or "aegis-central"
+  # monitors:
+  #   - "aegis-central"         # Managed emergency shutoff via aegis.gaiarobotics.com
+  #   - "https://my-monitor.example.com/api/v1/killswitch/status"
+  ttl_seconds: 60               # How often to poll monitors (seconds)
+
+# -- Self-Integrity -------------------------------------------
+self_integrity:
+  enabled: true                   # Monitor AEGIS files for runtime tampering
+  check_interval_seconds: 5       # How often to check (seconds)
+  on_tamper: block                # "exit" (kill process), "block" (stop inference), "log"
+  watch_package: false            # Watch aegis/ source files
+  watch_config: true              # Watch the config file
 
 # -- Telemetry -----------------------------------------------
 telemetry:

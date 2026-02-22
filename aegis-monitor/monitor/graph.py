@@ -10,8 +10,15 @@ import networkx as nx
 from monitor.models import AgentEdge, AgentNode
 
 
-def _trust_color(tier: int, is_compromised: bool, is_quarantined: bool) -> str:
+def _trust_color(
+    tier: int,
+    is_compromised: bool,
+    is_quarantined: bool,
+    is_killswitched: bool = False,
+) -> str:
     """Map trust state to a node color."""
+    if is_killswitched:
+        return "#e67e22"  # orange — distinct from quarantined (red)
     if is_compromised or is_quarantined:
         return "#e74c3c"  # red
     if tier >= 2:
@@ -38,16 +45,20 @@ class AgentGraph:
         trust_tier: int = 0,
         trust_score: float = 0.0,
         is_quarantined: bool = False,
+        is_killswitched: bool | None = None,
         edges: list[dict[str, Any]] | None = None,
     ) -> None:
         """Add or update a node and its edges from a heartbeat."""
+        existing = self._g.nodes.get(agent_id, {})
+        ks = is_killswitched if is_killswitched is not None else existing.get("is_killswitched", False)
         self._g.add_node(
             agent_id,
             operator_id=operator_id,
             trust_tier=trust_tier,
             trust_score=trust_score,
-            is_compromised=self._g.nodes.get(agent_id, {}).get("is_compromised", False),
+            is_compromised=existing.get("is_compromised", False),
             is_quarantined=is_quarantined,
+            is_killswitched=ks,
             last_heartbeat=time.time(),
         )
         for edge in edges or []:
@@ -58,6 +69,7 @@ class AgentGraph:
             if target not in self._g:
                 self._g.add_node(target, trust_tier=0, trust_score=0.0,
                                  is_compromised=False, is_quarantined=False,
+                                 is_killswitched=False,
                                  operator_id="", last_heartbeat=0)
             self._g.add_edge(
                 agent_id,
@@ -80,6 +92,39 @@ class AgentGraph:
                 trust_score=0.0,
                 is_compromised=True,
                 is_quarantined=False,
+                is_killswitched=False,
+                operator_id="",
+                last_heartbeat=0,
+            )
+
+    def mark_quarantined(self, agent_id: str, quarantined: bool = True) -> None:
+        """Set the quarantined flag on an agent in the graph."""
+        if agent_id in self._g:
+            self._g.nodes[agent_id]["is_quarantined"] = quarantined
+        elif quarantined:
+            self._g.add_node(
+                agent_id,
+                trust_tier=0,
+                trust_score=0.0,
+                is_compromised=False,
+                is_quarantined=True,
+                is_killswitched=False,
+                operator_id="",
+                last_heartbeat=0,
+            )
+
+    def mark_killswitched(self, agent_id: str, killswitched: bool = True) -> None:
+        """Set the killswitched flag on an agent in the graph."""
+        if agent_id in self._g:
+            self._g.nodes[agent_id]["is_killswitched"] = killswitched
+        elif killswitched:
+            self._g.add_node(
+                agent_id,
+                trust_tier=0,
+                trust_score=0.0,
+                is_compromised=False,
+                is_quarantined=False,
+                is_killswitched=True,
                 operator_id="",
                 last_heartbeat=0,
             )
@@ -91,6 +136,7 @@ class AgentGraph:
             tier = data.get("trust_tier", 0)
             compromised = data.get("is_compromised", False)
             quarantined = data.get("is_quarantined", False)
+            killswitched = data.get("is_killswitched", False)
             nodes.append({
                 "id": nid,
                 "operator_id": data.get("operator_id", ""),
@@ -98,7 +144,8 @@ class AgentGraph:
                 "trust_score": data.get("trust_score", 0.0),
                 "is_compromised": compromised,
                 "is_quarantined": quarantined,
-                "color": _trust_color(tier, compromised, quarantined),
+                "is_killswitched": killswitched,
+                "color": _trust_color(tier, compromised, quarantined, killswitched),
                 "last_heartbeat": data.get("last_heartbeat", 0),
             })
 
@@ -144,6 +191,7 @@ class AgentGraph:
                 trust_score=data.get("trust_score", 0.0),
                 is_compromised=data.get("is_compromised", False),
                 is_quarantined=data.get("is_quarantined", False),
+                is_killswitched=data.get("is_killswitched", False),
                 last_heartbeat=data.get("last_heartbeat", 0),
             ))
         return result

@@ -70,10 +70,6 @@ AEGIS defaults to `enforce` mode so that developers are protected out of the box
 - Tune thresholds (scanner sensitivity, drift detection window, trust decay rates) based on observed false positive rates.
 - Build confidence in the system before switching to `enforce` mode.
 
-## Killswitch: Guaranteed Rollback
-
-A global killswitch — activatable via API call, environment variable, or config file — instantly disables all AEGIS processing. When active, every module returns clean/pass-through results. This provides a guaranteed escape hatch if AEGIS ever interferes with legitimate operation in production.
-
 ## What AEGIS Does Not Do
 
 Transparency about limitations:

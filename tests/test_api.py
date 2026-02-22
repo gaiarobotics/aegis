@@ -29,12 +29,6 @@ class TestTopLevelAPI:
         assert shield.config.is_module_enabled("scanner") is True
         assert shield.config.is_module_enabled("broker") is False
 
-    def test_killswitch_accessible(self):
-        assert hasattr(aegis, "killswitch")
-        assert hasattr(aegis.killswitch, "is_active")
-        assert hasattr(aegis.killswitch, "activate")
-        assert hasattr(aegis.killswitch, "deactivate")
-
     def test_wrap_returns_wrapped_client(self):
         client = MockClient()
         wrapped = aegis.wrap(client)

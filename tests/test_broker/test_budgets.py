@@ -32,7 +32,7 @@ class TestBudgetTrackerDefaults:
         assert remaining["max_write_tool_calls"] == 20
         assert remaining["max_posts_messages"] == 5
         assert remaining["max_external_http_writes"] == 10
-        assert remaining["max_new_domains"] == 3
+        assert remaining["max_new_domains"] == 10
 
     def test_custom_config_limits(self):
         cfg = AegisConfig()
@@ -97,7 +97,7 @@ class TestNewDomainTracking:
         req = _make_request(action_type="http_write", read_write="write", target="example.com")
         tracker.record_action(req)
         remaining = tracker.remaining()
-        assert remaining["max_new_domains"] == 2
+        assert remaining["max_new_domains"] == 9
 
     def test_same_domain_not_counted_twice(self):
         tracker = BudgetTracker()
@@ -106,7 +106,7 @@ class TestNewDomainTracking:
         tracker.record_action(req1)
         tracker.record_action(req2)
         remaining = tracker.remaining()
-        assert remaining["max_new_domains"] == 2
+        assert remaining["max_new_domains"] == 9
 
     def test_new_domain_burst_exceeds_limit(self):
         cfg = AegisConfig()
@@ -137,7 +137,7 @@ class TestBudgetReset:
         assert remaining["max_write_tool_calls"] == 20
         assert remaining["max_posts_messages"] == 5
         assert remaining["max_external_http_writes"] == 10
-        assert remaining["max_new_domains"] == 3
+        assert remaining["max_new_domains"] == 10
 
     def test_private_reset_clears_domains(self):
         tracker = BudgetTracker()
@@ -145,7 +145,7 @@ class TestBudgetReset:
         tracker.record_action(req)
         tracker._reset()
         remaining = tracker.remaining()
-        assert remaining["max_new_domains"] == 3
+        assert remaining["max_new_domains"] == 10
 
 
 class TestBudgetThreadSafety:

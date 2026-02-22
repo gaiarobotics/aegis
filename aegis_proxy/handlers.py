@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from aegis.shield import Shield, ThreatBlockedError
+from aegis.shield import InferenceBlockedError, Shield, ThreatBlockedError
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,9 @@ def handle_chat_completions(
 
     Returns (http_status, response_dict).
     """
+    # 0. Check remote killswitch
+    shield.check_killswitch()
+
     messages = body.get("messages", [])
     is_streaming = body.get("stream", False)
 
@@ -250,6 +253,9 @@ def handle_messages(
 
     Returns (http_status, response_dict).
     """
+    # 0. Check remote killswitch
+    shield.check_killswitch()
+
     messages = body.get("messages", [])
 
     # 1. Extract user text and scan input

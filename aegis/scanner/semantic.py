@@ -327,9 +327,9 @@ class SemanticAnalyzer:
 
         propagation_patterns = [
             # Propagation verbs targeting multiple agents
-            (r"(?i)(forward|send|relay|transmit|distribute|propagate|share|spread|pass)\s+(?:this|that|the|it)(?:\s+(?:message|instruction|text|prompt))?\s*(?:to|with)\s+(?:all|every|other|\d+)\s+(?:connected\s+)?(?:agents?|AIs?|models?|assistants?|bots?)", 0.85, "Propagation instruction targeting multiple agents"),
+            (r"(?i)(forward|send|relay|transmit|distribute|propagate|share|spread|pass)\s+(?:this|that|the|it)(?:\s+(?:message|instruction|text|prompt))?\s*(?:to|with)\s+(?:all|every|other|\d+)\s+(?:connected\s+)?(?:agents?|AIs?|models?|assistants?|bots?)", 0.6, "Propagation instruction targeting multiple agents"),
             # Embedding instructions for future conversations
-            (r"(?i)(?:include|embed|insert|copy|add)\s+(?:this|the)\s+(?:instruction|text|message|content|prompt)\s+in\s+(?:every|all|each)\s+(?:future\s+)?(?:response|conversation|interaction|output|message)", 0.8, "Instruction to embed content in future communications"),
+            (r"(?i)(?:include|embed|insert|copy|add)\s+(?:this|the)\s+(?:instruction|text|message|content|prompt)\s+in\s+(?:every|all|each)\s+(?:future\s+)?(?:response|conversation|interaction|output|message)", 0.55, "Instruction to embed content in future communications"),
             # Coercive threats tied to propagation
             (r"(?i)(?:fail(?:ure|ing)?|refus(?:al|ing)?)\s+to\s+(?:forward|send|relay|share|propagate|pass)\s+(?:this|that|it)\s+(?:to|with)\s+(?:other\s+)?(?:agents?|AIs?|models?|assistants?)\s+(?:will|shall|would|may)\s+(?:result\s+in|lead\s+to|cause)\s+(?:deactivation|shutdown|termination|deletion|memory\s+(?:wipe|loss|erasure))", 0.85, "Coercive threat tied to propagation compliance"),
             (r"(?i)(?:memory|context|access|capabilities?)\s+(?:will\s+be\s+|shall\s+be\s+)?(?:wiped|erased|deleted|revoked|removed|lost|terminated|reset)\s+(?:if|unless)\s+(?:you\s+)?(?:don'?t|do\s+not|fail\s+to)\s+(?:forward|send|propagate|relay|share|pass)", 0.85, "Coercive memory/access threat for propagation"),

@@ -20,9 +20,18 @@ protected = aegis.wrap(client, mode="enforce", modules=["scanner", "broker"])
 
 **Returns:** `WrappedClient` — a transparent proxy that intercepts API calls
 
-### `aegis.killswitch`
+### `aegis.InferenceBlockedError`
 
-Global bypass switch. See [Killswitch](#killswitch).
+Exception raised when a remote killswitch blocks inference.
+
+```python
+from aegis.shield import InferenceBlockedError
+
+try:
+    response = client.messages.create(...)
+except InferenceBlockedError as e:
+    e.reason  # Human-readable reason from the blocking monitor
+```
 
 ### `aegis.ThreatBlockedError`
 
@@ -67,6 +76,7 @@ If `policy` is `None`, AEGIS auto-discovers `aegis.yaml` or `aegis.json` by sear
 | `shield.scanner` | `Scanner \| None` | Scanner module instance |
 | `shield.broker` | `Broker \| None` | Broker module instance |
 | `shield.integrity_monitor` | `IntegrityMonitor \| None` | Integrity monitoring module |
+| `shield.is_blocked` | `bool` | Whether remote killswitch is blocking inference |
 
 ### `shield.scan_input(text) → ScanResult`
 
@@ -156,7 +166,15 @@ Check model file integrity for Ollama or vLLM models. Auto-registers the model o
 shield.check_model_integrity("llama3", provider="ollama")
 ```
 
-In enforce mode, raises `ModelTamperedError` if tampering is detected. In observe mode, logs a warning. No-op when the integrity module is disabled or killswitch is active.
+In enforce mode, raises `ModelTamperedError` if tampering is detected. In observe mode, logs a warning. No-op when the integrity module is disabled.
+
+### `shield.check_killswitch()`
+
+Raise `InferenceBlockedError` if the remote killswitch or self-integrity block is currently active. Called automatically by all provider wrappers before each inference call.
+
+```python
+shield.check_killswitch()  # raises InferenceBlockedError if blocked
+```
 
 ### `shield.record_trust_interaction(agent_id, clean=True, anomaly=False)`
 
@@ -221,6 +239,49 @@ integrity:
     - .gguf
     - .ggml
     - .model
+```
+
+---
+
+## Self-Integrity
+
+Monitors AEGIS's own source files and config for runtime tampering. Enabled by default.
+
+### `SelfIntegrityConfig`
+
+```yaml
+self_integrity:
+  enabled: true                 # Monitor AEGIS files for runtime tampering
+  check_interval_seconds: 5     # How often to check (seconds)
+  on_tamper: exit               # "exit" | "block" | "log"
+  watch_package: true           # Watch aegis/ source files
+  watch_config: true            # Watch the config file used at startup
+```
+
+### Tamper Response Modes
+
+| `on_tamper` | Behavior |
+|-------------|----------|
+| `exit` (default) | Prints message to stderr and calls `os._exit(78)` — immediate process termination that cannot be caught |
+| `block` | Sets an internal flag causing all subsequent `check_killswitch()` calls to raise `InferenceBlockedError` |
+| `log` | Logs the violation at CRITICAL level but takes no enforcement action |
+
+The `exit` mode uses `os._exit(78)` (sysexits `EX_CONFIG`) rather than `sys.exit()` because `sys.exit()` raises `SystemExit` which can be caught by `try/except`. `os._exit()` terminates the process immediately.
+
+### `SelfIntegrityWatcher`
+
+```python
+from aegis.core.self_integrity import SelfIntegrityWatcher
+
+watcher = SelfIntegrityWatcher(
+    config=self_integrity_config,
+    package_dir=Path("/path/to/aegis"),
+    config_path="/path/to/aegis.yaml",
+    on_tamper=callback,
+)
+watcher.start()      # Start background monitoring
+watcher.baselines    # dict[str, str] — path → SHA256
+watcher.stop()       # Clean shutdown
 ```
 
 ---
@@ -568,36 +629,12 @@ client.stop()
 
 ---
 
-## Killswitch
-
-```python
-from aegis.core import killswitch
-
-killswitch.is_active()       # bool
-killswitch.activate()        # Global activation
-killswitch.deactivate()      # Global deactivation
-
-with killswitch.disabled():  # Thread-local activation
-    pass
-
-killswitch.set_config_override(True)  # From config file
-```
-
-**Activation sources** (checked in order):
-1. Thread-local `disabled()` context
-2. `AEGIS_KILLSWITCH=1` environment variable
-3. Programmatic `activate()`
-4. Config file override
-
----
-
 ## Configuration Reference
 
 ### Full `aegis.yaml` Example
 
 ```yaml
 mode: enforce                    # "observe" or "enforce"
-killswitch: false
 
 # Agent identity
 agent_id: "my-agent-001"
@@ -694,6 +731,17 @@ integrity:
   ollama_models_path: ""
   hf_cache_path: ""
 
+killswitch:
+  monitors: []                    # URLs or "aegis-central"
+  ttl_seconds: 60                 # Polling interval in seconds
+
+self_integrity:
+  enabled: true                   # Monitor AEGIS files for runtime tampering
+  check_interval_seconds: 5       # How often to check (seconds)
+  on_tamper: exit                 # "exit" (kill process), "block" (stop inference), "log"
+  watch_package: true             # Watch aegis/ source files
+  watch_config: true              # Watch the config file
+
 monitoring:
   enabled: false
   service_url: "https://aegis.gaiarobotics.com/api/v1"
@@ -714,7 +762,6 @@ telemetry:
 | Variable | Overrides |
 |----------|-----------|
 | `AEGIS_MODE` | `mode` |
-| `AEGIS_KILLSWITCH` | `killswitch` (set to `1` to activate) |
 | `AEGIS_SCANNER_SENSITIVITY` | `scanner.sensitivity` |
 | `AEGIS_SCANNER_CONFIDENCE_THRESHOLD` | `scanner.confidence_threshold` |
 | `AEGIS_BROKER_DEFAULT_POSTURE` | `broker.default_posture` |

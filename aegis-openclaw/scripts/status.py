@@ -20,7 +20,6 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     from aegis.core.config import load_config
-    from aegis.core.killswitch import is_active as ks_active
 
     if args.config:
         config = load_config(args.config)
@@ -31,7 +30,6 @@ def main(argv: list[str] | None = None) -> None:
 
     status = {
         "mode": config.mode,
-        "killswitch_active": ks_active(),
         "agent_id": config.agent_id,
         "modules_enabled": enabled_modules,
         "scanner_sensitivity": config.scanner.sensitivity,
@@ -46,7 +44,6 @@ def main(argv: list[str] | None = None) -> None:
         print("AEGIS Status")
         print("============")
         print(f"Mode:                 {status['mode']}")
-        print(f"Killswitch active:    {status['killswitch_active']}")
         print(f"Agent ID:             {status['agent_id']}")
         print(f"Modules enabled:      {', '.join(enabled_modules)}")
         print(f"Scanner sensitivity:  {status['scanner_sensitivity']}")

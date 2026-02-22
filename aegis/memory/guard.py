@@ -43,12 +43,6 @@ class MemoryGuard:
 
         Returns a :class:`WriteResult` indicating whether the write is allowed.
         """
-        from aegis.core.killswitch import is_active as _killswitch_active
-
-        # Killswitch active → passthrough (allow everything)
-        if _killswitch_active():
-            return WriteResult(allowed=True, reason="killswitch active – passthrough", sanitized_value=entry.value)
-
         # Category checks
         if entry.category in self._config.blocked_categories:
             return WriteResult(

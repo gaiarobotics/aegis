@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
-from aegis.core import killswitch
 from aegis.core.config import AegisConfig, load_config
 from aegis.core.telemetry import TelemetryLogger
 
@@ -50,6 +52,18 @@ class ThreatBlockedError(Exception):
     def __init__(self, scan_result: ScanResult, message: str = ""):
         self.scan_result = scan_result
         super().__init__(message or f"Threat blocked (score={scan_result.threat_score})")
+
+
+class InferenceBlockedError(Exception):
+    """Raised when a remote killswitch blocks inference.
+
+    Attributes:
+        reason: Human-readable reason from the blocking monitor.
+    """
+
+    def __init__(self, reason: str = ""):
+        self.reason = reason
+        super().__init__(reason or "Inference blocked by remote killswitch")
 
 
 class Shield:
@@ -111,9 +125,14 @@ class Shield:
         self._prompt_monitor = None
         self._isolation_forest = None
         self._integrity_monitor = None
+        self._killswitch = None
+        self._self_integrity = None
+        self._self_integrity_blocked = False
 
         self._init_modules()
         self._init_monitoring()
+        self._init_killswitch()
+        self._init_self_integrity()
 
     def _init_modules(self) -> None:
         """Instantiate enabled modules with graceful degradation."""
@@ -217,10 +236,8 @@ class Shield:
         In enforce mode, raises ModelTamperedError if tampering detected.
         In observe mode, logs the tampering but allows inference to proceed.
 
-        No-op when killswitch is active or integrity module is disabled.
+        No-op when integrity module is disabled.
         """
-        if killswitch.is_active():
-            return
         if self._integrity_monitor is None:
             return
 
@@ -292,6 +309,69 @@ class Shield:
             logger.debug("Monitoring client init failed", exc_info=True)
             self._monitoring_client = None
 
+    def _init_killswitch(self) -> None:
+        """Initialize remote killswitch if monitors are configured."""
+        ks_cfg = self._config.killswitch
+        if not ks_cfg.monitors:
+            return
+        try:
+            from aegis.core.remote_killswitch import RemoteKillswitch
+            self._killswitch = RemoteKillswitch(
+                config=ks_cfg,
+                agent_id=self._config.agent_id,
+                operator_id=self._config.operator_id,
+            )
+            self._killswitch.start()
+        except Exception:
+            logger.debug("Remote killswitch init failed", exc_info=True)
+
+    def _init_self_integrity(self) -> None:
+        """Initialize self-integrity watcher if enabled."""
+        si_cfg = self._config.self_integrity
+        if not si_cfg.enabled:
+            return
+        try:
+            from aegis.core.self_integrity import SelfIntegrityWatcher
+            import aegis
+            package_dir = Path(aegis.__file__).parent
+            self._self_integrity = SelfIntegrityWatcher(
+                config=si_cfg,
+                package_dir=package_dir,
+                config_path=self._config.config_path,
+                on_tamper=self._on_self_tamper,
+            )
+            self._self_integrity.start()
+        except Exception:
+            logger.debug("Self-integrity watcher init failed", exc_info=True)
+
+    def _on_self_tamper(self, path: str) -> None:
+        """Callback when AEGIS file tampering is detected."""
+        action = self._config.self_integrity.on_tamper
+        msg = f"AEGIS self-integrity violation: {path}"
+        if action == "exit":
+            print(msg, file=sys.stderr, flush=True)
+            os._exit(78)  # EX_CONFIG — cannot be caught
+        elif action == "block":
+            self._self_integrity_blocked = True
+        else:  # "log"
+            logger.critical(msg)
+
+    @property
+    def is_blocked(self) -> bool:
+        """True if the remote killswitch or self-integrity is blocking inference."""
+        if self._self_integrity_blocked:
+            return True
+        if self._killswitch is None:
+            return False
+        return self._killswitch.is_blocked()
+
+    def check_killswitch(self) -> None:
+        """Raise InferenceBlockedError if remote killswitch or self-integrity block is active."""
+        if self._self_integrity_blocked:
+            raise InferenceBlockedError("AEGIS files tampered — inference blocked")
+        if self._killswitch is not None and self._killswitch.is_blocked():
+            raise InferenceBlockedError(self._killswitch.block_reason)
+
     def _on_compromise_reported(self, agent_id: str) -> None:
         """Callback from TrustManager.report_compromise()."""
         if self._monitoring_client is None:
@@ -337,12 +417,7 @@ class Shield:
         2. Identity (NK cell) assesses context if available
         3. Behavior tracker records event
         4. Recovery auto-quarantine if thresholds exceeded
-
-        Returns clean result when killswitch is active.
         """
-        if killswitch.is_active():
-            return ScanResult()
-
         result = ScanResult()
 
         # Step 1: Scanner
@@ -436,12 +511,9 @@ class Shield:
     def evaluate_action(self, action_request) -> ActionResult:
         """Evaluate an action request through the broker.
 
-        Returns allow-all result when killswitch is active or broker absent.
+        Returns allow-all result when broker is absent.
         In observe mode, threats are logged but not blocked.
         """
-        if killswitch.is_active():
-            return ActionResult(allowed=True, decision="allow", reason="killswitch active")
-
         if self._broker is None:
             return ActionResult(allowed=True, decision="allow", reason="no broker configured")
 
@@ -493,11 +565,8 @@ class Shield:
     def sanitize_output(self, text: str) -> SanitizeResult:
         """Sanitize model output through the scanner.
 
-        Returns text unchanged when killswitch is active or scanner absent.
+        Returns text unchanged when scanner is absent.
         """
-        if killswitch.is_active():
-            return SanitizeResult(cleaned_text=text)
-
         if self._scanner is None:
             return SanitizeResult(cleaned_text=text)
 
@@ -525,10 +594,8 @@ class Shield:
         """Record a trust interaction for an agent.
 
         Resolves the agent_id to a canonical form before recording.
-        No-op when identity module is disabled or killswitch is active.
+        No-op when identity module is disabled.
         """
-        if killswitch.is_active():
-            return
         if self._trust_manager is None:
             return
         canonical = self.resolve_agent_id(agent_id)
@@ -550,8 +617,6 @@ class Shield:
 
         Returns a dict with drift metrics or an empty dict on early exit.
         """
-        if killswitch.is_active():
-            return {}
         if self._behavior_tracker is None:
             return {}
 
@@ -686,11 +751,8 @@ class Shield:
     ) -> list[dict[str, Any]]:
         """Wrap messages with provenance tags via the scanner envelope.
 
-        Returns messages unchanged when killswitch is active or scanner absent.
+        Returns messages unchanged when scanner is absent.
         """
-        if killswitch.is_active():
-            return messages
-
         if self._scanner is None:
             return messages
 

@@ -73,7 +73,7 @@ class ScannerConfig(BaseModel):
     outbound_sanitizer: bool = True
     sensitivity: float = 0.5
     block_on_threat: bool = False
-    confidence_threshold: float = 0.7
+    confidence_threshold: float = 0.8
     signatures: ScannerSignaturesConfig = Field(default_factory=ScannerSignaturesConfig)
     llm_guard: LLMGuardConfig = Field(default_factory=LLMGuardConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
@@ -89,13 +89,13 @@ class BudgetLimitsConfig(BaseModel):
     max_write_tool_calls: int = 20
     max_posts_messages: int = 5
     max_external_http_writes: int = 10
-    max_new_domains: int = 3
+    max_new_domains: int = 10
 
 
 class QuarantineTriggersConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    repeated_denied_writes: int = 5
-    new_domain_burst: int = 3
+    repeated_denied_writes: int = 50
+    new_domain_burst: int = 10
     tool_rate_spike_sigma: float = 3.0
     drift_score_threshold: float = 3.0
 
@@ -103,6 +103,7 @@ class QuarantineTriggersConfig(BaseModel):
 class BrokerConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     default_posture: str = "deny_write"
+    auto_register_unknown: bool = True
     budgets: BudgetLimitsConfig = Field(default_factory=BudgetLimitsConfig)
     quarantine_triggers: QuarantineTriggersConfig = Field(
         default_factory=QuarantineTriggersConfig,
@@ -283,6 +284,29 @@ class IntegrityConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Killswitch sub-models
+# ---------------------------------------------------------------------------
+
+class KillswitchConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    monitors: list[str] = Field(default_factory=list)   # URLs or "aegis-central"
+    ttl_seconds: int = 60
+
+
+# ---------------------------------------------------------------------------
+# Self-Integrity sub-models
+# ---------------------------------------------------------------------------
+
+class SelfIntegrityConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    check_interval_seconds: float = 5
+    on_tamper: str = "block"       # "exit" | "block" | "log"
+    watch_package: bool = False    # Watch aegis/ source files
+    watch_config: bool = True      # Watch the config file used at startup
+
+
+# ---------------------------------------------------------------------------
 # Modules toggle
 # ---------------------------------------------------------------------------
 
@@ -308,11 +332,11 @@ class AegisConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     mode: str = "enforce"
-    killswitch: bool = False
     agent_id: str = ""
     agent_name: str = ""
     agent_purpose: str = ""
     operator_id: str = ""
+    config_path: str = ""
     modules: dict[str, bool] = Field(default_factory=lambda: dict(_DEFAULT_MODULES))
     scanner: ScannerConfig = Field(default_factory=ScannerConfig)
     broker: BrokerConfig = Field(default_factory=BrokerConfig)
@@ -324,6 +348,8 @@ class AegisConfig(BaseModel):
     integrity: IntegrityConfig = Field(default_factory=IntegrityConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    killswitch: KillswitchConfig = Field(default_factory=KillswitchConfig)
+    self_integrity: SelfIntegrityConfig = Field(default_factory=SelfIntegrityConfig)
 
     def is_module_enabled(self, name: str) -> bool:
         return self.modules.get(name, False)
@@ -363,7 +389,6 @@ def _load_file(path: Path) -> dict:
 # Env var overrides: AEGIS_<KEY> for top-level, AEGIS_<SECTION>_<KEY> for nested
 _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
     ("AEGIS_MODE", "mode", None, str),
-    ("AEGIS_KILLSWITCH", "killswitch", None, lambda v: v.lower() in ("1", "true", "yes")),
     ("AEGIS_SCANNER_SENSITIVITY", "scanner", "sensitivity", float),
     ("AEGIS_SCANNER_CONFIDENCE_THRESHOLD", "scanner", "confidence_threshold", float),
     ("AEGIS_BROKER_DEFAULT_POSTURE", "broker", "default_posture", str),
@@ -404,16 +429,22 @@ def load_config(path: str | Path | None = None) -> AegisConfig:
     Environment variables (AEGIS_*) override file values.
     """
     raw: dict = {}
+    resolved_path: str = ""
 
     if path is not None:
         p = Path(path)
         if p.is_file():
             raw = _load_file(p)
+            resolved_path = str(p.resolve())
     else:
         discovered = _discover_config_file()
         if discovered is not None:
             raw = _load_file(discovered)
+            resolved_path = str(discovered.resolve())
 
     raw = _apply_env_overrides(raw)
 
-    return AegisConfig.model_validate(raw)
+    config = AegisConfig.model_validate(raw)
+    if resolved_path:
+        config.config_path = resolved_path
+    return config

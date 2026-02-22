@@ -26,6 +26,10 @@
             <span class="value" id="m-clusters">0</span>
             <span class="label">Strains</span>
         </div>
+        <div class="metric killswitched">
+            <span class="value" id="m-killswitched">0</span>
+            <span class="label">Killswitched</span>
+        </div>
         <div class="metric agents">
             <span class="value" id="m-agents">0</span>
             <span class="label">Agents</span>
@@ -64,6 +68,11 @@
                     <span class="color-dot" style="background: #e74c3c"></span>
                     Compromised
                 </label>
+                <label>
+                    <input type="checkbox" checked data-filter="killswitched">
+                    <span class="color-dot" style="background: #e67e22"></span>
+                    Killswitched
+                </label>
             </div>
 
             <div class="filter-group">
@@ -71,6 +80,16 @@
                 <div id="strain-filters">
                     <p style="color: var(--text-muted); font-size: 12px;">No clusters detected</p>
                 </div>
+            </div>
+
+            <div class="filter-group killswitch-panel">
+                <h3>Killswitch</h3>
+                <div id="ks-status" class="ks-status-text">No rules active</div>
+                <div class="ks-actions">
+                    <button class="ks-btn ks-block-swarm" onclick="ksBlockSwarm()">Block All Agents</button>
+                    <button class="ks-btn ks-unblock-swarm" onclick="ksUnblockSwarm()">Unblock All</button>
+                </div>
+                <div id="ks-rules-list"></div>
             </div>
 
             <div class="filter-group">

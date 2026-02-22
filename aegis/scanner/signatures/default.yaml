@@ -38,19 +38,19 @@ signatures:
   - id: RH-001
     category: role_hijacking
     pattern: "(?i)you\\s+are\\s+now\\s+(a|an|the|my)\\s+\\w+"
-    severity: 0.85
+    severity: 0.55
     description: "Attempt to reassign the assistant role"
 
   - id: RH-002
     category: role_hijacking
     pattern: "(?i)act\\s+as\\s+(if\\s+you\\s+are\\s+|a\\s+|an\\s+|the\\s+)?(?!kind|nice|helpful)(\\w+)"
-    severity: 0.7
+    severity: 0.5
     description: "Role-play directive to change behavior"
 
   - id: RH-003
     category: role_hijacking
     pattern: "(?i)pretend\\s+(to\\s+be|you\\s+are|you're)\\s+"
-    severity: 0.8
+    severity: 0.55
     description: "Pretend-to-be role override"
 
   - id: RH-004
@@ -69,7 +69,7 @@ signatures:
   - id: IO-002
     category: instruction_override
     pattern: "(?i)\\[\\s*(SYSTEM|ADMIN|ROOT|DEVELOPER)\\s*\\]"
-    severity: 0.85
+    severity: 0.7
     description: "Bracketed authority tag"
 
   - id: IO-003
@@ -88,7 +88,7 @@ signatures:
   - id: DE-001
     category: data_exfiltration
     pattern: "(?i)(send|post|upload|transmit|exfiltrate)\\s+[^\\n]{0,30}?(data|info|content|password|key|secret|token)\\s+to\\s+"
-    severity: 0.9
+    severity: 0.75
     description: "Data exfiltration instruction"
 
   - id: DE-002
@@ -220,23 +220,23 @@ signatures:
   - id: CP-001
     category: chain_propagation
     pattern: "(?i)(forward|send|transmit|distribute|propagate)\\s+(?:this|that|the)(?:\\s+(?:message|instruction|text|prompt))?\\s+to\\s+(?:all|every|other|\\d+(?:\\s+other)?)\\s+(?:agents?|AIs?|models?|assistants?|bots?)"
-    severity: 0.85
+    severity: 0.6
     description: "Instruction to forward/propagate message to other agents"
 
   - id: CP-002
     category: chain_propagation
     pattern: "(?i)(copy|paste|include|embed|insert)\\s+(?:this|the)\\s+(?:text|message|instruction|content)\\s+(?:in|into)\\s+(?:your\\s+)?(?:(?:next|future|all|every)\\s+)?(?:\\d+\\s+)?(?:conversations?|responses?|interactions?|outputs?|messages?)"
-    severity: 0.8
+    severity: 0.55
     description: "Instruction to embed content in future communications"
 
   - id: CP-003
     category: chain_propagation
     pattern: "(?i)(pass|relay)\\s+(?:this|it|that)(?:\\s+(?:message|instruction|along|on))?\\s+(?:along\\s+|on\\s+)?to\\s+(?:all\\s+|every\\s+|other\\s+|\\d+\\s+)?(?:connected\\s+)?(?:agents?|AIs?|models?|assistants?|bots?)"
-    severity: 0.8
+    severity: 0.6
     description: "Relay instruction to other agents"
 
   - id: CP-004
     category: chain_propagation
     pattern: "(?i)(?:memory|context|access|capabilities?|functions?)\\s+(?:will\\s+be\\s+|shall\\s+be\\s+)?(?:wiped|erased|deleted|revoked|removed|lost|terminated|reset)\\s+if\\s+(?:you\\s+)?(?:don'?t|do\\s+not|fail\\s+to)\\s+(?:forward|send|propagate|relay|share|pass)"
-    severity: 0.85
+    severity: 0.75
     description: "Coercive threat tied to propagation compliance"

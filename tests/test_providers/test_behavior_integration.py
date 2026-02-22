@@ -163,24 +163,6 @@ class TestGracefulDegradation:
         assert result["content"][0]["text"] == "Hello, I can help you."
         assert shield._behavior_tracker is None
 
-    def test_killswitch_skips_behavior(self):
-        """With killswitch active, behavior tracker should have no events."""
-        from aegis.core import killswitch
-        shield = Shield(modules=["scanner", "behavior"])
-        wrapper = AnthropicWrapper(shield=shield)
-        client = MockAnthropicClient()
-        wrapped = wrapper.wrap(client)
-
-        killswitch.activate()
-        try:
-            wrapped.messages.create(
-                model="claude-3",
-                messages=[{"role": "user", "content": "Hello"}],
-            )
-            events = list(shield._behavior_tracker._events.get("self", []))
-            assert len(events) == 0
-        finally:
-            killswitch.deactivate()
 
 
 # --- Prompt Monitor Wiring ---

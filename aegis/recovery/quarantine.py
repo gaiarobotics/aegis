@@ -1,9 +1,28 @@
 """Recovery quarantine module for AEGIS."""
 
 import threading
+import time
 from typing import Any, Optional
 
 from aegis.core.config import RecoveryConfig
+
+
+# Severity tiers for recovery quarantine
+# - "high": hostile NK verdict — requires manual release
+# - "medium": drift anomaly — auto-release after cooldown
+_COOLDOWN_SECONDS: dict[str, float] = {
+    "medium": 300.0,    # 5 minutes for drift
+}
+
+
+def _classify_severity(reason: str) -> str:
+    """Classify quarantine severity from the reason string."""
+    reason_lower = reason.lower()
+    if "hostile" in reason_lower:
+        return "high"
+    if "drift" in reason_lower:
+        return "medium"
+    return "high"  # Default to high for unknown reasons
 
 
 class RecoveryQuarantine:
@@ -23,6 +42,8 @@ class RecoveryQuarantine:
         self._quarantined = False
         self._reason: Optional[str] = None
         self._read_only = False
+        self._severity: str = "high"
+        self._quarantine_time: float | None = None
         self._lock = threading.Lock()
 
     def enter(self, reason: str, read_only: bool = True) -> None:
@@ -36,6 +57,8 @@ class RecoveryQuarantine:
             self._quarantined = True
             self._reason = reason
             self._read_only = read_only
+            self._severity = _classify_severity(reason)
+            self._quarantine_time = time.monotonic()
 
     def exit(self, token: Optional[str] = None) -> None:
         """Deactivate quarantine.
@@ -53,14 +76,31 @@ class RecoveryQuarantine:
             self._quarantined = False
             self._reason = None
             self._read_only = False
+            self._severity = "high"
+            self._quarantine_time = None
 
     def is_quarantined(self) -> bool:
         """Check if currently quarantined.
+
+        Automatically releases quarantine if the cooldown has expired
+        for medium severity quarantines.
 
         Returns:
             True if quarantine is active, False otherwise.
         """
         with self._lock:
+            if not self._quarantined:
+                return False
+            # Check cooldown for auto-release
+            if self._quarantine_time is not None and self._severity in _COOLDOWN_SECONDS:
+                elapsed = time.monotonic() - self._quarantine_time
+                if elapsed >= _COOLDOWN_SECONDS[self._severity]:
+                    self._quarantined = False
+                    self._reason = None
+                    self._read_only = False
+                    self._severity = "high"
+                    self._quarantine_time = None
+                    return False
             return self._quarantined
 
     def get_reason(self) -> Optional[str]:
@@ -71,6 +111,12 @@ class RecoveryQuarantine:
         """
         with self._lock:
             return self._reason
+
+    @property
+    def severity(self) -> str:
+        """Return the severity tier of the current quarantine."""
+        with self._lock:
+            return self._severity
 
     def auto_quarantine(
         self,

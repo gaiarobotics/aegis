@@ -8,8 +8,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from aegis.core import killswitch
-
 # Patterns that should be redacted
 _REDACT_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9\-]{10,}"),  # Anthropic API keys (with hyphens)
@@ -44,13 +42,7 @@ class TelemetryLogger:
         self._log_path = Path(log_path)
 
     def log_event(self, event_type: str, **data: Any) -> None:
-        """Log a telemetry event.
-
-        No-op when killswitch is active.
-        """
-        if killswitch.is_active():
-            return
-
+        """Log a telemetry event."""
         event = {
             "timestamp": time.time(),
             "event_type": event_type,

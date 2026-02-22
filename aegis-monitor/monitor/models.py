@@ -17,6 +17,7 @@ class AgentNode:
     trust_score: float = 0.0
     is_compromised: bool = False
     is_quarantined: bool = False
+    is_killswitched: bool = False
     last_heartbeat: float = field(default_factory=time.time)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -56,3 +57,30 @@ class CompromiseRecord:
     nk_verdict: str = ""
     recommended_action: str = "quarantine"
     timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class KillswitchRule:
+    """A killswitch rule that can block agents by scope."""
+
+    rule_id: str = ""
+    scope: str = "agent"      # "swarm", "operator", "agent"
+    target: str = ""           # agent_id or operator_id (ignored for swarm)
+    blocked: bool = True
+    reason: str = ""
+    created_at: float = field(default_factory=time.time)
+    created_by: str = ""
+
+
+@dataclass
+class QuarantineRule:
+    """A quarantine rule that controls agent quarantine state."""
+
+    rule_id: str = ""
+    scope: str = "agent"       # "swarm", "operator", "agent"
+    target: str = ""           # agent_id or operator_id (ignored for swarm)
+    quarantined: bool = True
+    reason: str = ""
+    severity: str = "low"      # "low", "medium", "high"
+    created_at: float = field(default_factory=time.time)
+    created_by: str = ""

@@ -26,6 +26,8 @@ class AnthropicWrapper(BaseWrapper):
         def intercept_create(*args: Any, **kwargs: Any) -> Any:
             from aegis.shield import ThreatBlockedError
 
+            shield.check_killswitch()
+
             messages = kwargs.get("messages", [])
 
             # 1. Scan user input

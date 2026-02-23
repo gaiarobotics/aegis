@@ -29,7 +29,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     cfg = MonitorConfig.load()
     app.state.config = cfg
-    app.state.db = Database(cfg.database_path)
+    app.state.db = Database(cfg.effective_database_url)
     app.state.graph = AgentGraph()
     app.state.r0 = R0Estimator()
     app.state.clusterer = ThreatClusterer()

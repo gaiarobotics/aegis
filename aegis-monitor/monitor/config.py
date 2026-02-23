@@ -17,10 +17,16 @@ class MonitorConfig:
     host: str = "0.0.0.0"
     port: int = 8080
     database_path: str = "monitor.db"
+    database_url: str = ""  # postgresql:// URL — takes priority over database_path
     api_keys: list[str] = field(default_factory=list)
     agent_public_keys: dict[str, bytes] = field(default_factory=dict)
     clustering_enabled: bool = False
     r0_window_hours: int = 24
+
+    @property
+    def effective_database_url(self) -> str:
+        """Return ``database_url`` if set, otherwise ``database_path``."""
+        return self.database_url or self.database_path
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "MonitorConfig":
@@ -46,6 +52,7 @@ class MonitorConfig:
             host=raw.get("host", "0.0.0.0"),
             port=int(raw.get("port", 8080)),
             database_path=raw.get("database_path", "monitor.db"),
+            database_url=raw.get("database_url", ""),
             api_keys=raw.get("api_keys", []),
             clustering_enabled=bool(raw.get("clustering_enabled", False)),
             r0_window_hours=int(raw.get("r0_window_hours", 24)),
@@ -58,6 +65,8 @@ class MonitorConfig:
             cfg.port = int(v)
         if v := os.environ.get("MONITOR_DATABASE_PATH"):
             cfg.database_path = v
+        if v := os.environ.get("MONITOR_DATABASE_URL"):
+            cfg.database_url = v
         if v := os.environ.get("MONITOR_API_KEYS"):
             cfg.api_keys = [k.strip() for k in v.split(",") if k.strip()]
         if v := os.environ.get("MONITOR_CLUSTERING_ENABLED"):

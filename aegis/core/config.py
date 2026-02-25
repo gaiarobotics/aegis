@@ -263,6 +263,8 @@ class MonitoringConfig(BaseModel):
     timeout_seconds: float = 10
     queue_max_size: int = 1000
     quarantine_poll_interval: float = 30  # seconds
+    threat_intel_poll_interval: float = 30  # seconds
+    contagion_similarity_threshold: float = 0.85
 
 
 # ---------------------------------------------------------------------------

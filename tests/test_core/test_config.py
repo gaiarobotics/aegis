@@ -212,3 +212,11 @@ class TestPydanticFeatures:
             "identity": {"trust": {"interaction_min_interval": 0.05}},
         })
         assert cfg.identity.trust.interaction_min_interval == 0.05
+
+
+class TestMonitoringConfigThreatIntel:
+    def test_threat_intel_defaults(self):
+        from aegis.core.config import MonitoringConfig
+        cfg = MonitoringConfig()
+        assert cfg.threat_intel_poll_interval == 30
+        assert cfg.contagion_similarity_threshold == 0.85

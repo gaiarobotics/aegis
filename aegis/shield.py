@@ -128,6 +128,7 @@ class Shield:
         self._integrity_monitor = None
         self._killswitch = None
         self._remote_quarantine = None
+        self._remote_threat_intel = None
         self._self_integrity = None
         self._self_integrity_blocked = False
 
@@ -135,6 +136,7 @@ class Shield:
         self._init_monitoring()
         self._init_killswitch()
         self._init_remote_quarantine()
+        self._init_remote_threat_intel()
         self._init_self_integrity()
 
     def _init_modules(self) -> None:
@@ -358,6 +360,22 @@ class Shield:
         except Exception:
             logger.debug("Remote quarantine init failed", exc_info=True)
 
+    def _init_remote_threat_intel(self) -> None:
+        """Start threat intelligence polling when monitoring is enabled."""
+        mon_cfg = self._config.monitoring
+        if not mon_cfg.enabled or not mon_cfg.service_url:
+            return
+        try:
+            from aegis.core.remote_threat_intel import RemoteThreatIntel
+            self._remote_threat_intel = RemoteThreatIntel(
+                service_url=mon_cfg.service_url,
+                api_key=mon_cfg.api_key,
+                poll_interval=mon_cfg.threat_intel_poll_interval,
+            )
+            self._remote_threat_intel.start()
+        except Exception:
+            logger.debug("Remote threat intel init failed", exc_info=True)
+
     def _init_self_integrity(self) -> None:
         """Initialize self-integrity watcher if enabled."""
         si_cfg = self._config.self_integrity
@@ -457,7 +475,7 @@ class Shield:
         """Access the broker module (may be None)."""
         return self._broker
 
-    def scan_input(self, text: str) -> ScanResult:
+    def scan_input(self, text: str, source_agent_id: str | None = None) -> ScanResult:
         """Scan input text through the pipeline.
 
         Pipeline:
@@ -556,6 +574,59 @@ class Shield:
                 self._content_hash_tracker.update(text, profile=profile)
             except Exception:
                 logger.debug("Content hash update failed", exc_info=True)
+
+        # Pre-emptive contagion check (threat intelligence)
+        if self._remote_threat_intel is not None:
+            try:
+                contagion_hit = False
+                contagion_source = ""
+                contagion_score = 0.0
+
+                # Lever 1: sender reputation
+                if source_agent_id:
+                    if self._remote_threat_intel.is_agent_compromised(source_agent_id):
+                        contagion_hit = True
+                        contagion_source = "compromised_sender"
+                        contagion_score = 1.0
+                    elif self._remote_threat_intel.is_agent_quarantined(source_agent_id):
+                        contagion_hit = True
+                        contagion_source = "quarantined_sender"
+                        contagion_score = 1.0
+
+                # Lever 2: content hash similarity
+                if not contagion_hit and self._content_hash_tracker is not None:
+                    hashes = self._content_hash_tracker.get_hashes()
+                    check_hash = hashes.get("style_hash") or hashes.get("content_hash", "")
+                    if check_hash:
+                        threshold = self._config.monitoring.contagion_similarity_threshold
+                        suspicious, sim_score = self._remote_threat_intel.check_hash(
+                            check_hash, threshold=threshold,
+                        )
+                        if suspicious:
+                            contagion_hit = True
+                            contagion_source = "content_hash"
+                            contagion_score = sim_score
+
+                if contagion_hit:
+                    blocked = self._mode == "enforce"
+                    result.details["contagion"] = {
+                        "source": contagion_source,
+                        "score": contagion_score,
+                        "blocked": blocked,
+                    }
+                    result.is_threat = True
+                    result.threat_score = max(result.threat_score, contagion_score)
+
+                    if blocked:
+                        raise ThreatBlockedError(
+                            result,
+                            f"Pre-emptive contagion block: {contagion_source} "
+                            f"(score={contagion_score:.3f})",
+                        )
+            except ThreatBlockedError:
+                raise
+            except Exception:
+                logger.debug("Pre-emptive contagion check failed", exc_info=True)
 
         # Log telemetry
         self._telemetry.log_event(

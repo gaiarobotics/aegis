@@ -165,6 +165,7 @@ class MonitoringClient:
         edges: list[dict[str, Any]] | None = None,
         style_hash: str = "",
         content_hash: str = "",
+        topic_velocity: float = 0.0,
     ) -> None:
         """Send a heartbeat. No-op if disabled."""
         if not self._enabled:
@@ -179,6 +180,7 @@ class MonitoringClient:
                 edges=edges or [],
                 style_hash=style_hash,
                 content_hash=content_hash,
+                topic_velocity=topic_velocity,
             )
             self._sign_and_send(report, "/heartbeat")
         except Exception:
@@ -222,6 +224,7 @@ class MonitoringClient:
                 self.send_heartbeat(
                     style_hash=hashes.get("style_hash", ""),
                     content_hash=hashes.get("content_hash", ""),
+                    topic_velocity=float(hashes.get("topic_velocity", 0.0)),
                 )
                 self._flush_queue()
             except Exception:

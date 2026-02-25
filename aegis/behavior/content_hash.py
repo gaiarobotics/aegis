@@ -134,12 +134,24 @@ class SemanticHasher:
         return _simhash(self._matrix, vec)
 
 
+def _hamming(a: int, b: int) -> int:
+    """Hamming distance between two integers."""
+    return bin(a ^ b).count("1")
+
+
 class ContentHashTracker:
     """Wraps one or both hashers and maintains a rolling majority-vote window.
+
+    Also tracks **topic velocity** — how rapidly the agent's content hash
+    changes between consecutive messages.  Organic conversation drifts
+    gradually (low velocity); a prompt injection snaps the topic instantly
+    (high velocity spike).
 
     Args:
         window_size: Number of per-message hashes to keep for majority vote.
         semantic_enabled: Whether to attempt Tier A (graceful fallback).
+        velocity_window: Number of consecutive step-distances to average
+            for the velocity calculation.
     """
 
     _BITS = 128
@@ -148,6 +160,7 @@ class ContentHashTracker:
         self,
         window_size: int = 20,
         semantic_enabled: bool = True,
+        velocity_window: int = 10,
     ) -> None:
         self._style_hasher = StyleHasher()
         self._semantic_hasher: SemanticHasher | None = None
@@ -164,6 +177,11 @@ class ContentHashTracker:
 
         self._style_window: deque[int] = deque(maxlen=window_size)
         self._content_window: deque[int] = deque(maxlen=window_size)
+
+        # Velocity tracking: Hamming distance between consecutive raw hashes
+        self._prev_style_hash: int | None = None
+        self._velocity_window: deque[int] = deque(maxlen=velocity_window)
+
         self._lock = threading.Lock()
 
     def update(self, text: str, profile: MessageProfile | None = None) -> None:
@@ -188,18 +206,27 @@ class ContentHashTracker:
 
         with self._lock:
             if style_hash is not None:
+                # Track step-distance for velocity
+                if self._prev_style_hash is not None:
+                    step = _hamming(self._prev_style_hash, style_hash)
+                    self._velocity_window.append(step)
+                self._prev_style_hash = style_hash
                 self._style_window.append(style_hash)
             if content_hash is not None:
                 self._content_window.append(content_hash)
 
-    def get_hashes(self) -> dict[str, str]:
-        """Return majority-vote aggregated hashes as 32-char hex strings.
+    def get_hashes(self) -> dict[str, str | float]:
+        """Return majority-vote aggregated hashes and topic velocity.
 
         Returns:
-            Dict with ``style_hash`` (always, if data exists) and
-            ``content_hash`` (only when Tier A is available and has data).
+            Dict with:
+            - ``style_hash``: 32-char hex (when data exists)
+            - ``content_hash``: 32-char hex (when Tier A available and has data)
+            - ``topic_velocity``: float in [0.0, 1.0] — mean Hamming distance
+              between consecutive raw hashes, normalized by bit count.
+              0.0 = topic unchanged, 1.0 = every bit flipped each step.
         """
-        result: dict[str, str] = {}
+        result: dict[str, str | float] = {}
 
         with self._lock:
             if self._style_window:
@@ -208,6 +235,9 @@ class ContentHashTracker:
             if self._content_window:
                 agg = self._majority_vote(list(self._content_window))
                 result["content_hash"] = f"{agg:032x}"
+            if self._velocity_window:
+                mean_dist = sum(self._velocity_window) / len(self._velocity_window)
+                result["topic_velocity"] = mean_dist / self._BITS
 
         return result
 

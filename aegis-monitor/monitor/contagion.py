@@ -193,12 +193,26 @@ class TopicClusterer:
 class ContagionDetector:
     """Detects contagion spread by comparing hashes against known-compromised agents.
 
-    When an agent's hash is very similar to a compromised agent's hash
-    (similarity >= *alert_threshold*), a contagion alert is raised.
+    Combines two signals:
+
+    1. **Hash proximity** — cosine-derived similarity between the agent's
+       current content hash and the nearest known-compromised hash.
+    2. **Topic velocity** — how abruptly the agent's topic changed.  A
+       prompt injection snaps the topic instantly (high velocity), while
+       organic dialogue drifts gradually (low velocity).
+
+    The composite score amplifies proximity when velocity is high:
+    ``composite = proximity * (1 + velocity_weight * velocity)``,
+    clamped to [0, 1].
     """
 
-    def __init__(self, alert_threshold: float = 0.85) -> None:
+    def __init__(
+        self,
+        alert_threshold: float = 0.85,
+        velocity_weight: float = 0.5,
+    ) -> None:
         self._alert_threshold = alert_threshold
+        self._velocity_weight = velocity_weight
         self._compromised: dict[str, int] = {}  # agent_id -> hash int
         self._bits = 128
 
@@ -225,3 +239,33 @@ class ContagionDetector:
                 min_dist = d
 
         return 1.0 - (min_dist / self._bits)
+
+    def check_with_velocity(
+        self,
+        agent_id: str,
+        hash_hex: str,
+        topic_velocity: float = 0.0,
+    ) -> float:
+        """Return a composite contagion score that factors in topic velocity.
+
+        A high-velocity jump into a compromised-looking cluster is far more
+        suspicious than gradually drifting near one.  The composite score
+        amplifies hash proximity by the velocity:
+
+            composite = proximity * (1 + velocity_weight * velocity)
+
+        Clamped to [0.0, 1.0].
+
+        Args:
+            agent_id: The agent being checked.
+            hash_hex: The agent's current content hash (32-char hex).
+            topic_velocity: Rate of topic change in [0.0, 1.0].
+
+        Returns:
+            Composite contagion score in [0.0, 1.0].
+        """
+        proximity = self.check(agent_id, hash_hex)
+        if proximity == 0.0:
+            return 0.0
+        composite = proximity * (1.0 + self._velocity_weight * topic_velocity)
+        return min(composite, 1.0)

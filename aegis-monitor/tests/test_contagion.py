@@ -286,3 +286,76 @@ class TestContagionDetector:
         cd = ContagionDetector()
         cd.mark_compromised("bad-agent", "")
         assert cd.check("agent-1", "a" * 32) == 0.0
+
+
+# ------------------------------------------------------------------
+# ContagionDetector — velocity-aware scoring
+# ------------------------------------------------------------------
+
+class TestContagionDetectorVelocity:
+    def test_velocity_amplifies_proximity(self):
+        """High velocity amplifies the proximity score."""
+        cd = ContagionDetector(alert_threshold=0.85, velocity_weight=0.5)
+        cd.mark_compromised("bad-agent", "00000000000000000000000000000000")
+
+        # Hash that's somewhat close — proximity alone might be below threshold
+        # Pick a hash with ~20 bits different → proximity = 1 - 20/128 ≈ 0.844
+        test_hash = "00000000000000000000000000f0f0f0"
+        h_dist = hamming_distance(hex_to_int("0" * 32), hex_to_int(test_hash))
+
+        score_no_vel = cd.check_with_velocity("agent-1", test_hash, topic_velocity=0.0)
+        score_hi_vel = cd.check_with_velocity("agent-1", test_hash, topic_velocity=1.0)
+
+        # Without velocity, composite equals raw proximity
+        assert score_no_vel == pytest.approx(cd.check("agent-1", test_hash))
+        # With velocity, composite should be higher
+        assert score_hi_vel > score_no_vel, (
+            f"High velocity should amplify: no_vel={score_no_vel}, hi_vel={score_hi_vel}"
+        )
+
+    def test_velocity_zero_equals_raw_proximity(self):
+        """Zero velocity produces the same score as check()."""
+        cd = ContagionDetector(velocity_weight=0.5)
+        cd.mark_compromised("bad-agent", "a" * 32)
+
+        raw = cd.check("agent-1", "a" * 32)
+        composite = cd.check_with_velocity("agent-1", "a" * 32, topic_velocity=0.0)
+        assert composite == pytest.approx(raw)
+
+    def test_velocity_clamped_to_one(self):
+        """Composite score never exceeds 1.0."""
+        cd = ContagionDetector(velocity_weight=0.5)
+        cd.mark_compromised("bad-agent", "a" * 32)
+
+        # Identical hash → proximity = 1.0, high velocity
+        score = cd.check_with_velocity("agent-1", "a" * 32, topic_velocity=1.0)
+        assert score <= 1.0
+
+    def test_velocity_no_compromised_still_zero(self):
+        """No compromised hashes → score 0.0 regardless of velocity."""
+        cd = ContagionDetector(velocity_weight=0.5)
+        score = cd.check_with_velocity("agent-1", "a" * 32, topic_velocity=1.0)
+        assert score == 0.0
+
+    def test_velocity_pushes_borderline_over_threshold(self):
+        """A borderline proximity score crosses the threshold with high velocity."""
+        cd = ContagionDetector(alert_threshold=0.85, velocity_weight=0.5)
+        cd.mark_compromised("bad-agent", "00000000000000000000000000000000")
+
+        # Find a hash that gives proximity just below threshold
+        # 20 bits different → proximity = 1 - 20/128 = 0.84375 (just below 0.85)
+        # We need exactly 20 bits set. 0xfffff = 20 bits.
+        test_hash = f"{'0' * 27}fffff"  # 20 bits differ
+        proximity = cd.check("agent-1", test_hash)
+
+        # Without velocity: below threshold
+        score_no_vel = cd.check_with_velocity("agent-1", test_hash, topic_velocity=0.0)
+        assert score_no_vel < cd._alert_threshold, (
+            f"Proximity alone ({score_no_vel}) should be below threshold"
+        )
+
+        # With high velocity: pushed above threshold
+        score_hi_vel = cd.check_with_velocity("agent-1", test_hash, topic_velocity=1.0)
+        assert score_hi_vel >= cd._alert_threshold, (
+            f"Velocity-boosted score ({score_hi_vel}) should cross threshold"
+        )

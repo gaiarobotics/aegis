@@ -258,9 +258,12 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     contagion_detector: ContagionDetector = app.state.contagion_detector
     hash_for_analysis = content_hash or style_hash
+    topic_velocity = data.get("topic_velocity", 0.0)
     if hash_for_analysis:
         topic_clusterer.update(agent_id, hash_for_analysis)
-        score = contagion_detector.check(agent_id, hash_for_analysis)
+        score = contagion_detector.check_with_velocity(
+            agent_id, hash_for_analysis, topic_velocity=topic_velocity,
+        )
         if score >= contagion_detector._alert_threshold:
             db.insert_event(StoredEvent(
                 event_id=str(uuid.uuid4()),
@@ -270,6 +273,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
                 timestamp=time.time(),
                 payload={
                     "contagion_score": score,
+                    "topic_velocity": topic_velocity,
                     "hash": hash_for_analysis,
                 },
             ))
@@ -277,6 +281,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
                 "type": "contagion_alert",
                 "agent_id": agent_id,
                 "contagion_score": score,
+                "topic_velocity": topic_velocity,
             })
 
     await _broadcast(app.state, {"type": "heartbeat", "agent_id": agent_id})

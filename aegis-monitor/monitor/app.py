@@ -362,6 +362,34 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     }
 
 
+@app.get("/api/v1/threat-intel")
+async def get_threat_intel(_key: str = Depends(verify_api_key)):
+    """Return threat intelligence for agent-side pre-emptive filtering."""
+    graph: AgentGraph = app.state.graph
+    contagion_detector: ContagionDetector = app.state.contagion_detector
+
+    graph_state = graph.get_graph_state()
+
+    compromised_agents = [
+        n["id"] for n in graph_state["nodes"] if n["is_compromised"]
+    ]
+    quarantined_agents = [
+        n["id"] for n in graph_state["nodes"] if n["is_quarantined"]
+    ]
+
+    # Serialize compromised hashes from contagion detector
+    compromised_hashes = [
+        f"{h:032x}" for h in contagion_detector._compromised.values()
+    ]
+
+    return {
+        "compromised_agents": compromised_agents,
+        "compromised_hashes": compromised_hashes,
+        "quarantined_agents": quarantined_agents,
+        "generated_at": time.time(),
+    }
+
+
 @app.get("/api/v1/trust/{agent_id}")
 async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
     db: Database = app.state.db

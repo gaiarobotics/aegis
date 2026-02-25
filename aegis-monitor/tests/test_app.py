@@ -156,3 +156,61 @@ class TestAuth:
         app.state.config.api_keys = ["valid-key"]
         resp = client.get("/api/v1/graph")
         assert resp.status_code == 401
+
+
+class TestThreatIntel:
+    def test_empty_threat_intel(self, client):
+        resp = client.get("/api/v1/threat-intel")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["compromised_agents"] == []
+        assert data["compromised_hashes"] == []
+        assert data["quarantined_agents"] == []
+        assert "generated_at" in data
+
+    def test_compromised_agent_in_threat_intel(self, client):
+        # Register agent then mark compromised
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "victim-1",
+            "trust_tier": 2,
+            "content_hash": "abcdef01" * 4,
+        })
+        client.post("/api/v1/reports/compromise", json={
+            "agent_id": "reporter-1",
+            "compromised_agent_id": "victim-1",
+        })
+        resp = client.get("/api/v1/threat-intel")
+        data = resp.json()
+        assert "victim-1" in data["compromised_agents"]
+
+    def test_compromised_hash_in_threat_intel(self, client):
+        # Register agent with a content hash, then compromise it
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "victim-1",
+            "trust_tier": 2,
+            "content_hash": "abcdef01" * 4,
+        })
+        client.post("/api/v1/reports/compromise", json={
+            "agent_id": "reporter-1",
+            "compromised_agent_id": "victim-1",
+        })
+        resp = client.get("/api/v1/threat-intel")
+        data = resp.json()
+        assert len(data["compromised_hashes"]) >= 1
+
+    def test_quarantined_agent_in_threat_intel(self, client):
+        # Register agent then quarantine it
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "q-agent",
+            "trust_tier": 2,
+        })
+        client.post("/api/v1/quarantine/rules", json={
+            "scope": "agent",
+            "target": "q-agent",
+            "quarantined": True,
+            "reason": "test",
+            "severity": "high",
+        })
+        resp = client.get("/api/v1/threat-intel")
+        data = resp.json()
+        assert "q-agent" in data["quarantined_agents"]

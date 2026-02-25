@@ -42,6 +42,7 @@ class MonitoringClient:
         agent_id: str = "",
         operator_id: str = "",
         keypair: Any = None,
+        content_hash_provider: Any = None,
     ) -> None:
         self._config = config
         self._enabled = config.enabled
@@ -62,6 +63,7 @@ class MonitoringClient:
         self._agent_id = agent_id
         self._operator_id = operator_id
         self._keypair = keypair
+        self._content_hash_provider = content_hash_provider
 
         self._queue: deque[dict[str, Any]] = deque(maxlen=self._queue_max)
         self._queue_lock = threading.Lock()
@@ -161,6 +163,8 @@ class MonitoringClient:
         trust_score: float = 0.0,
         is_quarantined: bool = False,
         edges: list[dict[str, Any]] | None = None,
+        style_hash: str = "",
+        content_hash: str = "",
     ) -> None:
         """Send a heartbeat. No-op if disabled."""
         if not self._enabled:
@@ -173,6 +177,8 @@ class MonitoringClient:
                 trust_score=trust_score,
                 is_quarantined=is_quarantined,
                 edges=edges or [],
+                style_hash=style_hash,
+                content_hash=content_hash,
             )
             self._sign_and_send(report, "/heartbeat")
         except Exception:
@@ -207,7 +213,16 @@ class MonitoringClient:
         """Periodically send heartbeats and flush the offline queue."""
         while not self._stop_event.is_set():
             try:
-                self.send_heartbeat()
+                hashes: dict[str, str] = {}
+                if self._content_hash_provider is not None:
+                    try:
+                        hashes = self._content_hash_provider()
+                    except Exception:
+                        logger.debug("Content hash provider failed", exc_info=True)
+                self.send_heartbeat(
+                    style_hash=hashes.get("style_hash", ""),
+                    content_hash=hashes.get("content_hash", ""),
+                )
                 self._flush_queue()
             except Exception:
                 logger.debug("Heartbeat loop error", exc_info=True)

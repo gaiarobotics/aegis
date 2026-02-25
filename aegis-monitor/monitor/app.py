@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from monitor.auth import verify_api_key
 from monitor.clustering import ThreatClusterer
 from monitor.config import MonitorConfig
+from monitor.contagion import ContagionDetector, TopicClusterer as TopicHashClusterer
 from monitor.db import Database
 from monitor.epidemiology import R0Estimator
 from monitor.graph import AgentGraph
@@ -34,6 +35,8 @@ async def lifespan(app: FastAPI):
     app.state.r0 = R0Estimator()
     app.state.clusterer = ThreatClusterer()
     app.state.ws_clients: set[WebSocket] = set()
+    app.state.topic_clusterer = TopicHashClusterer()
+    app.state.contagion_detector = ContagionDetector()
 
     # Load existing compromise records into R0 estimator
     records = app.state.db.get_compromises()
@@ -119,6 +122,13 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         timestamp=record.timestamp,
         payload=data,
     ))
+
+    # Mark content hash as compromised for contagion detection
+    contagion_detector: ContagionDetector = app.state.contagion_detector
+    node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
+    comp_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
+    if comp_hash:
+        contagion_detector.mark_compromised(record.compromised_agent_id, comp_hash)
 
     at_risk = graph.get_at_risk_agents(record.compromised_agent_id)
 
@@ -206,6 +216,15 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         edges=edges,
     )
 
+    # Extract content hashes
+    style_hash = data.get("style_hash", "")
+    content_hash = data.get("content_hash", "")
+    metadata: dict[str, Any] = {}
+    if style_hash:
+        metadata["style_hash"] = style_hash
+    if content_hash:
+        metadata["content_hash"] = content_hash
+
     # Persist
     db.upsert_agent(AgentNode(
         agent_id=agent_id,
@@ -214,6 +233,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         trust_score=data.get("trust_score", 0.0),
         is_quarantined=data.get("is_quarantined", False),
         last_heartbeat=time.time(),
+        metadata=metadata,
     ))
     from monitor.models import AgentEdge
     for edge in edges:
@@ -224,6 +244,40 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
             last_seen=edge.get("last_seen", time.time()),
             message_count=edge.get("message_count", 0),
         ))
+
+    # Store hashes in graph node attributes
+    if style_hash or content_hash:
+        node_data = graph.graph.nodes.get(agent_id)
+        if node_data is not None:
+            if style_hash:
+                node_data["style_hash"] = style_hash
+            if content_hash:
+                node_data["content_hash"] = content_hash
+
+    # Topic clustering and contagion detection
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    contagion_detector: ContagionDetector = app.state.contagion_detector
+    hash_for_analysis = content_hash or style_hash
+    if hash_for_analysis:
+        topic_clusterer.update(agent_id, hash_for_analysis)
+        score = contagion_detector.check(agent_id, hash_for_analysis)
+        if score >= contagion_detector._alert_threshold:
+            db.insert_event(StoredEvent(
+                event_id=str(uuid.uuid4()),
+                event_type="contagion_alert",
+                agent_id=agent_id,
+                operator_id=data.get("operator_id", ""),
+                timestamp=time.time(),
+                payload={
+                    "contagion_score": score,
+                    "hash": hash_for_analysis,
+                },
+            ))
+            await _broadcast(app.state, {
+                "type": "contagion_alert",
+                "agent_id": agent_id,
+                "contagion_score": score,
+            })
 
     await _broadcast(app.state, {"type": "heartbeat", "agent_id": agent_id})
 
@@ -237,7 +291,14 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
 @app.get("/api/v1/graph")
 async def get_graph(_key: str = Depends(verify_api_key)):
     graph: AgentGraph = app.state.graph
-    return graph.get_graph_state()
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    graph_data = graph.get_graph_state()
+
+    cluster_colors = topic_clusterer.get_cluster_colors()
+    for node in graph_data["nodes"]:
+        node["topic_color"] = cluster_colors.get(node["id"], "")
+
+    return graph_data
 
 
 @app.get("/api/v1/metrics")

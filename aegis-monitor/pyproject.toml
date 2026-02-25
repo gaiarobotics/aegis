@@ -29,6 +29,7 @@ ml = [
     "sentence-transformers>=2.6",
     "umap-learn>=0.5",
     "hdbscan>=0.8",
+    "scikit-learn>=1.3",
 ]
 dev = [
     "pytest>=7.0",

@@ -201,6 +201,13 @@ class IsolationForestConfig(BaseModel):
     min_samples: int = 20
 
 
+class ContentHashConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    window_size: int = 20
+    semantic_enabled: bool = True  # attempt Tier A; graceful fallback if missing
+
+
 class BehaviorConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     window_size: int = 100
@@ -211,6 +218,7 @@ class BehaviorConfig(BaseModel):
     message_drift: MessageDriftConfig = Field(default_factory=MessageDriftConfig)
     prompt_monitor: PromptMonitorConfig = Field(default_factory=PromptMonitorConfig)
     isolation_forest: IsolationForestConfig = Field(default_factory=IsolationForestConfig)
+    content_hash: ContentHashConfig = Field(default_factory=ContentHashConfig)
 
 
 # ---------------------------------------------------------------------------

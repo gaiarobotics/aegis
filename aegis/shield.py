@@ -124,6 +124,7 @@ class Shield:
         self._message_drift_detector = None
         self._prompt_monitor = None
         self._isolation_forest = None
+        self._content_hash_tracker = None
         self._integrity_monitor = None
         self._killswitch = None
         self._self_integrity = None
@@ -192,6 +193,17 @@ class Shield:
                         )
                 except Exception:
                     logger.debug("IsolationForest init failed", exc_info=True)
+                # Content hash tracker (LSH fingerprinting)
+                try:
+                    from aegis.behavior.content_hash import ContentHashTracker
+                    ch_cfg = self._config.behavior.content_hash
+                    if ch_cfg.enabled:
+                        self._content_hash_tracker = ContentHashTracker(
+                            window_size=ch_cfg.window_size,
+                            semantic_enabled=ch_cfg.semantic_enabled,
+                        )
+                except Exception:
+                    logger.debug("Content hash tracker init failed", exc_info=True)
             except Exception:
                 logger.debug("Behavior module init failed", exc_info=True)
 
@@ -296,6 +308,7 @@ class Shield:
                 agent_id=self._config.agent_id,
                 operator_id=self._config.operator_id,
                 keypair=keypair,
+                content_hash_provider=self._get_content_hashes,
             )
 
             # Wire compromise callback
@@ -388,6 +401,15 @@ class Shield:
             )
         except Exception:
             logger.debug("Compromise report sending failed", exc_info=True)
+
+    def _get_content_hashes(self) -> dict[str, str]:
+        """Return current content hashes for heartbeat inclusion."""
+        if self._content_hash_tracker is None:
+            return {}
+        try:
+            return self._content_hash_tracker.get_hashes()
+        except Exception:
+            return {}
 
     @property
     def config(self) -> AegisConfig:
@@ -497,6 +519,17 @@ class Shield:
                         )
             except Exception:
                 logger.debug("Monitoring threat event reporting failed", exc_info=True)
+
+        # Content hash update
+        if self._content_hash_tracker is not None:
+            try:
+                profile = None
+                if self._message_drift_detector is not None:
+                    from aegis.behavior.message_drift import MessageDriftDetector
+                    profile = MessageDriftDetector.compute_profile(text)
+                self._content_hash_tracker.update(text, profile=profile)
+            except Exception:
+                logger.debug("Content hash update failed", exc_info=True)
 
         # Log telemetry
         self._telemetry.log_event(

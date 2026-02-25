@@ -203,6 +203,8 @@ class AgentHeartbeat(ReportBase):
     trust_score: float = 0.0
     is_quarantined: bool = False
     edges: list[dict[str, Any]] = field(default_factory=list)
+    style_hash: str = ""      # 32-char hex, always present when behavior enabled
+    content_hash: str = ""    # 32-char hex, present when embeddings installed
 
     def _extra_canonical_parts(self) -> list[str]:
         edge_repr = ";".join(
@@ -215,4 +217,6 @@ class AgentHeartbeat(ReportBase):
             str(self.trust_score),
             str(self.is_quarantined),
             edge_repr,
+            self.style_hash,
+            self.content_hash,
         ]

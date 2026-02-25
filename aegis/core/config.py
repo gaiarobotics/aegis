@@ -262,6 +262,7 @@ class MonitoringConfig(BaseModel):
     retry_backoff_seconds: float = 5
     timeout_seconds: float = 10
     queue_max_size: int = 1000
+    quarantine_poll_interval: float = 30  # seconds
 
 
 # ---------------------------------------------------------------------------

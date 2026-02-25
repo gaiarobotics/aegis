@@ -284,6 +284,29 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
                 "topic_velocity": topic_velocity,
             })
 
+            # Auto-quarantine the flagged agent
+            rule = QuarantineRule(
+                rule_id=str(uuid.uuid4()),
+                scope="agent",
+                target=agent_id,
+                quarantined=True,
+                reason=f"Contagion alert: score={score:.3f}, velocity={topic_velocity:.3f}",
+                severity="high",
+                created_at=time.time(),
+                created_by="contagion_detector",
+            )
+            db.insert_quarantine_rule(rule)
+            db.set_agent_quarantined(agent_id, True)
+            graph.mark_quarantined(agent_id, True)
+
+            await _broadcast(app.state, {
+                "type": "quarantine",
+                "agent_id": agent_id,
+                "quarantined": True,
+                "reason": rule.reason,
+                "source": "contagion_detector",
+            })
+
     await _broadcast(app.state, {"type": "heartbeat", "agent_id": agent_id})
 
     return {"status": "ok"}

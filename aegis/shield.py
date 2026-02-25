@@ -127,12 +127,14 @@ class Shield:
         self._content_hash_tracker = None
         self._integrity_monitor = None
         self._killswitch = None
+        self._remote_quarantine = None
         self._self_integrity = None
         self._self_integrity_blocked = False
 
         self._init_modules()
         self._init_monitoring()
         self._init_killswitch()
+        self._init_remote_quarantine()
         self._init_self_integrity()
 
     def _init_modules(self) -> None:
@@ -338,6 +340,24 @@ class Shield:
         except Exception:
             logger.debug("Remote killswitch init failed", exc_info=True)
 
+    def _init_remote_quarantine(self) -> None:
+        """Start quarantine polling when monitoring is enabled."""
+        mon_cfg = self._config.monitoring
+        if not mon_cfg.enabled or not mon_cfg.service_url:
+            return
+        try:
+            from aegis.core.remote_quarantine import RemoteQuarantine
+            self._remote_quarantine = RemoteQuarantine(
+                service_url=mon_cfg.service_url,
+                api_key=mon_cfg.api_key,
+                agent_id=self._config.agent_id,
+                operator_id=self._config.operator_id,
+                poll_interval=mon_cfg.quarantine_poll_interval,
+            )
+            self._remote_quarantine.start()
+        except Exception:
+            logger.debug("Remote quarantine init failed", exc_info=True)
+
     def _init_self_integrity(self) -> None:
         """Initialize self-integrity watcher if enabled."""
         si_cfg = self._config.self_integrity
@@ -371,19 +391,25 @@ class Shield:
 
     @property
     def is_blocked(self) -> bool:
-        """True if the remote killswitch or self-integrity is blocking inference."""
+        """True if the remote killswitch, quarantine, or self-integrity is blocking inference."""
         if self._self_integrity_blocked:
             return True
-        if self._killswitch is None:
-            return False
-        return self._killswitch.is_blocked()
+        if self._killswitch is not None and self._killswitch.is_blocked():
+            return True
+        if self._remote_quarantine is not None and self._remote_quarantine.is_quarantined():
+            return True
+        return False
 
     def check_killswitch(self) -> None:
-        """Raise InferenceBlockedError if remote killswitch or self-integrity block is active."""
+        """Raise InferenceBlockedError if remote killswitch, quarantine, or self-integrity block is active."""
         if self._self_integrity_blocked:
             raise InferenceBlockedError("AEGIS files tampered — inference blocked")
         if self._killswitch is not None and self._killswitch.is_blocked():
             raise InferenceBlockedError(self._killswitch.block_reason)
+        if self._remote_quarantine is not None and self._remote_quarantine.is_quarantined():
+            raise InferenceBlockedError(
+                f"Agent quarantined: {self._remote_quarantine.reason}"
+            )
 
     def _on_compromise_reported(self, agent_id: str) -> None:
         """Callback from TrustManager.report_compromise()."""

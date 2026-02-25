@@ -1,5 +1,7 @@
 """Tests for AEGIS Shield orchestrator."""
 
+import pytest
+
 from aegis.core.config import AegisConfig
 from aegis.shield import ActionResult, SanitizeResult, ScanResult, Shield
 
@@ -377,6 +379,48 @@ class TestShieldWrapDispatch:
             result = shield.wrap(client)
             mock_wrap.assert_called_once_with(client, tools=None)
             assert isinstance(result, WrappedClient)
+
+
+class TestQuarantineBlocksInference:
+    def test_quarantine_blocks_inference(self):
+        """When RemoteQuarantine reports quarantined, check_killswitch raises."""
+        from unittest.mock import MagicMock
+        from aegis.shield import InferenceBlockedError
+
+        config = AegisConfig(
+            modules={"scanner": False, "broker": False, "identity": False,
+                      "memory": False, "behavior": False, "skills": False,
+                      "recovery": False, "integrity": False},
+        )
+        shield = Shield(config=config)
+
+        mock_rq = MagicMock()
+        mock_rq.is_quarantined.return_value = True
+        mock_rq.reason = "Contagion alert: score=0.950"
+        shield._remote_quarantine = mock_rq
+
+        assert shield.is_blocked is True
+        with pytest.raises(InferenceBlockedError, match="Agent quarantined"):
+            shield.check_killswitch()
+
+    def test_quarantine_not_blocking_when_clear(self):
+        """When RemoteQuarantine is not quarantined, no error is raised."""
+        from unittest.mock import MagicMock
+
+        config = AegisConfig(
+            modules={"scanner": False, "broker": False, "identity": False,
+                      "memory": False, "behavior": False, "skills": False,
+                      "recovery": False, "integrity": False},
+        )
+        shield = Shield(config=config)
+
+        mock_rq = MagicMock()
+        mock_rq.is_quarantined.return_value = False
+        shield._remote_quarantine = mock_rq
+
+        assert shield.is_blocked is False
+        # Should not raise
+        shield.check_killswitch()
 
 
 # Helper mock class

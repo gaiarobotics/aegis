@@ -359,3 +359,63 @@ class TestContagionDetectorVelocity:
         assert score_hi_vel >= cd._alert_threshold, (
             f"Velocity-boosted score ({score_hi_vel}) should cross threshold"
         )
+
+
+# ------------------------------------------------------------------
+# Integration: contagion alert creates quarantine rule
+# ------------------------------------------------------------------
+
+class TestContagionAlertCreatesQuarantineRule:
+    """Integration test: heartbeat with compromised hash auto-quarantines."""
+
+    @pytest.fixture
+    def client(self, tmp_path):
+        import os
+        from fastapi.testclient import TestClient
+        from monitor.app import app
+
+        db_path = str(tmp_path / "test.db")
+        os.environ["MONITOR_DATABASE_PATH"] = db_path
+        os.environ.pop("MONITOR_API_KEYS", None)
+
+        with TestClient(app) as c:
+            app.state.config.api_keys = []
+            yield c, app
+
+        os.environ.pop("MONITOR_DATABASE_PATH", None)
+
+    def test_contagion_alert_creates_quarantine_rule(self, client):
+        """A heartbeat triggering a contagion alert should auto-quarantine the agent."""
+        c, app = client
+
+        # First, mark an agent as compromised so its hash is flagged
+        compromised_hash = "abcdef01" * 4  # 32-char hex
+        contagion_detector = app.state.contagion_detector
+        contagion_detector.mark_compromised("bad-agent", compromised_hash)
+
+        # Send heartbeat from a different agent with the SAME hash
+        # This should trigger a contagion alert and auto-quarantine
+        resp = c.post("/api/v1/heartbeat", json={
+            "agent_id": "victim-agent",
+            "operator_id": "op-1",
+            "trust_tier": 2,
+            "trust_score": 50.0,
+            "content_hash": compromised_hash,
+            "topic_velocity": 0.0,
+            "edges": [],
+        })
+        assert resp.status_code == 200
+
+        # Verify quarantine was created
+        db = app.state.db
+        quarantined, reason, scope, severity = db.check_quarantine(
+            "victim-agent", "op-1",
+        )
+        assert quarantined is True
+        assert "Contagion alert" in reason
+        assert severity == "high"
+
+        # Verify agent is marked quarantined in DB
+        agent = db.get_agent("victim-agent")
+        assert agent is not None
+        assert agent.is_quarantined is True

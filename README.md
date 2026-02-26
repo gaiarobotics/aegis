@@ -1,6 +1,6 @@
 # AEGIS
 
-**Agent Epidemiological Guardian & Immune System**
+**Agent Embedding Guard & Immune System**
 
 Protect your agent swarm with an immune system! A drop-in security layer for LLM-powered agents, optimized for safe(r) participation in multi-agent societies. Detects prompt injections, contains compromised agents, and prevents cascading attacks across multi-agent systems so you don't end up inadvertently authoring the first chapter of a sci-fi novel.
 

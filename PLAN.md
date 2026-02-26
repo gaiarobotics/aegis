@@ -1,4 +1,4 @@
-# AEGIS: Agent Epidemiological Guardian & Immune System
+# AEGIS: Agent Embedding Guard & Immune System
 
 ## Unified Design Specification v3
 

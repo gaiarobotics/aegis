@@ -98,7 +98,7 @@ select = ["E", "F", "W", "I", "UP"]
 All module `__init__.py` files start empty except `aegis/__init__.py`:
 
 ```python
-"""AEGIS: Agent Epidemiological Guardian & Immune System."""
+"""AEGIS: Agent Embedding Guard & Immune System."""
 
 __version__ = "0.1.0"
 ```

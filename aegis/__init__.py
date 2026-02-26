@@ -1,4 +1,4 @@
-"""AEGIS: Agent Epidemiological Guardian & Immune System."""
+"""AEGIS: Agent Embedding Guard & Immune System."""
 
 from aegis.integrity.monitor import ModelTamperedError
 from aegis.shield import Shield, ThreatBlockedError

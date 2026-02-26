@@ -22,6 +22,7 @@ from monitor.db import Database
 from monitor.epidemiology import R0Estimator
 from monitor.graph import AgentGraph
 from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent
+from monitor.validation import ReportValidator
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
     app.state.ws_clients: set[WebSocket] = set()
     app.state.topic_clusterer = TopicHashClusterer()
     app.state.contagion_detector = ContagionDetector()
+    app.state.report_validator = ReportValidator(cfg)
 
     # Load existing compromise records into R0 estimator
     records = app.state.db.get_compromises()
@@ -124,14 +126,52 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         payload=data,
     ))
 
-    # Mark content hash as compromised for contagion detection
+    # Validate the compromise report hash before adding to contagion cloud
     contagion_detector: ContagionDetector = app.state.contagion_detector
+    validator: ReportValidator = app.state.report_validator
     comp_hash = data.get("content_hash_hex", "")
-    if not comp_hash:
-        node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
-        comp_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
-    if comp_hash:
+
+    # Look up reporter info
+    reporter_node = db.get_agent(record.reporter_agent_id)
+    reporter_trust_tier = reporter_node.trust_tier if reporter_node else 0
+    reporter_is_quarantined = reporter_node.is_quarantined if reporter_node else False
+
+    # Gather victim's known hashes from graph node
+    victim_known_hashes: list[str] = []
+    victim_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
+    for hkey in ("content_hash", "style_hash"):
+        h = victim_attrs.get(hkey, "")
+        if h:
+            victim_known_hashes.append(h)
+
+    vr = validator.validate(
+        reporter_id=record.reporter_agent_id,
+        compromised_id=record.compromised_agent_id,
+        hash_hex=comp_hash,
+        reporter_trust_tier=reporter_trust_tier,
+        reporter_is_quarantined=reporter_is_quarantined,
+        victim_known_hashes=victim_known_hashes,
+    )
+
+    if not vr.accepted:
+        validation_status = "rate_limited"
+    elif vr.hash_confirmed:
+        validation_status = "confirmed"
+    elif vr.rejection_reason == "pending_quorum":
+        validation_status = "pending_quorum"
+    else:
+        validation_status = "rejected" if vr.rejection_reason else "confirmed"
+
+    # Only add to contagion cloud if hash was confirmed by validation
+    if vr.hash_confirmed and comp_hash:
         contagion_detector.mark_compromised(record.compromised_agent_id, comp_hash)
+    elif not comp_hash:
+        # Fallback path: no hash provided, use graph node hash (unchanged behaviour)
+        node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
+        fallback_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
+        if fallback_hash:
+            contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash)
+        validation_status = "confirmed"
 
     at_risk = graph.get_at_risk_agents(record.compromised_agent_id)
 
@@ -141,7 +181,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         "at_risk": at_risk,
     })
 
-    return {"status": "ok", "at_risk_agents": at_risk}
+    return {"status": "ok", "at_risk_agents": at_risk, "validation": validation_status}
 
 
 @app.post("/api/v1/reports/trust")

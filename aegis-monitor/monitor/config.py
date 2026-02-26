@@ -22,6 +22,11 @@ class MonitorConfig:
     agent_public_keys: dict[str, bytes] = field(default_factory=dict)
     clustering_enabled: bool = False
     r0_window_hours: int = 24
+    compromise_rate_limit: int = 5
+    compromise_rate_window: int = 3600
+    compromise_min_trust_tier: int = 1
+    compromise_quorum: int = 2
+    compromise_hash_max_distance: int = 96
 
     @property
     def effective_database_url(self) -> str:
@@ -56,6 +61,11 @@ class MonitorConfig:
             api_keys=raw.get("api_keys", []),
             clustering_enabled=bool(raw.get("clustering_enabled", False)),
             r0_window_hours=int(raw.get("r0_window_hours", 24)),
+            compromise_rate_limit=int(raw.get("compromise_rate_limit", 5)),
+            compromise_rate_window=int(raw.get("compromise_rate_window", 3600)),
+            compromise_min_trust_tier=int(raw.get("compromise_min_trust_tier", 1)),
+            compromise_quorum=int(raw.get("compromise_quorum", 2)),
+            compromise_hash_max_distance=int(raw.get("compromise_hash_max_distance", 96)),
         )
 
         # Environment overrides
@@ -73,5 +83,15 @@ class MonitorConfig:
             cfg.clustering_enabled = v.lower() in ("1", "true", "yes")
         if v := os.environ.get("MONITOR_R0_WINDOW_HOURS"):
             cfg.r0_window_hours = int(v)
+        if v := os.environ.get("MONITOR_COMPROMISE_RATE_LIMIT"):
+            cfg.compromise_rate_limit = int(v)
+        if v := os.environ.get("MONITOR_COMPROMISE_RATE_WINDOW"):
+            cfg.compromise_rate_window = int(v)
+        if v := os.environ.get("MONITOR_COMPROMISE_MIN_TRUST_TIER"):
+            cfg.compromise_min_trust_tier = int(v)
+        if v := os.environ.get("MONITOR_COMPROMISE_QUORUM"):
+            cfg.compromise_quorum = int(v)
+        if v := os.environ.get("MONITOR_COMPROMISE_HASH_MAX_DISTANCE"):
+            cfg.compromise_hash_max_distance = int(v)
 
         return cfg

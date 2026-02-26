@@ -19,8 +19,13 @@ def client(tmp_path):
     os.environ.pop("MONITOR_API_KEYS", None)
 
     with TestClient(app) as c:
+        from monitor.validation import ReportValidator
         # Ensure open auth mode for most tests
         app.state.config.api_keys = []
+        # Backwards-compatible: quorum=1, min_trust=0 so existing tests pass
+        app.state.config.compromise_quorum = 1
+        app.state.config.compromise_min_trust_tier = 0
+        app.state.report_validator = ReportValidator(app.state.config)
         yield c
 
     os.environ.pop("MONITOR_DATABASE_PATH", None)
@@ -283,3 +288,123 @@ class TestHashCloudGrowth:
         score = detector.check("clean-agent", different_hash)
         # Should be well below 1.0
         assert score < 0.9
+
+
+class TestValidationIntegration:
+    """Integration tests for compromise report validation."""
+
+    def test_rate_limited_report(self, client):
+        """After rate_limit reports from same agent, next returns rate_limited."""
+        from monitor.validation import ReportValidator
+        app.state.config.compromise_rate_limit = 2
+        app.state.config.compromise_quorum = 1
+        app.state.config.compromise_min_trust_tier = 0
+        app.state.report_validator = ReportValidator(app.state.config)
+        hash_hex = "abcdef01" * 4
+
+        for i in range(2):
+            client.post("/api/v1/reports/compromise", json={
+                "agent_id": "spammer",
+                "compromised_agent_id": f"v-rl-{i}",
+                "content_hash_hex": hash_hex,
+            })
+
+        resp = client.post("/api/v1/reports/compromise", json={
+            "agent_id": "spammer",
+            "compromised_agent_id": "v-rl-extra",
+            "content_hash_hex": hash_hex,
+        })
+        assert resp.json()["validation"] == "rate_limited"
+
+    def test_low_trust_reporter_hash_not_in_contagion(self, client):
+        """Reporter with trust_tier=0 — hash not confirmed."""
+        from monitor.validation import ReportValidator
+        app.state.config.compromise_quorum = 1
+        app.state.config.compromise_min_trust_tier = 1
+        app.state.report_validator = ReportValidator(app.state.config)
+        hash_hex = "cc" * 16
+
+        # Register reporter as trust_tier=0
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "low-trust-reporter",
+            "trust_tier": 0,
+            "trust_score": 0.0,
+        })
+        resp = client.post("/api/v1/reports/compromise", json={
+            "agent_id": "low-trust-reporter",
+            "compromised_agent_id": "victim-lt",
+            "content_hash_hex": hash_hex,
+        })
+        data = resp.json()
+        assert data["validation"] == "rejected"
+
+        # Hash should NOT appear in threat-intel
+        intel = client.get("/api/v1/threat-intel").json()
+        assert hash_hex not in intel["compromised_hashes"]
+
+    def test_quorum_flow(self, client):
+        """First report → pending_quorum, second from different agent → confirmed."""
+        from monitor.validation import ReportValidator
+
+        app.state.config.compromise_quorum = 2
+        app.state.config.compromise_min_trust_tier = 0
+        # Reset the validator to pick up quorum=2
+        app.state.report_validator = ReportValidator(app.state.config)
+        hash_hex = "dd" * 16
+
+        # Register both reporters with sufficient trust
+        for rid in ("r1", "r2"):
+            client.post("/api/v1/heartbeat", json={
+                "agent_id": rid,
+                "trust_tier": 2,
+            })
+
+        # First report
+        resp1 = client.post("/api/v1/reports/compromise", json={
+            "agent_id": "r1",
+            "compromised_agent_id": "victim-q",
+            "content_hash_hex": hash_hex,
+        })
+        assert resp1.json()["validation"] == "pending_quorum"
+
+        # Hash should NOT be in threat-intel yet
+        intel = client.get("/api/v1/threat-intel").json()
+        assert hash_hex not in intel["compromised_hashes"]
+
+        # Second report from different agent
+        resp2 = client.post("/api/v1/reports/compromise", json={
+            "agent_id": "r2",
+            "compromised_agent_id": "victim-q",
+            "content_hash_hex": hash_hex,
+        })
+        assert resp2.json()["validation"] == "confirmed"
+
+        # Hash should now appear in threat-intel
+        intel = client.get("/api/v1/threat-intel").json()
+        assert hash_hex in intel["compromised_hashes"]
+
+    def test_backwards_compat_quorum_one(self, client):
+        """With quorum=1, single report confirms hash immediately."""
+        from monitor.validation import ReportValidator
+        app.state.config.compromise_quorum = 1
+        app.state.config.compromise_min_trust_tier = 0
+        app.state.report_validator = ReportValidator(app.state.config)
+        hash_hex = "ee" * 16
+
+        resp = client.post("/api/v1/reports/compromise", json={
+            "agent_id": "trusted-reporter",
+            "compromised_agent_id": "victim-bw",
+            "content_hash_hex": hash_hex,
+        })
+        assert resp.json()["validation"] == "confirmed"
+
+        intel = client.get("/api/v1/threat-intel").json()
+        assert hash_hex in intel["compromised_hashes"]
+
+    def test_validation_key_present_in_response(self, client):
+        """Compromise response always includes a validation key."""
+        resp = client.post("/api/v1/reports/compromise", json={
+            "agent_id": "reporter",
+            "compromised_agent_id": "victim",
+        })
+        assert "validation" in resp.json()

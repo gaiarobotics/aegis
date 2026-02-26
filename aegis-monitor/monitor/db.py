@@ -176,8 +176,9 @@ class Database:
         self._backend.execute(
             """INSERT INTO compromises
                    (record_id, reporter_agent_id, compromised_agent_id,
-                    source, nk_score, nk_verdict, recommended_action, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    source, nk_score, nk_verdict, recommended_action,
+                    content_hash_hex, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(record_id) DO UPDATE SET
                    reporter_agent_id    = excluded.reporter_agent_id,
                    compromised_agent_id = excluded.compromised_agent_id,
@@ -185,6 +186,7 @@ class Database:
                    nk_score             = excluded.nk_score,
                    nk_verdict           = excluded.nk_verdict,
                    recommended_action   = excluded.recommended_action,
+                   content_hash_hex     = excluded.content_hash_hex,
                    timestamp            = excluded.timestamp
             """,
             (
@@ -195,6 +197,7 @@ class Database:
                 record.nk_score,
                 record.nk_verdict,
                 record.recommended_action,
+                record.content_hash_hex,
                 record.timestamp,
             ),
         )
@@ -222,6 +225,7 @@ class Database:
                 nk_score=r["nk_score"],
                 nk_verdict=r["nk_verdict"],
                 recommended_action=r["recommended_action"],
+                content_hash_hex=r.get("content_hash_hex", ""),
                 timestamp=r["timestamp"],
             )
             for r in rows

@@ -55,6 +55,7 @@ _SCHEMA_STATEMENTS = [
         nk_score             DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         nk_verdict           TEXT NOT NULL DEFAULT '',
         recommended_action   TEXT NOT NULL DEFAULT 'quarantine',
+        content_hash_hex     TEXT NOT NULL DEFAULT '',
         timestamp            DOUBLE PRECISION NOT NULL
     )
     """,

@@ -137,6 +137,7 @@ class CompromiseReport(ReportBase):
     nk_score: float = 0.0
     nk_verdict: str = ""
     recommended_action: str = "quarantine"
+    content_hash_hex: str = ""
 
     def _extra_canonical_parts(self) -> list[str]:
         return [
@@ -145,6 +146,7 @@ class CompromiseReport(ReportBase):
             str(self.nk_score),
             self.nk_verdict,
             self.recommended_action,
+            self.content_hash_hex,
         ]
 
 

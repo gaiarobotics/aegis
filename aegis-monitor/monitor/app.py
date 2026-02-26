@@ -97,6 +97,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         nk_score=data.get("nk_score", 0.0),
         nk_verdict=data.get("nk_verdict", ""),
         recommended_action=data.get("recommended_action", "quarantine"),
+        content_hash_hex=data.get("content_hash_hex", ""),
         timestamp=data.get("timestamp", time.time()),
     )
     db.insert_compromise(record)
@@ -125,8 +126,10 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
 
     # Mark content hash as compromised for contagion detection
     contagion_detector: ContagionDetector = app.state.contagion_detector
-    node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
-    comp_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
+    comp_hash = data.get("content_hash_hex", "")
+    if not comp_hash:
+        node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
+        comp_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
     if comp_hash:
         contagion_detector.mark_compromised(record.compromised_agent_id, comp_hash)
 

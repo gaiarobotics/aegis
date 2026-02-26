@@ -198,6 +198,35 @@ class TestThreatIntel:
         data = resp.json()
         assert len(data["compromised_hashes"]) >= 1
 
+    def test_report_hash_stored_without_heartbeat(self, client):
+        """Hash from compromise report is stored in contagion detector
+        even without a prior heartbeat (no graph node needed)."""
+        hash_hex = "abcdef01" * 4
+        client.post("/api/v1/reports/compromise", json={
+            "agent_id": "reporter-1",
+            "compromised_agent_id": "victim-new",
+            "content_hash_hex": hash_hex,
+        })
+        resp = client.get("/api/v1/threat-intel")
+        data = resp.json()
+        assert hash_hex in data["compromised_hashes"]
+
+    def test_fallback_to_graph_node_hash(self, client):
+        """When report has no hash, falls back to graph node's content_hash."""
+        client.post("/api/v1/heartbeat", json={
+            "agent_id": "victim-fb",
+            "trust_tier": 2,
+            "content_hash": "deadbeef" * 4,
+        })
+        client.post("/api/v1/reports/compromise", json={
+            "agent_id": "reporter-1",
+            "compromised_agent_id": "victim-fb",
+            # No content_hash_hex — should fall back
+        })
+        resp = client.get("/api/v1/threat-intel")
+        data = resp.json()
+        assert len(data["compromised_hashes"]) >= 1
+
     def test_quarantined_agent_in_threat_intel(self, client):
         # Register agent then quarantine it
         client.post("/api/v1/heartbeat", json={
@@ -214,3 +243,43 @@ class TestThreatIntel:
         resp = client.get("/api/v1/threat-intel")
         data = resp.json()
         assert "q-agent" in data["quarantined_agents"]
+
+
+class TestHashCloudGrowth:
+    def test_multiple_hashes_grow_compromised_set(self, client):
+        """Multiple compromise reports with different hashes grow the set."""
+        hashes = [f"{i:0>8}" * 4 for i in range(3)]
+        for i, h in enumerate(hashes):
+            client.post("/api/v1/reports/compromise", json={
+                "agent_id": f"reporter-{i}",
+                "compromised_agent_id": f"victim-{i}",
+                "content_hash_hex": h,
+            })
+        resp = client.get("/api/v1/threat-intel")
+        data = resp.json()
+        assert len(data["compromised_hashes"]) >= 3
+
+    def test_similar_hash_scores_high_contagion(self, client):
+        """A hash similar to a compromised variant scores high contagion."""
+        from monitor.contagion import ContagionDetector
+
+        detector: ContagionDetector = app.state.contagion_detector
+        # Mark a known hash as compromised
+        known_hash = "a" * 32
+        detector.mark_compromised("victim-sim", known_hash)
+        # Check same hash — should score 1.0 (identical)
+        score = detector.check("other-agent", known_hash)
+        assert score == 1.0
+
+    def test_dissimilar_hash_scores_low_contagion(self, client):
+        """A hash dissimilar to all compromised variants scores low."""
+        from monitor.contagion import ContagionDetector
+
+        detector: ContagionDetector = app.state.contagion_detector
+        # Mark a known hash
+        detector.mark_compromised("victim-dis", "a" * 32)
+        # Check a very different hash — inverted bits
+        different_hash = "5" * 32  # very different bit pattern from 'a' * 32
+        score = detector.check("clean-agent", different_hash)
+        # Should be well below 1.0
+        assert score < 0.9

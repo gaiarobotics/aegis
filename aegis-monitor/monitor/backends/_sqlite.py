@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS compromises (
     nk_score             REAL NOT NULL DEFAULT 0.0,
     nk_verdict           TEXT NOT NULL DEFAULT '',
     recommended_action   TEXT NOT NULL DEFAULT 'quarantine',
+    content_hash_hex     TEXT NOT NULL DEFAULT '',
     timestamp            REAL NOT NULL
 );
 

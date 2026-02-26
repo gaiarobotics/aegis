@@ -85,6 +85,7 @@ class MonitoringClient:
         nk_score: float = 0.0,
         nk_verdict: str = "",
         recommended_action: str = "quarantine",
+        content_hash_hex: str = "",
     ) -> None:
         """Send a compromise report. No-op if disabled."""
         if not self._enabled:
@@ -98,6 +99,7 @@ class MonitoringClient:
                 nk_score=nk_score,
                 nk_verdict=nk_verdict,
                 recommended_action=recommended_action,
+                content_hash_hex=content_hash_hex,
             )
             self._sign_and_send(report, "/reports/compromise")
         except Exception:

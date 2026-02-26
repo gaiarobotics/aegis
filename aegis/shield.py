@@ -125,6 +125,7 @@ class Shield:
         self._prompt_monitor = None
         self._isolation_forest = None
         self._content_hash_tracker = None
+        self._style_hasher = None
         self._integrity_monitor = None
         self._killswitch = None
         self._remote_quarantine = None
@@ -199,13 +200,14 @@ class Shield:
                     logger.debug("IsolationForest init failed", exc_info=True)
                 # Content hash tracker (LSH fingerprinting)
                 try:
-                    from aegis.behavior.content_hash import ContentHashTracker
+                    from aegis.behavior.content_hash import ContentHashTracker, StyleHasher
                     ch_cfg = self._config.behavior.content_hash
                     if ch_cfg.enabled:
                         self._content_hash_tracker = ContentHashTracker(
                             window_size=ch_cfg.window_size,
                             semantic_enabled=ch_cfg.semantic_enabled,
                         )
+                    self._style_hasher = StyleHasher()
                 except Exception:
                     logger.debug("Content hash tracker init failed", exc_info=True)
             except Exception:
@@ -539,6 +541,16 @@ class Shield:
                 except Exception:
                     logger.debug("Recovery auto-quarantine failed", exc_info=True)
 
+        # Compute per-message content hash for compromise reports
+        _per_msg_hash_hex = ""
+        if self._style_hasher is not None:
+            try:
+                from aegis.behavior.message_drift import MessageDriftDetector
+                profile = MessageDriftDetector.compute_profile(text)
+                _per_msg_hash_hex = f"{self._style_hasher.hash(profile):032x}"
+            except Exception:
+                logger.debug("Per-message hash computation failed", exc_info=True)
+
         # Monitoring reporting
         if self._monitoring_client is not None:
             try:
@@ -560,6 +572,7 @@ class Shield:
                             source="nk_cell",
                             nk_score=nk_info.get("score", 0.0),
                             nk_verdict=nk_verdict,
+                            content_hash_hex=_per_msg_hash_hex,
                         )
             except Exception:
                 logger.debug("Monitoring threat event reporting failed", exc_info=True)

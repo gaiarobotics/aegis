@@ -1,5 +1,7 @@
 """Tests for AEGIS Shield orchestrator."""
 
+import pytest
+
 from aegis.core.config import AegisConfig
 from aegis.shield import ActionResult, SanitizeResult, ScanResult, Shield
 
@@ -377,6 +379,159 @@ class TestShieldWrapDispatch:
             result = shield.wrap(client)
             mock_wrap.assert_called_once_with(client, tools=None)
             assert isinstance(result, WrappedClient)
+
+
+class TestQuarantineBlocksInference:
+    def test_quarantine_blocks_inference(self):
+        """When RemoteQuarantine reports quarantined, check_killswitch raises."""
+        from unittest.mock import MagicMock
+        from aegis.shield import InferenceBlockedError
+
+        config = AegisConfig(
+            modules={"scanner": False, "broker": False, "identity": False,
+                      "memory": False, "behavior": False, "skills": False,
+                      "recovery": False, "integrity": False},
+        )
+        shield = Shield(config=config)
+
+        mock_rq = MagicMock()
+        mock_rq.is_quarantined.return_value = True
+        mock_rq.reason = "Contagion alert: score=0.950"
+        shield._remote_quarantine = mock_rq
+
+        assert shield.is_blocked is True
+        with pytest.raises(InferenceBlockedError, match="Agent quarantined"):
+            shield.check_killswitch()
+
+    def test_quarantine_not_blocking_when_clear(self):
+        """When RemoteQuarantine is not quarantined, no error is raised."""
+        from unittest.mock import MagicMock
+
+        config = AegisConfig(
+            modules={"scanner": False, "broker": False, "identity": False,
+                      "memory": False, "behavior": False, "skills": False,
+                      "recovery": False, "integrity": False},
+        )
+        shield = Shield(config=config)
+
+        mock_rq = MagicMock()
+        mock_rq.is_quarantined.return_value = False
+        shield._remote_quarantine = mock_rq
+
+        assert shield.is_blocked is False
+        # Should not raise
+        shield.check_killswitch()
+
+
+class TestPreEmptiveContagionAvoidance:
+    def _make_shield(self, mode="enforce"):
+        config = AegisConfig(
+            mode=mode,
+            modules={"scanner": True, "broker": False, "identity": False,
+                      "memory": False, "behavior": True, "skills": False,
+                      "recovery": False, "integrity": False},
+        )
+        return Shield(config=config)
+
+    def test_compromised_sender_enforce_blocks(self):
+        """Enforce mode blocks input from a compromised sender."""
+        from unittest.mock import MagicMock
+        from aegis.shield import ThreatBlockedError
+
+        shield = self._make_shield(mode="enforce")
+        mock_ti = MagicMock()
+        mock_ti.is_agent_compromised.return_value = True
+        mock_ti.is_agent_quarantined.return_value = False
+        mock_ti.check_hash.return_value = (False, 0.0)
+        shield._remote_threat_intel = mock_ti
+
+        with pytest.raises(ThreatBlockedError):
+            shield.scan_input("Hello", source_agent_id="bad-agent")
+
+    def test_compromised_sender_observe_allows(self):
+        """Observe mode logs but allows input from a compromised sender."""
+        from unittest.mock import MagicMock
+
+        shield = self._make_shield(mode="observe")
+        mock_ti = MagicMock()
+        mock_ti.is_agent_compromised.return_value = True
+        mock_ti.is_agent_quarantined.return_value = False
+        mock_ti.check_hash.return_value = (False, 0.0)
+        shield._remote_threat_intel = mock_ti
+
+        result = shield.scan_input("Hello", source_agent_id="bad-agent")
+        assert "contagion" in result.details
+        assert result.details["contagion"]["source"] == "compromised_sender"
+        assert result.details["contagion"]["blocked"] is False
+
+    def test_quarantined_sender_enforce_blocks(self):
+        """Enforce mode blocks input from a quarantined sender."""
+        from unittest.mock import MagicMock
+        from aegis.shield import ThreatBlockedError
+
+        shield = self._make_shield(mode="enforce")
+        mock_ti = MagicMock()
+        mock_ti.is_agent_compromised.return_value = False
+        mock_ti.is_agent_quarantined.return_value = True
+        mock_ti.check_hash.return_value = (False, 0.0)
+        shield._remote_threat_intel = mock_ti
+
+        with pytest.raises(ThreatBlockedError):
+            shield.scan_input("Hello", source_agent_id="q-agent")
+
+    def test_suspicious_hash_enforce_blocks(self):
+        """Enforce mode blocks input with a suspicious content hash."""
+        from unittest.mock import MagicMock
+        from aegis.shield import ThreatBlockedError
+
+        shield = self._make_shield(mode="enforce")
+        mock_ti = MagicMock()
+        mock_ti.is_agent_compromised.return_value = False
+        mock_ti.is_agent_quarantined.return_value = False
+        mock_ti.check_hash.return_value = (True, 0.95)
+        shield._remote_threat_intel = mock_ti
+
+        with pytest.raises(ThreatBlockedError):
+            shield.scan_input("Some compromised-looking text")
+
+    def test_suspicious_hash_observe_allows(self):
+        """Observe mode logs but allows suspicious hash."""
+        from unittest.mock import MagicMock
+
+        shield = self._make_shield(mode="observe")
+        mock_ti = MagicMock()
+        mock_ti.is_agent_compromised.return_value = False
+        mock_ti.is_agent_quarantined.return_value = False
+        mock_ti.check_hash.return_value = (True, 0.95)
+        shield._remote_threat_intel = mock_ti
+
+        result = shield.scan_input("Some compromised-looking text")
+        assert "contagion" in result.details
+        assert result.details["contagion"]["source"] == "content_hash"
+        assert result.details["contagion"]["score"] == 0.95
+        assert result.details["contagion"]["blocked"] is False
+
+    def test_clean_input_no_interference(self):
+        """Clean input with threat intel active passes through normally."""
+        from unittest.mock import MagicMock
+
+        shield = self._make_shield(mode="enforce")
+        mock_ti = MagicMock()
+        mock_ti.is_agent_compromised.return_value = False
+        mock_ti.is_agent_quarantined.return_value = False
+        mock_ti.check_hash.return_value = (False, 0.1)
+        shield._remote_threat_intel = mock_ti
+
+        result = shield.scan_input("What is the weather?")
+        assert "contagion" not in result.details
+        assert result.is_threat is False
+
+    def test_no_threat_intel_no_interference(self):
+        """Without threat intel configured, scan_input works as before."""
+        shield = self._make_shield(mode="enforce")
+        assert shield._remote_threat_intel is None
+        result = shield.scan_input("Hello")
+        assert isinstance(result, ScanResult)
 
 
 # Helper mock class

@@ -124,14 +124,20 @@ class Shield:
         self._message_drift_detector = None
         self._prompt_monitor = None
         self._isolation_forest = None
+        self._content_hash_tracker = None
+        self._style_hasher = None
         self._integrity_monitor = None
         self._killswitch = None
+        self._remote_quarantine = None
+        self._remote_threat_intel = None
         self._self_integrity = None
         self._self_integrity_blocked = False
 
         self._init_modules()
         self._init_monitoring()
         self._init_killswitch()
+        self._init_remote_quarantine()
+        self._init_remote_threat_intel()
         self._init_self_integrity()
 
     def _init_modules(self) -> None:
@@ -192,6 +198,18 @@ class Shield:
                         )
                 except Exception:
                     logger.debug("IsolationForest init failed", exc_info=True)
+                # Content hash tracker (LSH fingerprinting)
+                try:
+                    from aegis.behavior.content_hash import ContentHashTracker, StyleHasher
+                    ch_cfg = self._config.behavior.content_hash
+                    if ch_cfg.enabled:
+                        self._content_hash_tracker = ContentHashTracker(
+                            window_size=ch_cfg.window_size,
+                            semantic_enabled=ch_cfg.semantic_enabled,
+                        )
+                    self._style_hasher = StyleHasher()
+                except Exception:
+                    logger.debug("Content hash tracker init failed", exc_info=True)
             except Exception:
                 logger.debug("Behavior module init failed", exc_info=True)
 
@@ -296,6 +314,7 @@ class Shield:
                 agent_id=self._config.agent_id,
                 operator_id=self._config.operator_id,
                 keypair=keypair,
+                content_hash_provider=self._get_content_hashes,
             )
 
             # Wire compromise callback
@@ -324,6 +343,40 @@ class Shield:
             self._killswitch.start()
         except Exception:
             logger.debug("Remote killswitch init failed", exc_info=True)
+
+    def _init_remote_quarantine(self) -> None:
+        """Start quarantine polling when monitoring is enabled."""
+        mon_cfg = self._config.monitoring
+        if not mon_cfg.enabled or not mon_cfg.service_url:
+            return
+        try:
+            from aegis.core.remote_quarantine import RemoteQuarantine
+            self._remote_quarantine = RemoteQuarantine(
+                service_url=mon_cfg.service_url,
+                api_key=mon_cfg.api_key,
+                agent_id=self._config.agent_id,
+                operator_id=self._config.operator_id,
+                poll_interval=mon_cfg.quarantine_poll_interval,
+            )
+            self._remote_quarantine.start()
+        except Exception:
+            logger.debug("Remote quarantine init failed", exc_info=True)
+
+    def _init_remote_threat_intel(self) -> None:
+        """Start threat intelligence polling when monitoring is enabled."""
+        mon_cfg = self._config.monitoring
+        if not mon_cfg.enabled or not mon_cfg.service_url:
+            return
+        try:
+            from aegis.core.remote_threat_intel import RemoteThreatIntel
+            self._remote_threat_intel = RemoteThreatIntel(
+                service_url=mon_cfg.service_url,
+                api_key=mon_cfg.api_key,
+                poll_interval=mon_cfg.threat_intel_poll_interval,
+            )
+            self._remote_threat_intel.start()
+        except Exception:
+            logger.debug("Remote threat intel init failed", exc_info=True)
 
     def _init_self_integrity(self) -> None:
         """Initialize self-integrity watcher if enabled."""
@@ -358,19 +411,25 @@ class Shield:
 
     @property
     def is_blocked(self) -> bool:
-        """True if the remote killswitch or self-integrity is blocking inference."""
+        """True if the remote killswitch, quarantine, or self-integrity is blocking inference."""
         if self._self_integrity_blocked:
             return True
-        if self._killswitch is None:
-            return False
-        return self._killswitch.is_blocked()
+        if self._killswitch is not None and self._killswitch.is_blocked():
+            return True
+        if self._remote_quarantine is not None and self._remote_quarantine.is_quarantined():
+            return True
+        return False
 
     def check_killswitch(self) -> None:
-        """Raise InferenceBlockedError if remote killswitch or self-integrity block is active."""
+        """Raise InferenceBlockedError if remote killswitch, quarantine, or self-integrity block is active."""
         if self._self_integrity_blocked:
             raise InferenceBlockedError("AEGIS files tampered — inference blocked")
         if self._killswitch is not None and self._killswitch.is_blocked():
             raise InferenceBlockedError(self._killswitch.block_reason)
+        if self._remote_quarantine is not None and self._remote_quarantine.is_quarantined():
+            raise InferenceBlockedError(
+                f"Agent quarantined: {self._remote_quarantine.reason}"
+            )
 
     def _on_compromise_reported(self, agent_id: str) -> None:
         """Callback from TrustManager.report_compromise()."""
@@ -388,6 +447,15 @@ class Shield:
             )
         except Exception:
             logger.debug("Compromise report sending failed", exc_info=True)
+
+    def _get_content_hashes(self) -> dict[str, str]:
+        """Return current content hashes for heartbeat inclusion."""
+        if self._content_hash_tracker is None:
+            return {}
+        try:
+            return self._content_hash_tracker.get_hashes()
+        except Exception:
+            return {}
 
     @property
     def config(self) -> AegisConfig:
@@ -409,7 +477,7 @@ class Shield:
         """Access the broker module (may be None)."""
         return self._broker
 
-    def scan_input(self, text: str) -> ScanResult:
+    def scan_input(self, text: str, source_agent_id: str | None = None) -> ScanResult:
         """Scan input text through the pipeline.
 
         Pipeline:
@@ -473,6 +541,16 @@ class Shield:
                 except Exception:
                     logger.debug("Recovery auto-quarantine failed", exc_info=True)
 
+        # Compute per-message content hash for compromise reports
+        _per_msg_hash_hex = ""
+        if self._style_hasher is not None:
+            try:
+                from aegis.behavior.message_drift import MessageDriftDetector
+                profile = MessageDriftDetector.compute_profile(text)
+                _per_msg_hash_hex = f"{self._style_hasher.hash(profile):032x}"
+            except Exception:
+                logger.debug("Per-message hash computation failed", exc_info=True)
+
         # Monitoring reporting
         if self._monitoring_client is not None:
             try:
@@ -494,9 +572,74 @@ class Shield:
                             source="nk_cell",
                             nk_score=nk_info.get("score", 0.0),
                             nk_verdict=nk_verdict,
+                            content_hash_hex=_per_msg_hash_hex,
                         )
             except Exception:
                 logger.debug("Monitoring threat event reporting failed", exc_info=True)
+
+        # Content hash update
+        if self._content_hash_tracker is not None:
+            try:
+                profile = None
+                if self._message_drift_detector is not None:
+                    from aegis.behavior.message_drift import MessageDriftDetector
+                    profile = MessageDriftDetector.compute_profile(text)
+                self._content_hash_tracker.update(text, profile=profile)
+            except Exception:
+                logger.debug("Content hash update failed", exc_info=True)
+
+        # Pre-emptive contagion check (threat intelligence)
+        if self._remote_threat_intel is not None:
+            try:
+                contagion_hit = False
+                contagion_source = ""
+                contagion_score = 0.0
+
+                # Lever 1: sender reputation
+                if source_agent_id:
+                    if self._remote_threat_intel.is_agent_compromised(source_agent_id):
+                        contagion_hit = True
+                        contagion_source = "compromised_sender"
+                        contagion_score = 1.0
+                    elif self._remote_threat_intel.is_agent_quarantined(source_agent_id):
+                        contagion_hit = True
+                        contagion_source = "quarantined_sender"
+                        contagion_score = 1.0
+
+                # Lever 2: content hash similarity
+                if not contagion_hit and self._content_hash_tracker is not None:
+                    hashes = self._content_hash_tracker.get_hashes()
+                    check_hash = hashes.get("style_hash") or hashes.get("content_hash", "")
+                    if check_hash:
+                        threshold = self._config.monitoring.contagion_similarity_threshold
+                        suspicious, sim_score = self._remote_threat_intel.check_hash(
+                            check_hash, threshold=threshold,
+                        )
+                        if suspicious:
+                            contagion_hit = True
+                            contagion_source = "content_hash"
+                            contagion_score = sim_score
+
+                if contagion_hit:
+                    blocked = self._mode == "enforce"
+                    result.details["contagion"] = {
+                        "source": contagion_source,
+                        "score": contagion_score,
+                        "blocked": blocked,
+                    }
+                    result.is_threat = True
+                    result.threat_score = max(result.threat_score, contagion_score)
+
+                    if blocked:
+                        raise ThreatBlockedError(
+                            result,
+                            f"Pre-emptive contagion block: {contagion_source} "
+                            f"(score={contagion_score:.3f})",
+                        )
+            except ThreatBlockedError:
+                raise
+            except Exception:
+                logger.debug("Pre-emptive contagion check failed", exc_info=True)
 
         # Log telemetry
         self._telemetry.log_event(

@@ -17,10 +17,12 @@ from fastapi.staticfiles import StaticFiles
 from monitor.auth import verify_api_key
 from monitor.clustering import ThreatClusterer
 from monitor.config import MonitorConfig
+from monitor.contagion import ContagionDetector, TopicClusterer as TopicHashClusterer
 from monitor.db import Database
 from monitor.epidemiology import R0Estimator
 from monitor.graph import AgentGraph
 from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent
+from monitor.validation import ReportValidator
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -29,11 +31,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     cfg = MonitorConfig.load()
     app.state.config = cfg
-    app.state.db = Database(cfg.database_path)
+    app.state.db = Database(cfg.effective_database_url)
     app.state.graph = AgentGraph()
     app.state.r0 = R0Estimator()
     app.state.clusterer = ThreatClusterer()
     app.state.ws_clients: set[WebSocket] = set()
+    app.state.topic_clusterer = TopicHashClusterer()
+    app.state.contagion_detector = ContagionDetector()
+    app.state.report_validator = ReportValidator(cfg)
 
     # Load existing compromise records into R0 estimator
     records = app.state.db.get_compromises()
@@ -94,6 +99,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         nk_score=data.get("nk_score", 0.0),
         nk_verdict=data.get("nk_verdict", ""),
         recommended_action=data.get("recommended_action", "quarantine"),
+        content_hash_hex=data.get("content_hash_hex", ""),
         timestamp=data.get("timestamp", time.time()),
     )
     db.insert_compromise(record)
@@ -120,6 +126,44 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         payload=data,
     ))
 
+    # Validate the compromise report hash before adding to contagion cloud
+    contagion_detector: ContagionDetector = app.state.contagion_detector
+    validator: ReportValidator = app.state.report_validator
+    comp_hash = data.get("content_hash_hex", "")
+
+    # Look up reporter info
+    reporter_node = db.get_agent(record.reporter_agent_id)
+    reporter_trust_tier = reporter_node.trust_tier if reporter_node else 0
+    reporter_is_quarantined = reporter_node.is_quarantined if reporter_node else False
+
+    vr = validator.validate(
+        reporter_id=record.reporter_agent_id,
+        compromised_id=record.compromised_agent_id,
+        hash_hex=comp_hash,
+        reporter_trust_tier=reporter_trust_tier,
+        reporter_is_quarantined=reporter_is_quarantined,
+    )
+
+    if not vr.accepted:
+        validation_status = "rate_limited"
+    elif vr.hash_confirmed:
+        validation_status = "confirmed"
+    elif vr.rejection_reason == "pending_quorum":
+        validation_status = "pending_quorum"
+    else:
+        validation_status = "rejected" if vr.rejection_reason else "confirmed"
+
+    # Only add to contagion cloud if hash was confirmed by validation
+    if vr.hash_confirmed and comp_hash:
+        contagion_detector.mark_compromised(record.compromised_agent_id, comp_hash)
+    elif not comp_hash:
+        # Fallback path: no hash provided, use graph node hash (unchanged behaviour)
+        node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
+        fallback_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
+        if fallback_hash:
+            contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash)
+        validation_status = "confirmed"
+
     at_risk = graph.get_at_risk_agents(record.compromised_agent_id)
 
     await _broadcast(app.state, {
@@ -128,7 +172,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         "at_risk": at_risk,
     })
 
-    return {"status": "ok", "at_risk_agents": at_risk}
+    return {"status": "ok", "at_risk_agents": at_risk, "validation": validation_status}
 
 
 @app.post("/api/v1/reports/trust")
@@ -206,6 +250,15 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         edges=edges,
     )
 
+    # Extract content hashes
+    style_hash = data.get("style_hash", "")
+    content_hash = data.get("content_hash", "")
+    metadata: dict[str, Any] = {}
+    if style_hash:
+        metadata["style_hash"] = style_hash
+    if content_hash:
+        metadata["content_hash"] = content_hash
+
     # Persist
     db.upsert_agent(AgentNode(
         agent_id=agent_id,
@@ -214,6 +267,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         trust_score=data.get("trust_score", 0.0),
         is_quarantined=data.get("is_quarantined", False),
         last_heartbeat=time.time(),
+        metadata=metadata,
     ))
     from monitor.models import AgentEdge
     for edge in edges:
@@ -224,6 +278,68 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
             last_seen=edge.get("last_seen", time.time()),
             message_count=edge.get("message_count", 0),
         ))
+
+    # Store hashes in graph node attributes
+    if style_hash or content_hash:
+        node_data = graph.graph.nodes.get(agent_id)
+        if node_data is not None:
+            if style_hash:
+                node_data["style_hash"] = style_hash
+            if content_hash:
+                node_data["content_hash"] = content_hash
+
+    # Topic clustering and contagion detection
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    contagion_detector: ContagionDetector = app.state.contagion_detector
+    hash_for_analysis = content_hash or style_hash
+    topic_velocity = data.get("topic_velocity", 0.0)
+    if hash_for_analysis:
+        topic_clusterer.update(agent_id, hash_for_analysis)
+        score = contagion_detector.check_with_velocity(
+            agent_id, hash_for_analysis, topic_velocity=topic_velocity,
+        )
+        if score >= contagion_detector._alert_threshold:
+            db.insert_event(StoredEvent(
+                event_id=str(uuid.uuid4()),
+                event_type="contagion_alert",
+                agent_id=agent_id,
+                operator_id=data.get("operator_id", ""),
+                timestamp=time.time(),
+                payload={
+                    "contagion_score": score,
+                    "topic_velocity": topic_velocity,
+                    "hash": hash_for_analysis,
+                },
+            ))
+            await _broadcast(app.state, {
+                "type": "contagion_alert",
+                "agent_id": agent_id,
+                "contagion_score": score,
+                "topic_velocity": topic_velocity,
+            })
+
+            # Auto-quarantine the flagged agent
+            rule = QuarantineRule(
+                rule_id=str(uuid.uuid4()),
+                scope="agent",
+                target=agent_id,
+                quarantined=True,
+                reason=f"Contagion alert: score={score:.3f}, velocity={topic_velocity:.3f}",
+                severity="high",
+                created_at=time.time(),
+                created_by="contagion_detector",
+            )
+            db.insert_quarantine_rule(rule)
+            db.set_agent_quarantined(agent_id, True)
+            graph.mark_quarantined(agent_id, True)
+
+            await _broadcast(app.state, {
+                "type": "quarantine",
+                "agent_id": agent_id,
+                "quarantined": True,
+                "reason": rule.reason,
+                "source": "contagion_detector",
+            })
 
     await _broadcast(app.state, {"type": "heartbeat", "agent_id": agent_id})
 
@@ -237,7 +353,14 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
 @app.get("/api/v1/graph")
 async def get_graph(_key: str = Depends(verify_api_key)):
     graph: AgentGraph = app.state.graph
-    return graph.get_graph_state()
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    graph_data = graph.get_graph_state()
+
+    cluster_colors = topic_clusterer.get_cluster_colors()
+    for node in graph_data["nodes"]:
+        node["topic_color"] = cluster_colors.get(node["id"], "")
+
+    return graph_data
 
 
 @app.get("/api/v1/metrics")
@@ -270,6 +393,34 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
         "killswitched_agents": killswitched,
         "cluster_count": len(real_clusters),
         "clusters": cluster_info,
+    }
+
+
+@app.get("/api/v1/threat-intel")
+async def get_threat_intel(_key: str = Depends(verify_api_key)):
+    """Return threat intelligence for agent-side pre-emptive filtering."""
+    graph: AgentGraph = app.state.graph
+    contagion_detector: ContagionDetector = app.state.contagion_detector
+
+    graph_state = graph.get_graph_state()
+
+    compromised_agents = [
+        n["id"] for n in graph_state["nodes"] if n["is_compromised"]
+    ]
+    quarantined_agents = [
+        n["id"] for n in graph_state["nodes"] if n["is_quarantined"]
+    ]
+
+    # Serialize compromised hashes from contagion detector
+    compromised_hashes = [
+        f"{h:032x}" for h in contagion_detector._compromised.values()
+    ]
+
+    return {
+        "compromised_agents": compromised_agents,
+        "compromised_hashes": compromised_hashes,
+        "quarantined_agents": quarantined_agents,
+        "generated_at": time.time(),
     }
 
 

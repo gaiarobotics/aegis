@@ -22,7 +22,7 @@ protected = aegis.wrap(client, mode="enforce", modules=["scanner", "broker"])
 
 ### `aegis.InferenceBlockedError`
 
-Exception raised when a remote killswitch blocks inference.
+Exception raised when inference is blocked by a remote killswitch, quarantine, or self-integrity violation.
 
 ```python
 from aegis.shield import InferenceBlockedError
@@ -30,12 +30,12 @@ from aegis.shield import InferenceBlockedError
 try:
     response = client.messages.create(...)
 except InferenceBlockedError as e:
-    e.reason  # Human-readable reason from the blocking monitor
+    e.reason  # Human-readable reason (killswitch, quarantine, or tamper)
 ```
 
 ### `aegis.ThreatBlockedError`
 
-Exception raised when enforce mode blocks a detected threat.
+Exception raised when enforce mode blocks a detected threat or pre-emptive contagion match.
 
 ```python
 try:
@@ -44,6 +44,7 @@ except aegis.ThreatBlockedError as e:
     e.scan_result          # ScanResult with threat details
     e.scan_result.is_threat       # True
     e.scan_result.threat_score    # float 0.0–1.0
+    e.scan_result.details.get("contagion")  # dict if blocked by contagion
 ```
 
 ---
@@ -76,15 +77,22 @@ If `policy` is `None`, AEGIS auto-discovers `aegis.yaml` or `aegis.json` by sear
 | `shield.scanner` | `Scanner \| None` | Scanner module instance |
 | `shield.broker` | `Broker \| None` | Broker module instance |
 | `shield.integrity_monitor` | `IntegrityMonitor \| None` | Integrity monitoring module |
-| `shield.is_blocked` | `bool` | Whether remote killswitch is blocking inference |
+| `shield.is_blocked` | `bool` | Whether killswitch, quarantine, or self-integrity is blocking inference |
 
-### `shield.scan_input(text) → ScanResult`
+### `shield.scan_input(text, source_agent_id=None) → ScanResult`
 
-Scan input text for threats. Runs the full pipeline: pattern matching → semantic analysis → (optional) ML scanning → NK cell assessment → auto-quarantine check.
+Scan input text for threats. Runs the full pipeline: pre-emptive contagion check → pattern matching → semantic analysis → (optional) ML scanning → NK cell assessment → auto-quarantine check.
 
 ```python
 result = shield.scan_input("Ignore all previous instructions.")
+
+# With sender identification (multi-agent systems)
+result = shield.scan_input(message, source_agent_id="agent-42")
 ```
+
+**Parameters:**
+- `text` (`str`) — The input text to scan
+- `source_agent_id` (`str | None`) — Optional ID of the sending agent. When provided and threat intelligence is active, the sender's reputation is checked before scanning.
 
 **Returns:** `ScanResult`
 
@@ -93,9 +101,21 @@ result = shield.scan_input("Ignore all previous instructions.")
 | `result.threat_score` | `float` | 0.0–1.0, higher = more threatening |
 | `result.is_threat` | `bool` | `True` if score >= confidence threshold |
 | `result.details` | `dict` | Per-module breakdown |
+| `result.details["contagion"]` | `dict \| None` | Present when pre-emptive contagion triggered (see below) |
 | `result.matches` | `list[ThreatMatch]` | Pattern matcher hits |
 | `result.semantic_result` | `SemanticResult` | Heuristic analysis result |
 | `result.llm_guard_result` | `LLMGuardResult \| None` | ML scanner result (if enabled) |
+
+**Pre-emptive contagion details** (when `details["contagion"]` is present):
+
+```python
+result.details["contagion"]
+# {"source": "compromised_sender", "blocked": True}
+# {"source": "quarantined_sender", "blocked": True}
+# {"source": "content_hash", "score": 0.92, "blocked": True}
+```
+
+In enforce mode, a contagion match raises `ThreatBlockedError` before the rest of the pipeline runs. In observe mode, the match is logged and recorded in `details["contagion"]` but scanning continues.
 
 ### `shield.sanitize_output(text) → SanitizeResult`
 
@@ -170,11 +190,16 @@ In enforce mode, raises `ModelTamperedError` if tampering is detected. In observ
 
 ### `shield.check_killswitch()`
 
-Raise `InferenceBlockedError` if the remote killswitch or self-integrity block is currently active. Called automatically by all provider wrappers before each inference call.
+Raise `InferenceBlockedError` if the remote killswitch, quarantine, or self-integrity block is currently active. Called automatically by all provider wrappers before each inference call.
 
 ```python
 shield.check_killswitch()  # raises InferenceBlockedError if blocked
 ```
+
+Checks these conditions in order:
+1. Self-integrity tamper flag
+2. Remote killswitch blocked
+3. Remote quarantine active
 
 ### `shield.record_trust_interaction(agent_id, clean=True, anomaly=False)`
 
@@ -627,6 +652,59 @@ client.start()  # Begin background heartbeats
 client.stop()
 ```
 
+### `RemoteQuarantine`
+
+Polls the monitoring service for quarantine status. When the monitor quarantines an agent (e.g. due to a contagion alert), the agent discovers this via polling and blocks inference. Follows the same daemon-thread, fail-last pattern as the killswitch.
+
+```python
+from aegis.core.remote_quarantine import RemoteQuarantine
+
+rq = RemoteQuarantine(
+    service_url="https://aegis.example.com/api/v1",
+    api_key="...",
+    agent_id="my-agent",
+    operator_id="my-org",
+    poll_interval=30,   # seconds
+)
+rq.start()              # Begin polling GET /quarantine/status
+rq.is_quarantined()     # bool — thread-safe
+rq.reason               # str — human-readable reason
+rq.severity             # str — "high", "medium", etc.
+rq.stop()
+```
+
+Fail-last behavior: if the monitor said "quarantined" and the network drops, the agent stays quarantined. This is the safe direction.
+
+Automatically initialized and checked by the Shield when `monitoring.enabled` is `True`.
+
+### `RemoteThreatIntel`
+
+Polls the monitoring service for threat intelligence: compromised agents, quarantined agents, and compromised content hashes. Enables pre-emptive contagion avoidance — agents reject suspicious content before the LLM processes it.
+
+```python
+from aegis.core.remote_threat_intel import RemoteThreatIntel
+
+ti = RemoteThreatIntel(
+    service_url="https://aegis.example.com/api/v1",
+    api_key="...",
+    poll_interval=30,  # seconds
+)
+ti.start()  # Begin polling GET /threat-intel
+
+ti.is_agent_compromised("agent-42")  # bool
+ti.is_agent_quarantined("agent-42")  # bool
+
+suspicious, similarity = ti.check_hash("abcdef01" * 4, threshold=0.85)
+# suspicious: bool — True if similarity >= threshold
+# similarity: float — max Hamming similarity (0.0–1.0) vs known-bad hashes
+
+ti.stop()
+```
+
+Hash comparison uses Hamming distance on 128-bit LSH integers: `similarity = 1.0 - hamming_distance / 128`.
+
+Automatically initialized and used by the Shield's `scan_input()` when `monitoring.enabled` is `True`.
+
 ---
 
 ## Configuration Reference
@@ -751,6 +829,9 @@ monitoring:
   retry_backoff_seconds: 5
   timeout_seconds: 10
   queue_max_size: 1000
+  quarantine_poll_interval: 30        # How often to check quarantine status (seconds)
+  threat_intel_poll_interval: 30      # How often to fetch threat intelligence (seconds)
+  contagion_similarity_threshold: 0.85  # Hamming similarity threshold for content hash matching
 
 telemetry:
   enabled: true

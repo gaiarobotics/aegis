@@ -52,7 +52,7 @@ def verify_report_signature(report_data: dict, config: MonitorConfig) -> bool:
         return False
 
     try:
-        from aegis.coordination.reports import ReportBase
+        from aegis.monitoring.reports import ReportBase
 
         report = ReportBase.from_dict(report_data)
         return report.verify(public_key)

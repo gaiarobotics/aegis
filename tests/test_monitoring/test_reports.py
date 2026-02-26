@@ -67,6 +67,40 @@ class TestCompromiseReport:
         assert "text" not in d
 
 
+class TestCompromiseReportContentHash:
+    def test_content_hash_hex_roundtrip(self):
+        """content_hash_hex survives to_dict/from_dict serialization."""
+        r = CompromiseReport(
+            agent_id="a1",
+            compromised_agent_id="a2",
+            content_hash_hex="deadbeef" * 4,
+        )
+        d = r.to_dict()
+        assert d["content_hash_hex"] == "deadbeef" * 4
+        r2 = CompromiseReport.from_dict(d)
+        assert r2.content_hash_hex == "deadbeef" * 4
+
+    def test_content_hash_hex_default_empty(self):
+        """Default content_hash_hex is an empty string."""
+        r = CompromiseReport()
+        assert r.content_hash_hex == ""
+
+    def test_content_hash_hex_invalidates_signature(self):
+        """Changing content_hash_hex after signing invalidates the signature."""
+        kp = generate_keypair("hmac-sha256")
+        r = CompromiseReport(
+            agent_id="a1",
+            compromised_agent_id="a2",
+            content_hash_hex="aabbccdd" * 4,
+        )
+        r.sign(kp)
+        assert r.verify(kp.public_key)
+
+        # Tamper with the hash
+        r.content_hash_hex = "11223344" * 4
+        assert not r.verify(kp.public_key)
+
+
 class TestTrustReport:
     def test_fields(self):
         r = TrustReport(

@@ -13,6 +13,7 @@
     let ws = null;
     let reconnectTimer = null;
     const RECONNECT_MS = 3000;
+    let topicViewActive = false;
 
     // ---- Initialize graph ----
     function initGraph() {
@@ -60,11 +61,15 @@
             const angle = (2 * Math.PI * i) / Math.max(n, 1);
             const r = 10;
             if (!isFiltered(node)) return;
+            var nodeColor = node.color || "#95a5a6";
+            if (topicViewActive && node.topic_color) {
+                nodeColor = node.topic_color;
+            }
             graphInstance.addNode(node.id, {
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
                 size: 8 + (node.trust_score || 0) * 0.1,
-                color: node.color || "#95a5a6",
+                color: nodeColor,
                 label: node.id,
                 _data: node,
             });
@@ -220,6 +225,9 @@
                 " score=" + (data.threat_score || 0).toFixed(2));
         } else if (type === "heartbeat") {
             logEvent("heartbeat", "HEARTBEAT: " + data.agent_id);
+        } else if (type === "contagion_alert") {
+            logEvent("contagion", "CONTAGION: agent=" + data.agent_id +
+                " score=" + (data.contagion_score || 0).toFixed(2));
         } else if (type === "killswitch") {
             logEvent("killswitch", "KILLSWITCH: " + data.action + " rule " + data.rule_id);
             fetchKillswitchRules();
@@ -367,10 +375,23 @@
         });
     }
 
+    // ---- Topic view toggle ----
+    function setupTopicToggle() {
+        var btn = document.getElementById("topic-view-toggle");
+        if (!btn) return;
+        btn.addEventListener("click", function () {
+            topicViewActive = !topicViewActive;
+            btn.classList.toggle("active", topicViewActive);
+            btn.textContent = topicViewActive ? "Trust view" : "Topic view";
+            fetchGraph();
+        });
+    }
+
     // ---- Boot ----
     document.addEventListener("DOMContentLoaded", function () {
         initGraph();
         setupFilters();
+        setupTopicToggle();
         fetchGraph();
         fetchMetrics();
         fetchKillswitchRules();

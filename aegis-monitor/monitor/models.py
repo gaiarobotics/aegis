@@ -56,6 +56,7 @@ class CompromiseRecord:
     nk_score: float = 0.0
     nk_verdict: str = ""
     recommended_action: str = "quarantine"
+    content_hash_hex: str = ""
     timestamp: float = field(default_factory=time.time)
 
 

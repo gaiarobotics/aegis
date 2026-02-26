@@ -135,6 +135,38 @@ class TestClientAuthHeader:
         assert received_headers.get("Authorization") == "Bearer test-key"
 
 
+class TestClientContentHash:
+    def test_content_hash_hex_in_payload(self):
+        """content_hash_hex appears in the sent payload when provided."""
+        kp = generate_keypair("hmac-sha256")
+        client = MonitoringClient(
+            _enabled_config(port=1),
+            agent_id="a1",
+            keypair=kp,
+        )
+        payloads = []
+        client._post = lambda endpoint, payload: (payloads.append(payload), True)[-1]
+
+        client.send_compromise_report(
+            "a2", content_hash_hex="deadbeef" * 4,
+        )
+        assert len(payloads) == 1
+        assert payloads[0]["content_hash_hex"] == "deadbeef" * 4
+
+    def test_content_hash_hex_defaults_empty(self):
+        """content_hash_hex defaults to empty string when omitted."""
+        client = MonitoringClient(
+            _enabled_config(port=1),
+            agent_id="a1",
+        )
+        payloads = []
+        client._post = lambda endpoint, payload: (payloads.append(payload), True)[-1]
+
+        client.send_compromise_report("a2")
+        assert len(payloads) == 1
+        assert payloads[0]["content_hash_hex"] == ""
+
+
 class TestClientGracefulDegradation:
     def test_no_exception_on_network_error(self):
         """Client should silently handle connection failures."""

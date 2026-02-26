@@ -136,21 +136,12 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
     reporter_trust_tier = reporter_node.trust_tier if reporter_node else 0
     reporter_is_quarantined = reporter_node.is_quarantined if reporter_node else False
 
-    # Gather victim's known hashes from graph node
-    victim_known_hashes: list[str] = []
-    victim_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
-    for hkey in ("content_hash", "style_hash"):
-        h = victim_attrs.get(hkey, "")
-        if h:
-            victim_known_hashes.append(h)
-
     vr = validator.validate(
         reporter_id=record.reporter_agent_id,
         compromised_id=record.compromised_agent_id,
         hash_hex=comp_hash,
         reporter_trust_tier=reporter_trust_tier,
         reporter_is_quarantined=reporter_is_quarantined,
-        victim_known_hashes=victim_known_hashes,
     )
 
     if not vr.accepted:

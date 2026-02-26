@@ -1,20 +1,18 @@
 """Anti-poisoning validation for compromise report hashes.
 
-Implements four defenses against malicious hash-cloud poisoning:
+Implements three defenses against malicious hash-cloud poisoning:
 
 1. **Rate limiting** — caps reports per agent per time window.
 2. **Reporter reputation** — requires minimum trust tier; quarantined
    reporters cannot confirm hashes.
-3. **Hash consistency** — reported hash must be within Hamming distance
-   of the victim's known hashes.
-4. **Cross-validation (quorum)** — multiple independent reporters must
+3. **Cross-validation (quorum)** — multiple independent reporters must
    agree before a hash is promoted to the contagion cloud.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from monitor.config import MonitorConfig
 from monitor.contagion import hamming_distance, hex_to_int
@@ -35,7 +33,6 @@ class ReportValidator:
         self._rate_window = config.compromise_rate_window
         self._min_trust_tier = config.compromise_min_trust_tier
         self._quorum = config.compromise_quorum
-        self._hash_max_distance = config.compromise_hash_max_distance
 
         self._rate_counters: dict[str, list[float]] = {}
         # hash_int -> (set of reporter_ids, oldest_timestamp)
@@ -48,7 +45,6 @@ class ReportValidator:
         hash_hex: str,
         reporter_trust_tier: int,
         reporter_is_quarantined: bool,
-        victim_known_hashes: list[str],
     ) -> ValidationResult:
         # Empty hash — skip all hash validation
         if not hash_hex:
@@ -84,23 +80,7 @@ class ReportValidator:
                 rejection_reason="reporter_quarantined",
             )
 
-        # Defense 3: Hash consistency check
-        if victim_known_hashes:
-            reported_int = hex_to_int(hash_hex)
-            all_too_far = True
-            for known_hex in victim_known_hashes:
-                known_int = hex_to_int(known_hex)
-                if hamming_distance(reported_int, known_int) <= self._hash_max_distance:
-                    all_too_far = False
-                    break
-            if all_too_far:
-                return ValidationResult(
-                    accepted=True,
-                    hash_confirmed=False,
-                    rejection_reason="hash_inconsistent",
-                )
-
-        # Defense 4: Cross-validation (quorum)
+        # Defense 3: Cross-validation (quorum)
         self._prune_pending(now)
 
         reported_int = hex_to_int(hash_hex)

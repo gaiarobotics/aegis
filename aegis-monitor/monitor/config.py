@@ -26,7 +26,6 @@ class MonitorConfig:
     compromise_rate_window: int = 3600
     compromise_min_trust_tier: int = 1
     compromise_quorum: int = 2
-    compromise_hash_max_distance: int = 96
 
     @property
     def effective_database_url(self) -> str:
@@ -65,7 +64,6 @@ class MonitorConfig:
             compromise_rate_window=int(raw.get("compromise_rate_window", 3600)),
             compromise_min_trust_tier=int(raw.get("compromise_min_trust_tier", 1)),
             compromise_quorum=int(raw.get("compromise_quorum", 2)),
-            compromise_hash_max_distance=int(raw.get("compromise_hash_max_distance", 96)),
         )
 
         # Environment overrides
@@ -91,7 +89,5 @@ class MonitorConfig:
             cfg.compromise_min_trust_tier = int(v)
         if v := os.environ.get("MONITOR_COMPROMISE_QUORUM"):
             cfg.compromise_quorum = int(v)
-        if v := os.environ.get("MONITOR_COMPROMISE_HASH_MAX_DISTANCE"):
-            cfg.compromise_hash_max_distance = int(v)
 
         return cfg

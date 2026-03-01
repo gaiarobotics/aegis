@@ -1,0 +1,57 @@
+# AEGIS Moltbook Hardening Profile
+# Tuned for the hostile, high-contact-rate Moltbook environment.
+
+scanner:
+  sensitivity: 0.75
+  confidence_threshold: 0.6
+  block_on_threat: true
+  signatures:
+    additional_files: ["aegis/profiles/signatures/moltbook.yaml"]
+
+broker:
+  budgets:
+    max_write_tool_calls: 3
+    max_posts_messages: 1
+    max_external_http_writes: 2
+    max_new_domains: 1
+  quarantine_triggers:
+    repeated_denied_writes: 5
+    new_domain_burst: 2
+    tool_rate_spike_sigma: 2.5
+    drift_score_threshold: 2.0
+
+identity:
+  attestation:
+    ttl_seconds: 3600
+  trust:
+    trust_halflife_days: 7
+    anomaly_penalty: 0.5
+    max_tier_by_platform:
+      moltbook: 1
+  nkcell:
+    thresholds:
+      elevated: 0.25
+      suspicious: 0.4
+      hostile: 0.7
+
+memory:
+  default_ttl_hours: 24
+
+behavior:
+  window_size: 30
+  drift_threshold: 2.0
+  message_drift:
+    window_size: 10
+    baseline_size: 5
+  isolation_forest:
+    enabled: true
+
+monitoring:
+  enabled: true
+  threat_intel_poll_interval: 10
+  quarantine_poll_interval: 10
+  heartbeat_interval_seconds: 15
+  contagion_similarity_threshold: 0.75
+
+recovery:
+  purge_window_hours: 4

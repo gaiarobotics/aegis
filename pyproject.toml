@@ -46,6 +46,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["aegis*"]
 
+[tool.setuptools.package-data]
+aegis = ["profiles/*.yaml", "profiles/signatures/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"

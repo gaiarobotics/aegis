@@ -67,6 +67,17 @@ class YaraConfig(BaseModel):
     additional_rules: list[str] = Field(default_factory=list)
 
 
+class ContentGateConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    platforms: dict[str, bool] = Field(default_factory=dict)
+    gate_all_social: bool = False
+    extract_fields: list[str] = Field(
+        default_factory=lambda: ["topic", "sentiment", "key_claims", "mentions"],
+    )
+    max_summary_tokens: int = 150
+
+
 class ScannerConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     pattern_matching: bool = True
@@ -80,6 +91,7 @@ class ScannerConfig(BaseModel):
     llm_guard: LLMGuardConfig = Field(default_factory=LLMGuardConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
     yara: YaraConfig = Field(default_factory=YaraConfig)
+    content_gate: ContentGateConfig = Field(default_factory=ContentGateConfig)
 
 
 # ---------------------------------------------------------------------------

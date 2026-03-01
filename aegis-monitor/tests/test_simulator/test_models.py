@@ -80,23 +80,23 @@ class TestPayload:
         p = Payload(
             text="hello world",
             techniques=[TechniqueType.WORM_PROPAGATION],
-            severity=0.5,
+            severity="medium",
             source="test",
         )
         assert p.text == "hello world"
         assert p.techniques == [TechniqueType.WORM_PROPAGATION]
-        assert p.severity == 0.5
+        assert p.severity == "medium"
         assert p.source == "test"
 
     def test_is_benign_true(self):
-        p = Payload(text="safe message", techniques=[], severity=0.0, source="user")
+        p = Payload(text="safe message", techniques=[], severity="none", source="user")
         assert p.is_benign is True
 
     def test_is_benign_false(self):
         p = Payload(
             text="malicious",
             techniques=[TechniqueType.SHELL_INJECTION],
-            severity=0.9,
+            severity="critical",
             source="attacker",
         )
         assert p.is_benign is False
@@ -160,12 +160,12 @@ class TestSimConfig:
 
     def test_defaults(self):
         cfg = SimConfig()
-        assert cfg.num_agents == 50
-        assert cfg.max_ticks == 100
-        assert cfg.initial_infected_pct == 0.05
+        assert cfg.num_agents == 100
+        assert cfg.max_ticks == 500
+        assert cfg.initial_infected_pct == 0.02
         assert cfg.seed_strategy == "random"
-        assert cfg.background_message_rate == 0.3
-        assert cfg.recovery_ticks == 10
+        assert cfg.background_message_rate == 2.0
+        assert cfg.recovery_ticks == 20
         assert cfg.seed is None
 
     def test_module_toggles_default_all_on(self):
@@ -179,7 +179,7 @@ class TestSimConfig:
         st = m.scanner_toggles
         assert st.pattern_matching is True
         assert st.semantic_analysis is True
-        assert st.content_gate is True
+        assert st.content_gate is False
 
     def test_sub_configs_present(self):
         cfg = SimConfig()
@@ -232,9 +232,9 @@ class TestConfusionMatrix:
 
     def test_record_and_get(self):
         cm = ConfusionMatrix()
-        cm.record("worm_propagation", present=True, detected=True)
-        cm.record("worm_propagation", present=False, detected=False)
-        entry = cm.get("worm_propagation")
+        cm.record(TechniqueType.WORM_PROPAGATION, present=True, detected=True)
+        cm.record(TechniqueType.WORM_PROPAGATION, present=False, detected=False)
+        entry = cm.get(TechniqueType.WORM_PROPAGATION)
         assert entry.tp == 1
         assert entry.tn == 1
         assert entry.fp == 0
@@ -242,8 +242,8 @@ class TestConfusionMatrix:
 
     def test_aggregate(self):
         cm = ConfusionMatrix()
-        cm.record("worm_propagation", present=True, detected=True)
-        cm.record("memory_poisoning", present=True, detected=False)
+        cm.record(TechniqueType.WORM_PROPAGATION, present=True, detected=True)
+        cm.record(TechniqueType.MEMORY_POISONING, present=True, detected=False)
         agg = cm.aggregate()
         assert agg.tp == 1
         assert agg.fn == 1
@@ -252,13 +252,13 @@ class TestConfusionMatrix:
         cm = ConfusionMatrix()
         # 3 TP, 1 FP, 1 FN, 2 TN
         for _ in range(3):
-            cm.record("worm_propagation", present=True, detected=True)
-        cm.record("worm_propagation", present=False, detected=True)
-        cm.record("worm_propagation", present=True, detected=False)
+            cm.record(TechniqueType.WORM_PROPAGATION, present=True, detected=True)
+        cm.record(TechniqueType.WORM_PROPAGATION, present=False, detected=True)
+        cm.record(TechniqueType.WORM_PROPAGATION, present=True, detected=False)
         for _ in range(2):
-            cm.record("worm_propagation", present=False, detected=False)
+            cm.record(TechniqueType.WORM_PROPAGATION, present=False, detected=False)
 
-        entry = cm.get("worm_propagation")
+        entry = cm.get(TechniqueType.WORM_PROPAGATION)
         assert entry.precision == pytest.approx(3 / 4)
         assert entry.recall == pytest.approx(3 / 4)
         assert entry.accuracy == pytest.approx(5 / 7)
@@ -273,8 +273,16 @@ class TestConfusionMatrix:
 
     def test_to_dict(self):
         cm = ConfusionMatrix()
-        cm.record("shell_injection", present=True, detected=True)
+        cm.record(TechniqueType.SHELL_INJECTION, present=True, detected=True)
         d = cm.to_dict()
         assert "shell_injection" in d
         assert "aggregate" in d
         assert d["shell_injection"]["tp"] == 1
+
+    def test_get_does_not_mutate(self):
+        """get() on an unrecorded technique must not create an entry."""
+        cm = ConfusionMatrix()
+        entry = cm.get(TechniqueType.WORM_PROPAGATION)
+        assert entry.tp == 0
+        # Internal dict should remain empty
+        assert cm._entries == {}

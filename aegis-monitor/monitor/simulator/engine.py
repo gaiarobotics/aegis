@@ -6,7 +6,6 @@ optionally integrating AEGIS Shield modules for detection measurement.
 
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import asdict
 from typing import Any

@@ -23,6 +23,14 @@ class ScanResult:
     is_threat: bool = False
     details: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def gated_content(self) -> str | None:
+        """Return gated summary if content gate was applied, else None."""
+        gate = self.details.get("content_gate")
+        if gate and gate.get("gated"):
+            return gate["summary"]
+        return None
+
 
 @dataclass
 class ActionResult:
@@ -130,10 +138,13 @@ class Shield:
         self._killswitch = None
         self._remote_quarantine = None
         self._remote_threat_intel = None
+        self._content_gate = None
+        self._platform_detector = None
         self._self_integrity = None
         self._self_integrity_blocked = False
 
         self._init_modules()
+        self._init_platform_detector()
         self._init_monitoring()
         self._init_killswitch()
         self._init_remote_quarantine()
@@ -148,6 +159,15 @@ class Shield:
                 self._scanner = Scanner(config=self._config)
             except Exception:
                 logger.debug("Scanner module init failed", exc_info=True)
+
+            # Content gate (scanner sub-module)
+            try:
+                from aegis.scanner.content_gate import ContentGate
+                gate_cfg = self._config.scanner.content_gate
+                if gate_cfg.enabled:
+                    self._content_gate = ContentGate(config=gate_cfg)
+            except Exception:
+                logger.debug("Content gate init failed", exc_info=True)
 
         if self._config.is_module_enabled("broker"):
             try:
@@ -397,6 +417,34 @@ class Shield:
         except Exception:
             logger.debug("Self-integrity watcher init failed", exc_info=True)
 
+    def _init_platform_detector(self) -> None:
+        """Initialize platform auto-detection."""
+        try:
+            from aegis.core.platform_detection import PlatformDetector
+            self._platform_detector = PlatformDetector(
+                on_activate=self._on_platform_activated,
+                explicit_profiles=set(self._config.profiles),
+            )
+        except Exception:
+            logger.debug("Platform detector init failed", exc_info=True)
+
+    def _on_platform_activated(self, platform: str) -> None:
+        """Callback when a platform is auto-detected at runtime."""
+        try:
+            from aegis.core.config import _load_profile, _deep_merge
+            profile_data = _load_profile(platform)
+            # Merge profile under current config (current config wins)
+            current_dict = self._config.model_dump()
+            merged = _deep_merge(profile_data, current_dict)
+            merged["profiles"] = list(set(self._config.profiles) | {platform})
+            self._config = AegisConfig.model_validate(merged)
+            self._mode = self._config.mode
+            logger.info("Platform '%s' auto-detected — profile applied", platform)
+        except FileNotFoundError:
+            logger.debug("No profile found for platform '%s'", platform)
+        except Exception:
+            logger.debug("Platform activation failed for '%s'", platform, exc_info=True)
+
     def _on_self_tamper(self, path: str) -> None:
         """Callback when AEGIS file tampering is detected."""
         action = self._config.self_integrity.on_tamper
@@ -498,6 +546,29 @@ class Shield:
                 "threat_score": scan_result.threat_score,
                 "is_threat": scan_result.is_threat,
             }
+
+        # Content gate — replace raw content with summary for configured platforms
+        if self._content_gate is not None:
+            try:
+                source_platform = None
+                if source_agent_id:
+                    canonical = self.resolve_agent_id(source_agent_id)
+                    for prefix in ("moltbook", "openclaw", "slack", "discord"):
+                        if canonical.startswith(f"{prefix}:"):
+                            source_platform = prefix
+                            break
+
+                gated = self._content_gate.process(text, platform=source_platform)
+                if gated is not None:
+                    result.details["content_gate"] = {
+                        "gated": True,
+                        "summary": gated.summary,
+                        "method": gated.method,
+                        "original_length": gated.original_length,
+                        "metadata": gated.metadata,
+                    }
+            except Exception:
+                logger.debug("Content gate processing failed", exc_info=True)
 
         # Step 2: Identity / NK cell assessment
         if self._nk_cell is not None:
@@ -723,10 +794,15 @@ class Shield:
         """Resolve a raw agent identifier to its canonical form.
 
         Returns the raw ID unchanged if no resolver is configured.
+        Also notifies the platform detector for auto-detection.
         """
         if self._identity_resolver is None:
-            return raw_id
-        return self._identity_resolver.resolve(raw_id)
+            canonical = raw_id
+        else:
+            canonical = self._identity_resolver.resolve(raw_id)
+        if self._platform_detector is not None:
+            self._platform_detector.check_agent_id(canonical)
+        return canonical
 
     def record_trust_interaction(
         self,

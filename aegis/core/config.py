@@ -133,6 +133,7 @@ class TrustConfig(BaseModel):
     anomaly_penalty: float = 0.3
     persistence_path: str = ".aegis/trust.json"
     interaction_min_interval: float = 0.1
+    max_tier_by_platform: dict[str, int] = Field(default_factory=dict)
 
 
 class NKCellThresholdsConfig(BaseModel):

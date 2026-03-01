@@ -103,7 +103,7 @@ class TrustManager:
             agent_id: The agent identifier.
 
         Returns:
-            The trust tier (0-3).
+            The trust tier (0-3), subject to platform caps.
         """
         agent_id = self._normalize_id(agent_id)
         if agent_id in self._compromised:
@@ -113,7 +113,17 @@ class TrustManager:
             return TIER_UNKNOWN
 
         record = self._records[agent_id]
-        return self._compute_tier(record)
+        tier = self._compute_tier(record)
+
+        # Apply platform-based tier cap
+        max_tiers = self._config.max_tier_by_platform
+        if max_tiers:
+            for platform, cap in max_tiers.items():
+                if agent_id.startswith(f"{platform}:"):
+                    tier = min(tier, cap)
+                    break
+
+        return tier
 
     def _compute_tier(self, record: TrustRecord) -> int:
         """Compute the tier for a trust record."""

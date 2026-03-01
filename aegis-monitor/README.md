@@ -83,3 +83,7 @@ Four built-in presets are included:
 | **scanner-only** | Only the Scanner module enabled — measures detection without behavioral defense |
 
 Save custom presets via the sidebar. Presets store the full config (topology, population, corpus, modules) as YAML.
+
+### Example scenario
+
+See [Moltbook Worm Outbreak](monitor/simulator/presets/scenarios/moltbook-worm-outbreak.md) for a guided walkthrough that runs the outbreak preset with and without AEGIS, explains what to watch for at each phase, and shows how to interpret the results.

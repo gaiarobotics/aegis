@@ -433,9 +433,10 @@ class Shield:
         try:
             from aegis.core.config import _load_profile, _deep_merge
             profile_data = _load_profile(platform)
-            # Merge profile under current config (current config wins)
+            # Profile overlays defaults — since the operator didn't explicitly
+            # list this profile, the profile's values should take effect
             current_dict = self._config.model_dump()
-            merged = _deep_merge(profile_data, current_dict)
+            merged = _deep_merge(current_dict, profile_data)
             merged["profiles"] = list(set(self._config.profiles) | {platform})
             self._config = AegisConfig.model_validate(merged)
             self._mode = self._config.mode

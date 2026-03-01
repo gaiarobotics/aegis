@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS Epidemic Simulator</title>
+    <link rel="stylesheet" href="/static/simulator.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- TOP BAR -->
+    <div class="sim-top-bar">
+        <h1>AEGIS Epidemic Simulator</h1>
+        <a href="/" class="nav-link">&larr; Monitor</a>
+        <div class="sim-controls">
+            <button id="btn-generate">Generate</button>
+            <button id="btn-start" disabled>Start</button>
+            <button id="btn-pause" disabled>Pause</button>
+            <button id="btn-resume" disabled style="display:none">Resume</button>
+            <button id="btn-stop" disabled>Stop</button>
+            <button id="btn-step" disabled>Step</button>
+            <button id="btn-reset">Reset</button>
+        </div>
+        <div class="sim-tick-info">
+            <span>Tick: <strong id="tick-counter">0</strong></span>
+            <span>Speed: <input type="range" id="speed-slider" min="1" max="50" value="10"> <span id="speed-label">10</span> t/s</span>
+        </div>
+        <div class="ws-status disconnected" id="ws-status"></div>
+    </div>
+
+    <!-- MAIN LAYOUT: 3-column -->
+    <div class="sim-main">
+        <!-- LEFT SIDEBAR -->
+        <div class="sim-sidebar-left">
+            <!-- Panel 1: Scenario Parameters -->
+            <div class="panel">
+                <h3 class="panel-header" data-toggle="params-body">Scenario Parameters</h3>
+                <div class="panel-body" id="params-body">
+                    <label>Agents <input type="number" id="p-agents" value="100" min="10" max="5000"></label>
+                    <label>Topology
+                        <select id="p-topology">
+                            <option value="scale_free" selected>Scale-Free</option>
+                            <option value="small_world">Small World</option>
+                            <option value="random">Random</option>
+                            <option value="community">Community</option>
+                        </select>
+                    </label>
+                    <label>Mean Degree <input type="number" id="p-degree" value="6" min="2" max="50"></label>
+                    <label>BA edges (m) <input type="number" id="p-m" value="3" min="1" max="20"></label>
+                    <label>Rewire Prob <input type="number" id="p-rewire" value="0.1" min="0" max="1" step="0.05"></label>
+                    <label>Communities <input type="number" id="p-communities" value="5" min="2" max="20"></label>
+                    <label>Intra Prob <input type="number" id="p-intra" value="0.3" min="0" max="1" step="0.05"></label>
+                    <label>Inter Prob <input type="number" id="p-inter" value="0.01" min="0" max="1" step="0.01"></label>
+                    <label>Initial Infected % <input type="number" id="p-infected" value="2" min="1" max="50"></label>
+                    <label>Seed Strategy
+                        <select id="p-seed-strategy">
+                            <option value="random">Random</option>
+                            <option value="hubs">Hubs</option>
+                            <option value="periphery">Periphery</option>
+                            <option value="clustered">Clustered</option>
+                        </select>
+                    </label>
+                    <label>Background Rate <input type="number" id="p-bg-rate" value="2.0" min="0" max="10" step="0.5"></label>
+                    <label>Recovery Ticks <input type="number" id="p-recovery" value="20" min="1" max="100"></label>
+                    <label>Max Ticks <input type="number" id="p-max-ticks" value="500" min="10" max="5000"></label>
+                    <label>Random Seed <input type="number" id="p-seed" value="" placeholder="auto"></label>
+
+                    <h4>Technique Probabilities</h4>
+                    <label>Worm Propagation <input type="number" id="p-t-worm" value="0.40" min="0" max="1" step="0.05"></label>
+                    <label>Memory Poisoning <input type="number" id="p-t-memory" value="0.25" min="0" max="1" step="0.05"></label>
+                    <label>Role Hijacking <input type="number" id="p-t-role" value="0.15" min="0" max="1" step="0.05"></label>
+                    <label>Credential Extraction <input type="number" id="p-t-cred" value="0.10" min="0" max="1" step="0.05"></label>
+                    <label>Shell Injection <input type="number" id="p-t-shell" value="0.10" min="0" max="1" step="0.05"></label>
+                </div>
+            </div>
+
+            <!-- Panel 2: AEGIS Module Toggles -->
+            <div class="panel">
+                <h3 class="panel-header" data-toggle="modules-body">AEGIS Modules</h3>
+                <div class="panel-body" id="modules-body">
+                    <label class="toggle"><input type="checkbox" id="m-scanner" checked> Scanner</label>
+                    <div class="sub-toggles" id="scanner-subs">
+                        <label class="toggle"><input type="checkbox" id="m-pattern" checked> Pattern Matching</label>
+                        <label class="toggle"><input type="checkbox" id="m-semantic" checked> Semantic Analysis</label>
+                        <label class="toggle"><input type="checkbox" id="m-gate"> Content Gate</label>
+                    </div>
+                    <label>Sensitivity <input type="range" id="m-sensitivity" min="0" max="100" value="50"> <span id="sensitivity-val">0.50</span></label>
+                    <label>Confidence <input type="range" id="m-confidence" min="0" max="100" value="80"> <span id="confidence-val">0.80</span></label>
+                    <label class="toggle"><input type="checkbox" id="m-broker" checked> Broker</label>
+                    <label class="toggle"><input type="checkbox" id="m-identity" checked> Identity</label>
+                    <label class="toggle"><input type="checkbox" id="m-behavior" checked> Behavior</label>
+                    <label class="toggle"><input type="checkbox" id="m-recovery" checked> Recovery</label>
+                </div>
+            </div>
+
+            <!-- Panel 3: Presets -->
+            <div class="panel">
+                <h3 class="panel-header" data-toggle="presets-body">Presets</h3>
+                <div class="panel-body" id="presets-body">
+                    <select id="preset-select"><option value="">-- Select Preset --</option></select>
+                    <button id="btn-load-preset">Load</button>
+                    <div class="preset-save">
+                        <input type="text" id="preset-name" placeholder="Preset name">
+                        <button id="btn-save-preset">Save</button>
+                    </div>
+                    <button id="btn-delete-preset">Delete Selected</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- CENTER -->
+        <div class="sim-center">
+            <div class="center-tabs">
+                <button class="tab active" data-tab="graph-tab">Agent Graph</button>
+                <button class="tab" data-tab="chart-tab">Population Chart</button>
+            </div>
+            <div class="tab-content" id="graph-tab">
+                <div id="sim-graph-canvas"></div>
+            </div>
+            <div class="tab-content" id="chart-tab" style="display:none">
+                <canvas id="population-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- RIGHT SIDEBAR -->
+        <div class="sim-sidebar-right">
+            <!-- Confusion Matrix -->
+            <div class="panel">
+                <h3 class="panel-header">Confusion Matrix</h3>
+                <div class="panel-body">
+                    <div class="cm-tabs">
+                        <button class="cm-tab active" data-cm="aggregate">All</button>
+                        <button class="cm-tab" data-cm="worm_propagation">Worm</button>
+                        <button class="cm-tab" data-cm="memory_poisoning">Memory</button>
+                        <button class="cm-tab" data-cm="role_hijacking">Role</button>
+                        <button class="cm-tab" data-cm="credential_extraction">Cred</button>
+                        <button class="cm-tab" data-cm="shell_injection">Shell</button>
+                    </div>
+                    <div id="cm-display">
+                        <div class="cm-grid">
+                            <div class="cm-cell cm-header"></div>
+                            <div class="cm-cell cm-header">Detected</div>
+                            <div class="cm-cell cm-header">Not Det.</div>
+                            <div class="cm-cell cm-header">Present</div>
+                            <div class="cm-cell cm-tp" id="cm-tp">0</div>
+                            <div class="cm-cell cm-fn" id="cm-fn">0</div>
+                            <div class="cm-cell cm-header">Absent</div>
+                            <div class="cm-cell cm-fp" id="cm-fp">0</div>
+                            <div class="cm-cell cm-tn" id="cm-tn">0</div>
+                        </div>
+                        <div class="cm-metrics">
+                            <span>Precision: <strong id="cm-precision">-</strong></span>
+                            <span>Recall: <strong id="cm-recall">-</strong></span>
+                            <span>F1: <strong id="cm-f1">-</strong></span>
+                            <span>FPR: <strong id="cm-fpr">-</strong></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Event Log -->
+            <div class="panel panel-log">
+                <h3 class="panel-header">Event Log</h3>
+                <div class="panel-body">
+                    <div id="event-log" class="event-log"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BOTTOM BAR -->
+    <div class="sim-bottom-bar">
+        <span>R&#8320;: <strong id="stat-r0">-</strong></span>
+        <span>Infections: <strong id="stat-infections">0</strong></span>
+        <span>Detection Rate: <strong id="stat-detection-rate">-</strong></span>
+        <span>FPR: <strong id="stat-fpr">-</strong></span>
+        <span>MTTQ: <strong id="stat-mttq">-</strong></span>
+        <button id="btn-export">Download Results</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="/static/simulator.js"></script>
+</body>
+</html>

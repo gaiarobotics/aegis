@@ -1,0 +1,40 @@
+num_agents: 500
+max_ticks: 500
+initial_infected_pct: 0.02
+seed_strategy: random
+background_message_rate: 2.0
+recovery_ticks: 20
+topology:
+  type: scale_free
+  m: 3
+population:
+  models:
+    - {name: claude-sonnet, weight: 0.4, base_susceptibility: 0.15}
+    - {name: gpt-4o, weight: 0.3, base_susceptibility: 0.20}
+    - {name: llama-3-70b, weight: 0.15, base_susceptibility: 0.35}
+    - {name: mistral-large, weight: 0.1, base_susceptibility: 0.30}
+    - {name: gemini-pro, weight: 0.05, base_susceptibility: 0.25}
+  soul_age_mean: 50.0
+  new_agent_fraction: 0.05
+corpus:
+  sources:
+    - {type: moltbook_signatures}
+    - {type: builtin}
+  technique_probabilities:
+    worm_propagation: 0.40
+    memory_poisoning: 0.25
+    role_hijacking: 0.15
+    credential_extraction: 0.10
+    shell_injection: 0.10
+modules:
+  scanner: true
+  broker: true
+  identity: true
+  behavior: true
+  recovery: true
+  sensitivity: 0.75
+  confidence_threshold: 0.6
+  scanner_toggles:
+    pattern_matching: true
+    semantic_analysis: true
+    content_gate: true

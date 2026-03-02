@@ -26,6 +26,11 @@ class Broker:
         self._lock = threading.Lock()
         self._denied_write_count: int = 0
 
+    @property
+    def quarantine(self) -> QuarantineManager:
+        """Access the quarantine manager."""
+        return self._quarantine
+
     def register_tool(self, manifest: ToolManifest, *, overwrite: bool = False) -> None:
         """Register a tool manifest with the broker's registry."""
         self._registry.register(manifest, overwrite=overwrite)
@@ -68,6 +73,9 @@ class Broker:
         # Step 1: If quarantined and not explicitly a read -> DENY
         rw = action_request.read_write.lower().strip() if action_request.read_write else ""
         if self._quarantine.is_quarantined() and rw != "read":
+            self._quarantine.escalate(
+                f"Write attempt during quarantine: {action_request.target}"
+            )
             return ActionResponse(
                 request_id=action_request.id,
                 decision=ActionDecision.DENY,

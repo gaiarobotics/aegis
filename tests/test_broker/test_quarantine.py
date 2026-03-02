@@ -213,6 +213,55 @@ class TestQuarantineCooldown:
             assert qm.is_quarantined() is True
 
 
+class TestQuarantineEscalation:
+    def test_not_escalated_by_default(self):
+        qm = QuarantineManager()
+        assert qm.is_escalated is False
+
+    def test_escalate_sets_flag(self):
+        qm = QuarantineManager()
+        qm.enter_quarantine("test")
+        qm.escalate("write attempt during quarantine")
+        assert qm.is_escalated is True
+
+    def test_escalation_reason_stored(self):
+        qm = QuarantineManager()
+        qm.escalate("write attempt: some_tool")
+        assert qm.escalation_reason == "write attempt: some_tool"
+
+    def test_exit_quarantine_clears_escalation(self):
+        qm = QuarantineManager()
+        qm.enter_quarantine("test")
+        qm.escalate("write attempt")
+        qm.exit_quarantine()
+        assert qm.is_escalated is False
+        assert qm.escalation_reason is None
+
+    def test_exit_with_token_clears_escalation(self):
+        qm = QuarantineManager(exit_token="secret")
+        qm.enter_quarantine("test")
+        qm.escalate("write attempt")
+        qm.exit_quarantine(token="secret")
+        assert qm.is_escalated is False
+        assert qm.escalation_reason is None
+
+    def test_escalation_survives_cooldown(self):
+        """Cooldown auto-release does NOT clear escalation."""
+        qm = QuarantineManager()
+        qm.enter_quarantine("Repeated denied writes: 50 >= 50")
+        assert qm.severity == "low"
+        qm.escalate("write attempt during quarantine")
+
+        # Simulate time passing beyond cooldown
+        with patch("aegis.broker.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = qm._quarantine_time + _COOLDOWN_SECONDS["low"] + 1
+            # Quarantine itself auto-releases
+            assert qm.is_quarantined() is False
+            # But escalation persists
+            assert qm.is_escalated is True
+            assert qm.escalation_reason == "write attempt during quarantine"
+
+
 class TestQuarantineThreadSafety:
     def test_concurrent_enter_exit(self):
         """Basic thread-safety: concurrent enter/exit should not crash."""

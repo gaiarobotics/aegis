@@ -44,7 +44,27 @@ class RecoveryQuarantine:
         self._read_only = False
         self._severity: str = "high"
         self._quarantine_time: float | None = None
+        self._escalated: bool = False
+        self._escalation_reason: Optional[str] = None
         self._lock = threading.Lock()
+
+    def escalate(self, reason: str) -> None:
+        """Escalate quarantine to full inference block."""
+        with self._lock:
+            self._escalated = True
+            self._escalation_reason = reason
+
+    @property
+    def is_escalated(self) -> bool:
+        """Return whether quarantine has been escalated to inference block."""
+        with self._lock:
+            return self._escalated
+
+    @property
+    def escalation_reason(self) -> str | None:
+        """Return the reason for escalation, or None."""
+        with self._lock:
+            return self._escalation_reason
 
     def enter(self, reason: str, read_only: bool = True) -> None:
         """Activate quarantine with a given reason.
@@ -78,6 +98,8 @@ class RecoveryQuarantine:
             self._read_only = False
             self._severity = "high"
             self._quarantine_time = None
+            self._escalated = False
+            self._escalation_reason = None
 
     def is_quarantined(self) -> bool:
         """Check if currently quarantined.

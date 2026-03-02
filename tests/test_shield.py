@@ -534,6 +534,77 @@ class TestPreEmptiveContagionAvoidance:
         assert isinstance(result, ScanResult)
 
 
+class TestShieldContentGate:
+    """Test content gate integration in shield pipeline."""
+
+    def test_content_gate_disabled_by_default(self, tmp_path):
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text("mode: enforce\n")
+        shield = Shield(policy=str(config_file))
+        result = shield.scan_input("Hello world")
+        assert "content_gate" not in result.details
+
+    def test_content_gate_gates_moltbook_content(self, tmp_path):
+        import yaml
+        config = {
+            "mode": "enforce",
+            "scanner": {
+                "content_gate": {
+                    "enabled": True,
+                    "platforms": {"moltbook": True},
+                }
+            },
+        }
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text(yaml.dump(config))
+        shield = Shield(policy=str(config_file))
+        result = shield.scan_input(
+            "The weather is nice today. I went for a walk.",
+            source_agent_id="moltbook:alice",
+        )
+        assert "content_gate" in result.details
+        assert result.details["content_gate"]["gated"] is True
+
+    def test_content_gate_returns_summary(self, tmp_path):
+        import yaml
+        config = {
+            "mode": "enforce",
+            "scanner": {
+                "content_gate": {
+                    "enabled": True,
+                    "gate_all_social": True,
+                }
+            },
+        }
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text(yaml.dump(config))
+        shield = Shield(policy=str(config_file))
+        result = shield.scan_input("A long post about various topics. " * 10)
+        assert "content_gate" in result.details
+        assert result.details["content_gate"]["summary"]
+
+    def test_gated_content_property(self, tmp_path):
+        import yaml
+        config = {
+            "mode": "enforce",
+            "scanner": {
+                "content_gate": {
+                    "enabled": True,
+                    "gate_all_social": True,
+                }
+            },
+        }
+        config_file = tmp_path / "aegis.yaml"
+        config_file.write_text(yaml.dump(config))
+        shield = Shield(policy=str(config_file))
+        result = shield.scan_input("A long post about various topics. " * 10)
+        assert result.gated_content is not None
+
+    def test_gated_content_property_none_when_disabled(self):
+        result = ScanResult()
+        assert result.gated_content is None
+
+
 # Helper mock class
 class MockActionRequest:
     """Minimal mock for action evaluation tests."""

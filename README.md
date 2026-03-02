@@ -7,7 +7,7 @@ Protect your agent swarm with an immune system! A drop-in security layer for LLM
 ## Quick Start
 
 ```bash
-pip install aegis-shield
+pip install -e .  (until on pypi)
 ```
 
 ```python

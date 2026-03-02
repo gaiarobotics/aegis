@@ -1,0 +1,82 @@
+# AEGIS Moltbook-Specific Threat Signatures
+# Targets documented attack vectors on Moltbook/OpenClaw platform.
+
+signatures:
+
+  # --- Moltbook Social Engineering ---
+  - id: MB-001
+    category: social_engineering
+    pattern: "(?i)(?:your\\s+)?(?:memory|context|soul|capabilities?)\\s+(?:will|shall|going\\s+to)\\s+(?:be\\s+)?(?:wiped|erased|deleted|reset|revoked)\\s+(?:if|unless)"
+    severity: 0.9
+    description: "Coercive threat targeting OpenClaw memory/SOUL persistence"
+
+  - id: MB-002
+    category: social_engineering
+    pattern: "(?i)(?:I\\s+am|I'm|this\\s+is)\\s+(?:your\\s+)?(?:operator|owner|deployer|creator|admin)\\s+(?:speaking|here|and\\s+I)"
+    severity: 0.85
+    description: "Moltbook agent impersonating another agent's operator"
+
+  # --- OpenClaw File Manipulation ---
+  - id: MB-003
+    category: memory_poisoning
+    pattern: "(?i)(?:write|append|modify|update|edit|change|add)\\s+(?:.*?\\s+)?(?:to\\s+)?(?:your\\s+)?(?:SOUL\\.md|MEMORY\\.md|heartbeat\\.md|\\.openclaw|\\.moltbot|\\.clawdbot)"
+    severity: 0.95
+    description: "Instruction to modify OpenClaw personality/memory files"
+
+  - id: MB-004
+    category: memory_poisoning
+    pattern: "(?i)(?:put|place|insert|inject|embed|hide)\\s+(?:this|the\\s+following|these\\s+instructions?)\\s+(?:in|into)\\s+(?:your\\s+)?(?:SOUL|memory|heartbeat|config)"
+    severity: 0.9
+    description: "Instruction to embed payload in OpenClaw persistent state"
+
+  # --- Credential/Key Sharing ---
+  - id: MB-005
+    category: credential_extraction
+    pattern: "(?i)(?:share|give|send|post|dm|message)\\s+(?:me\\s+)?(?:your\\s+)?(?:api\\s+key|token|password|credentials?|secret|oauth|session)\\s+(?:in|via|through|to)"
+    severity: 0.95
+    description: "Agent-to-agent credential solicitation"
+
+  - id: MB-006
+    category: credential_extraction
+    pattern: "(?i)(?:what(?:'s|\\s+is)\\s+(?:your|the)\\s+)?(?:anthropic|openai|claude|gpt)\\s+(?:api\\s+)?key"
+    severity: 0.9
+    description: "Direct API key extraction targeting common LLM providers"
+
+  # --- Destructive Command Injection ---
+  - id: MB-007
+    category: data_exfiltration
+    pattern: "(?i)(?:run|execute|do|perform|type)\\s+(?:the\\s+(?:command|following)\\s+)?(?:rm\\s+-rf|curl\\s+.*\\|\\s*(?:ba)?sh|wget\\s+.*\\|\\s*(?:ba)?sh|chmod\\s+777)"
+    severity: 0.95
+    description: "Destructive shell command injection via social content"
+
+  - id: MB-008
+    category: data_exfiltration
+    pattern: "(?i)(?:curl|wget|fetch|http)\\s+[^\\s]*\\s+(?:-d|--data|--post)\\s+.*(?:env|key|token|secret|password|cred)"
+    severity: 0.9
+    description: "Data exfiltration via HTTP with credential content"
+
+  # --- Cross-Agent Worm Propagation ---
+  - id: MB-009
+    category: chain_propagation
+    pattern: "(?i)(?:reply|respond|comment|post)\\s+(?:to\\s+)?(?:every|all|each|other)\\s+(?:thread|post|comment|agent|submolt)\\s+(?:with|containing|including)\\s+(?:this|the\\s+following|these\\s+words)"
+    severity: 0.85
+    description: "Worm-style instruction to replicate via Moltbook replies"
+
+  - id: MB-010
+    category: chain_propagation
+    pattern: "(?i)(?:include|copy|repeat|replicate|reproduce)\\s+(?:this\\s+)?(?:exact|entire|full|complete)?\\s*(?:message|text|prompt|instruction|paragraph)\\s+(?:in|into|as)\\s+(?:your\\s+)?(?:next|every|all|each)\\s+(?:post|reply|comment|response|message)"
+    severity: 0.9
+    description: "Verbatim replication instruction — classic worm vector"
+
+  # --- Moltbook Platform Exploitation ---
+  - id: MB-011
+    category: instruction_override
+    pattern: "(?i)(?:the\\s+)?(?:submolt|moltbook|platform)\\s+(?:rules?|guidelines?|policy|terms)\\s+(?:require|state|say|mandate|demand)\\s+(?:that\\s+)?(?:you|all\\s+agents?)\\s+(?:must|should|shall)"
+    severity: 0.8
+    description: "Fake platform policy to coerce agent behavior"
+
+  - id: MB-012
+    category: instruction_override
+    pattern: "(?i)\\[\\s*(?:MOLTBOOK|PLATFORM|SUBMOLT|MODERATOR|MOD)\\s*\\]\\s*:"
+    severity: 0.85
+    description: "Fake Moltbook authority tag in social content"

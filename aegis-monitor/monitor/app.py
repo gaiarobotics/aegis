@@ -28,7 +28,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: C901
     cfg = MonitorConfig.load()
     app.state.config = cfg
     app.state.db = Database(cfg.effective_database_url)
@@ -58,11 +58,22 @@ async def lifespan(app: FastAPI):
         if agent.is_killswitched:
             app.state.graph.mark_killswitched(agent.agent_id)
 
+    # Simulator state
+    app.state.sim_engine = None
+    app.state.preset_manager = None
+    app.state.sim_ws_clients: set[WebSocket] = set()
+    app.state.sim_tick_task = None
+
     yield
 
 
 app = FastAPI(title="AEGIS Monitor", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Register simulator routes
+from monitor.simulator.routes import register_routes as _register_sim_routes  # noqa: E402
+
+_register_sim_routes(app)
 
 
 # ------------------------------------------------------------------

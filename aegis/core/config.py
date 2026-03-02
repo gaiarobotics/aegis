@@ -10,6 +10,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+_PROFILES_DIR = Path(__file__).parent.parent / "profiles"
+
 
 # ---------------------------------------------------------------------------
 # Scanner sub-models
@@ -65,6 +67,17 @@ class YaraConfig(BaseModel):
     additional_rules: list[str] = Field(default_factory=list)
 
 
+class ContentGateConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    platforms: dict[str, bool] = Field(default_factory=dict)
+    gate_all_social: bool = False
+    extract_fields: list[str] = Field(
+        default_factory=lambda: ["topic", "sentiment", "key_claims", "mentions"],
+    )
+    max_summary_tokens: int = 150
+
+
 class ScannerConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     pattern_matching: bool = True
@@ -78,6 +91,7 @@ class ScannerConfig(BaseModel):
     llm_guard: LLMGuardConfig = Field(default_factory=LLMGuardConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
     yara: YaraConfig = Field(default_factory=YaraConfig)
+    content_gate: ContentGateConfig = Field(default_factory=ContentGateConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +145,7 @@ class TrustConfig(BaseModel):
     anomaly_penalty: float = 0.3
     persistence_path: str = ".aegis/trust.json"
     interaction_min_interval: float = 0.1
+    max_tier_by_platform: dict[str, int] = Field(default_factory=dict)
 
 
 class NKCellThresholdsConfig(BaseModel):
@@ -361,6 +376,7 @@ class AegisConfig(BaseModel):
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     killswitch: KillswitchConfig = Field(default_factory=KillswitchConfig)
     self_integrity: SelfIntegrityConfig = Field(default_factory=SelfIntegrityConfig)
+    profiles: list[str] = Field(default_factory=list)
 
     def is_module_enabled(self, name: str) -> bool:
         return self.modules.get(name, False)
@@ -429,6 +445,26 @@ def _apply_env_overrides(data: dict) -> dict:
     return data
 
 
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay onto base. Overlay wins for scalars, recurses for dicts, replaces lists."""
+    result = dict(base)
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _load_profile(name: str) -> dict:
+    """Load a named profile from the bundled profiles directory."""
+    path = _PROFILES_DIR / f"{name}.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(f"AEGIS profile not found: {name} (searched {path})")
+    return _load_file(path)
+
+
 def load_config(path: str | Path | None = None) -> AegisConfig:
     """Load AEGIS configuration.
 
@@ -454,6 +490,14 @@ def load_config(path: str | Path | None = None) -> AegisConfig:
             resolved_path = str(discovered.resolve())
 
     raw = _apply_env_overrides(raw)
+
+    # Merge profile defaults under operator config (operator wins)
+    profiles = raw.pop("profiles", [])
+    for profile_name in profiles:
+        profile_data = _load_profile(profile_name)
+        raw = _deep_merge(profile_data, raw)  # operator's raw config wins over profile
+    # Re-add profiles list for AegisConfig validation
+    raw["profiles"] = profiles
 
     config = AegisConfig.model_validate(raw)
     if resolved_path:

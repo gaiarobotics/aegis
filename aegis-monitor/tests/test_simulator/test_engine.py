@@ -176,6 +176,17 @@ class TestPopulationGeneration:
 class TestTickExecution:
     """Verify tick execution with ALL AEGIS modules disabled."""
 
+    def test_tick_from_ready_auto_starts(self):
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        assert engine.state == SimState.READY
+        snapshot = engine.tick()
+        assert engine.state == SimState.RUNNING or engine.state == SimState.COMPLETED
+        assert snapshot.tick == 1
+
     def test_single_tick_produces_snapshot(self):
         from monitor.simulator.engine import SimulationEngine
 

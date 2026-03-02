@@ -157,7 +157,13 @@ class SimulationEngine:
     # ------------------------------------------------------------------
 
     def tick(self) -> TickSnapshot:
-        """Execute one simulation tick.  Only valid in RUNNING state."""
+        """Execute one simulation tick.  Valid in RUNNING or READY state.
+
+        If called from READY, auto-transitions to RUNNING first so that
+        single-stepping immediately after generate works.
+        """
+        if self._state == SimState.READY:
+            self._state = SimState.RUNNING
         if self._state != SimState.RUNNING:
             raise RuntimeError(
                 f"Cannot tick in state {self._state.value!r}; expected RUNNING"

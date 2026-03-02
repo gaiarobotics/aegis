@@ -288,7 +288,8 @@
                 select.appendChild(option);
             });
         } catch (err) {
-            // Presets endpoint may not exist yet
+            console.warn("Failed to load presets:", err);
+            logEvent({ tick: 0, type: "error", message: "Failed to load presets: " + err.message });
         }
     }
 

@@ -58,11 +58,8 @@ async def lifespan(app: FastAPI):  # noqa: C901
         if agent.is_killswitched:
             app.state.graph.mark_killswitched(agent.agent_id)
 
-    # Simulator state
-    app.state.sim_engine = None
-    app.state.preset_manager = None
-    app.state.sim_ws_clients: set[WebSocket] = set()
-    app.state.sim_tick_task = None
+    # Simulator state is initialised by register_routes() below;
+    # do NOT re-assign here or it will overwrite the PresetManager.
 
     yield
 

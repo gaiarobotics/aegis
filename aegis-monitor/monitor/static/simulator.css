@@ -407,6 +407,21 @@ body {
     bottom: 0;
 }
 
+.sigma-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 10;
+    background: rgba(15, 25, 35, 0.92);
+    color: #e0e6ed;
+    border: 1px solid #3498db;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 3px;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
 #chart-tab {
     padding: 16px;
 }

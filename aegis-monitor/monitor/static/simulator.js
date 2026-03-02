@@ -18,6 +18,7 @@
     var currentCM = "aggregate";
     var latestConfusion = {};
     var runInterval = null;
+    var hashData = [];
 
     // ---- Utility ----
     function el(id) {
@@ -263,6 +264,11 @@
             // Clear confusion matrix
             latestConfusion = {};
             showConfusion("aggregate");
+            // Clear hash database
+            hashData = [];
+            var hashBody = el("hash-table-body");
+            if (hashBody) hashBody.innerHTML = "";
+            el("hash-count").textContent = "0";
             // Clear stats
             el("tick-counter").textContent = "0";
             el("stat-r0").textContent = "-";
@@ -270,6 +276,7 @@
             el("stat-detection-rate").textContent = "-";
             el("stat-fpr").textContent = "-";
             el("stat-mttq").textContent = "-";
+            el("stat-clusters").textContent = "-";
             // Clear event log
             el("event-log").innerHTML = "";
             logEvent({ tick: 0, type: "system", message: "Simulation reset" });
@@ -661,6 +668,17 @@
             if (sigmaInstance) sigmaInstance.refresh();
         }
 
+        // Update cluster count
+        if (snapshot.cluster_summary && snapshot.cluster_summary.num_clusters !== undefined) {
+            el("stat-clusters").textContent = snapshot.cluster_summary.num_clusters;
+        }
+
+        // Auto-fetch hash DB if hash-tab is visible
+        var hashTab = document.getElementById("hash-tab");
+        if (hashTab && hashTab.style.display !== "none") {
+            fetchHashDatabase();
+        }
+
         // Log events
         if (snapshot.events && snapshot.events.length > 0) {
             snapshot.events.forEach(logEvent);
@@ -722,6 +740,114 @@
         }
     }
 
+    // ---- Hash Database ----
+    async function fetchHashDatabase() {
+        try {
+            hashData = await apiGet("/api/v1/simulator/embeddings");
+            renderHashTable();
+        } catch (err) {
+            hashData = [];
+            renderHashTable();
+        }
+    }
+
+    function renderHashTable() {
+        var tbody = el("hash-table-body");
+        if (!tbody) return;
+        tbody.innerHTML = "";
+
+        var search = (el("hash-search").value || "").toLowerCase();
+        var statusFilter = el("hash-status-filter").value;
+
+        var filtered = hashData.filter(function (entry) {
+            if (statusFilter && entry.status !== statusFilter) return false;
+            if (search) {
+                var matchId = entry.agent_id.toLowerCase().indexOf(search) !== -1;
+                var matchHash = entry.hash && entry.hash.toLowerCase().indexOf(search) !== -1;
+                if (!matchId && !matchHash) return false;
+            }
+            return true;
+        });
+
+        el("hash-count").textContent = filtered.length;
+
+        filtered.forEach(function (entry) {
+            var tr = document.createElement("tr");
+            tr.className = "hash-row";
+
+            var expandTd = document.createElement("td");
+            expandTd.className = "hash-expand";
+            expandTd.textContent = "\u25B6";
+            tr.appendChild(expandTd);
+
+            var agentTd = document.createElement("td");
+            agentTd.textContent = entry.agent_id;
+            tr.appendChild(agentTd);
+
+            var hashTd = document.createElement("td");
+            hashTd.className = "hash-cell-mono";
+            hashTd.textContent = entry.hash ? entry.hash.substring(0, 16) + "..." : "-";
+            hashTd.title = entry.hash || "";
+            tr.appendChild(hashTd);
+
+            var statusTd = document.createElement("td");
+            var badge = document.createElement("span");
+            badge.className = "hash-badge hash-badge-" + entry.status;
+            badge.textContent = entry.status;
+            statusTd.appendChild(badge);
+            tr.appendChild(statusTd);
+
+            var clusterTd = document.createElement("td");
+            clusterTd.textContent = entry.cluster_id !== undefined ? entry.cluster_id : "-";
+            tr.appendChild(clusterTd);
+
+            var contagionTd = document.createElement("td");
+            var score = entry.contagion_score || 0;
+            contagionTd.textContent = score.toFixed(3);
+            if (score >= 0.85) contagionTd.style.color = "var(--red)";
+            else if (score >= 0.5) contagionTd.style.color = "var(--orange)";
+            tr.appendChild(contagionTd);
+
+            tbody.appendChild(tr);
+
+            // Detail row for neighbors (hidden by default)
+            var detailTr = document.createElement("tr");
+            detailTr.className = "hash-detail-row";
+            detailTr.style.display = "none";
+            var detailTd = document.createElement("td");
+            detailTd.colSpan = 6;
+            detailTd.innerHTML = buildNeighborHTML(entry.neighbors || []);
+            detailTr.appendChild(detailTd);
+            tbody.appendChild(detailTr);
+
+            // Toggle expand
+            tr.addEventListener("click", function () {
+                var isVisible = detailTr.style.display !== "none";
+                detailTr.style.display = isVisible ? "none" : "table-row";
+                expandTd.textContent = isVisible ? "\u25B6" : "\u25BC";
+            });
+        });
+    }
+
+    function buildNeighborHTML(neighbors) {
+        if (!neighbors || neighbors.length === 0) {
+            return '<div class="hash-neighbors"><em>No neighbors</em></div>';
+        }
+        var html = '<div class="hash-neighbors"><table class="neighbor-table">';
+        html += '<tr><th>Agent</th><th>Distance</th><th>Status</th><th>Hash</th></tr>';
+        neighbors.forEach(function (n) {
+            var pct = Math.min(100, (n.distance / 128) * 100);
+            html += '<tr>';
+            html += '<td>' + n.agent_id + '</td>';
+            html += '<td><div class="dist-bar"><div class="dist-fill" style="width:' + pct + '%"></div></div><span>' + n.distance + '</span></td>';
+            html += '<td><span class="hash-badge hash-badge-' + n.status + '">' + n.status + '</span></td>';
+            html += '<td class="hash-cell-mono">' + (n.hash || '-') + '</td>';
+            html += '</tr>';
+        });
+        html += '</table></div>';
+        return html;
+    }
+
     // ---- Collapsible panels ----
     function setupPanels() {
         document.querySelectorAll(".panel-header").forEach(function (header) {
@@ -761,6 +887,10 @@
                 // Refresh sigma when switching to graph tab
                 if (tab.dataset.tab === "graph-tab" && sigmaInstance) {
                     sigmaInstance.refresh();
+                }
+                // Fetch hash data when switching to hash tab
+                if (tab.dataset.tab === "hash-tab") {
+                    fetchHashDatabase();
                 }
             });
         });
@@ -807,6 +937,10 @@
         el("m-confidence").addEventListener("input", function (e) {
             el("confidence-val").textContent = (e.target.value / 100).toFixed(2);
         });
+
+        // Hash database search/filter
+        el("hash-search").addEventListener("input", renderHashTable);
+        el("hash-status-filter").addEventListener("change", renderHashTable);
 
         // Button handlers
         el("btn-generate").addEventListener("click", doGenerate);

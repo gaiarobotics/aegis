@@ -84,6 +84,7 @@ class SimAgent:
     recovery_tick: int | None = None
     secondary_infections: int = 0
     has_aegis: bool = False
+    content_hash: str | None = None
 
     def compute_susceptibility(self, base_susceptibility: float) -> dict[str, float]:
         """Return per-technique susceptibility values in [0, 1]."""
@@ -327,6 +328,7 @@ class TickSnapshot:
     confusion: ConfusionMatrix = field(default_factory=ConfusionMatrix)
     events: list[dict[str, Any]] = field(default_factory=list)
     status_changes: list[dict[str, Any]] = field(default_factory=list)
+    cluster_summary: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -338,5 +340,6 @@ class TickSnapshot:
             "confusion": self.confusion.to_dict(),
             "events": self.events,
             "status_changes": self.status_changes,
+            "cluster_summary": self.cluster_summary,
             "timestamp": self.timestamp,
         }

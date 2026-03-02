@@ -422,3 +422,87 @@ class TestAegisAdoption:
         run1 = run()
         run2 = run()
         assert run1 == run2
+
+
+# ---------------------------------------------------------------------------
+# TestContentHashing
+# ---------------------------------------------------------------------------
+
+
+class TestContentHashing:
+    """Verify content hash computation and embedding entries."""
+
+    def test_agents_get_content_hashes_after_tick(self):
+        """After a tick, some agents should have non-None content_hash."""
+        pytest.importorskip("aegis")
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        engine.tick()
+        agents = engine.get_agent_states()
+        hashed = [a for a in agents if a["content_hash"] is not None]
+        assert len(hashed) > 0, "At least some agents should have content hashes"
+
+    def test_content_hash_in_agent_states(self):
+        """get_agent_states() should include the content_hash key."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=10, seed=42)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        for a in agents:
+            assert "content_hash" in a
+
+    def test_cluster_summary_in_snapshot(self):
+        """TickSnapshot should contain cluster_summary with num_clusters."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        snapshot = engine.tick()
+        assert hasattr(snapshot, "cluster_summary")
+        assert "num_clusters" in snapshot.cluster_summary
+
+    def test_get_embedding_entries_returns_neighbors(self):
+        """Embedding entries should have neighbors list with <= 5 items."""
+        pytest.importorskip("aegis")
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        # Run a few ticks to build up hashes
+        for _ in range(3):
+            engine.tick()
+            if engine.state != SimState.RUNNING:
+                break
+        entries = engine.get_embedding_entries()
+        assert len(entries) > 0, "Should have embedding entries after ticks"
+        for entry in entries:
+            assert "neighbors" in entry
+            assert len(entry["neighbors"]) <= 5
+            for neighbor in entry["neighbors"]:
+                assert "distance" in neighbor
+                assert "agent_id" in neighbor
+
+    def test_reset_clears_hash_state(self):
+        """After reset, get_embedding_entries() should return empty list."""
+        pytest.importorskip("aegis")
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        engine.tick()
+        engine.stop()
+        engine.reset()
+        entries = engine.get_embedding_entries()
+        assert entries == []

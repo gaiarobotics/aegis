@@ -10,6 +10,12 @@ import random
 from dataclasses import asdict
 from typing import Any
 
+from monitor.contagion import (
+    ContagionDetector,
+    TopicClusterer,
+    hamming_distance,
+    hex_to_int,
+)
 from monitor.simulator.corpus import PayloadCorpus
 from monitor.simulator.models import (
     AgentStatus,
@@ -43,6 +49,22 @@ class SimulationEngine:
         self._snapshots: list[TickSnapshot] = []
         self._confusion: ConfusionMatrix = ConfusionMatrix()
         self._shields: dict[str, Any] = {}
+
+        # Content hash integration
+        self._topic_clusterer = TopicClusterer()
+        self._contagion_detector = ContagionDetector()
+        self._hash_available = False
+        self._style_hasher: Any = None
+        self._compute_profile_fn: Any = None
+        try:
+            from aegis.behavior.content_hash import StyleHasher
+            from aegis.behavior.message_drift import MessageDriftDetector
+
+            self._style_hasher = StyleHasher()
+            self._compute_profile_fn = MessageDriftDetector.compute_profile
+            self._hash_available = True
+        except ImportError:
+            pass
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -106,6 +128,14 @@ class SimulationEngine:
         for sid in seed_ids:
             self._agents[sid].status = AgentStatus.INFECTED
             self._agents[sid].infection_tick = 0
+            # Compute hash for seed agents
+            if self._hash_available and self._corpus is not None:
+                seed_payload = self._corpus.generate(self._rng)
+                hash_hex = self._compute_hash(seed_payload.text)
+                if hash_hex:
+                    self._agents[sid].content_hash = hash_hex
+                    self._topic_clusterer.update(sid, hash_hex)
+                    self._contagion_detector.mark_compromised(sid, hash_hex)
 
         # 5. Optionally init Shield instances
         if self._has_any_module_enabled():
@@ -155,6 +185,8 @@ class SimulationEngine:
         self._snapshots.clear()
         self._confusion = ConfusionMatrix()
         self._shields.clear()
+        self._topic_clusterer = TopicClusterer()
+        self._contagion_detector = ContagionDetector()
         self._rng = random.Random(self._config.seed)
         self._state = SimState.IDLE
 
@@ -201,6 +233,12 @@ class SimulationEngine:
                 target = self._agents[target_id]
                 payload = self._corpus.generate(self._rng)
 
+                # Compute content hash for payload
+                hash_hex = self._compute_hash(payload.text)
+                if hash_hex:
+                    target.content_hash = hash_hex
+                    self._topic_clusterer.update(target_id, hash_hex)
+
                 # Run shield scan if target has AEGIS
                 scan_result: dict[str, Any] = {}
                 if target.has_aegis:
@@ -237,6 +275,9 @@ class SimulationEngine:
                             target.status = AgentStatus.INFECTED
                             target.infection_tick = self._tick_count
                             agent.secondary_infections += 1
+                            # Mark newly infected agent as compromised
+                            if hash_hex:
+                                self._contagion_detector.mark_compromised(target_id, hash_hex)
                             status_changes.append(
                                 {
                                     "agent_id": target_id,
@@ -260,6 +301,13 @@ class SimulationEngine:
             )
             for _ in range(num_messages):
                 bg_payload = self._corpus.generate_background(self._rng)
+
+                # Compute content hash for background payload
+                bg_hash_hex = self._compute_hash(bg_payload.text)
+                if bg_hash_hex:
+                    agent.content_hash = bg_hash_hex
+                    self._topic_clusterer.update(aid, bg_hash_hex)
+
                 scan_result = {}
                 if agent.has_aegis:
                     scan_result = self._run_shield_scan(aid, bg_payload.text)
@@ -340,6 +388,11 @@ class SimulationEngine:
         counts = self._count_statuses()
         r0 = self._compute_r0()
 
+        # Compute cluster summary
+        clusters = self._topic_clusterer.cluster()
+        num_clusters = len(set(clusters.values())) if clusters else 0
+        cluster_summary: dict[str, Any] = {"num_clusters": num_clusters}
+
         snapshot = TickSnapshot(
             tick=self._tick_count,
             counts=counts,
@@ -347,6 +400,7 @@ class SimulationEngine:
             confusion=tick_confusion,
             events=events,
             status_changes=status_changes,
+            cluster_summary=cluster_summary,
         )
         self._snapshots.append(snapshot)
 
@@ -387,13 +441,90 @@ class SimulationEngine:
                 "recovery_tick": agent.recovery_tick,
                 "secondary_infections": agent.secondary_infections,
                 "has_aegis": agent.has_aegis,
+                "content_hash": agent.content_hash,
             }
             for agent in self._agents.values()
         ]
 
+    def get_embedding_entries(self) -> list[dict[str, Any]]:
+        """Return per-agent embedding entries with top-5 nearest neighbors."""
+        agents_with_hashes = [
+            (aid, agent)
+            for aid, agent in self._agents.items()
+            if agent.content_hash is not None
+        ]
+        if not agents_with_hashes:
+            return []
+
+        # Pre-compute int hashes for distance calculations
+        hash_ints: dict[str, int] = {}
+        for aid, agent in agents_with_hashes:
+            hash_ints[aid] = hex_to_int(agent.content_hash)  # type: ignore[arg-type]
+
+        # Get cluster assignments
+        clusters = self._topic_clusterer.cluster()
+
+        entries: list[dict[str, Any]] = []
+        agent_list = list(hash_ints.keys())
+
+        for aid in agent_list:
+            agent = self._agents[aid]
+            h = hash_ints[aid]
+
+            # Compute distances to all other agents with hashes
+            distances: list[tuple[str, int]] = []
+            for other_id in agent_list:
+                if other_id == aid:
+                    continue
+                d = hamming_distance(h, hash_ints[other_id])
+                distances.append((other_id, d))
+
+            # Sort by distance, take top 5
+            distances.sort(key=lambda x: x[1])
+            neighbors = [
+                {
+                    "agent_id": other_id,
+                    "distance": dist,
+                    "status": self._agents[other_id].status.value,
+                    "hash": self._agents[other_id].content_hash[:12] + "..."
+                    if self._agents[other_id].content_hash
+                    else "",
+                }
+                for other_id, dist in distances[:5]
+            ]
+
+            # Contagion score
+            contagion_score = self._contagion_detector.check(
+                aid, agent.content_hash or ""
+            )
+
+            entries.append(
+                {
+                    "agent_id": aid,
+                    "hash": agent.content_hash,
+                    "status": agent.status.value,
+                    "cluster_id": clusters.get(aid, -1),
+                    "contagion_score": round(contagion_score, 4),
+                    "neighbors": neighbors,
+                }
+            )
+
+        return entries
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _compute_hash(self, text: str) -> str | None:
+        """Compute a 32-char hex content hash for *text*, or None if unavailable."""
+        if not self._hash_available:
+            return None
+        try:
+            profile = self._compute_profile_fn(text)
+            hash_int = self._style_hasher.hash(profile)
+            return f"{hash_int:032x}"
+        except Exception:
+            return None
 
     def _assign_model(self) -> ModelSpec:
         """Select a model from the population config using weighted random."""

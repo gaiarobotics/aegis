@@ -246,6 +246,11 @@ def register_routes(app: FastAPI) -> None:
             node.update(agent)
         return graph_data
 
+    @app.get("/api/v1/simulator/embeddings")
+    async def embeddings():
+        engine = _require_engine(app)
+        return engine.get_embedding_entries()
+
     @app.get("/api/v1/simulator/export")
     async def export():
         engine = _require_engine(app)

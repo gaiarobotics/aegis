@@ -116,12 +116,43 @@
             <div class="center-tabs">
                 <button class="tab active" data-tab="graph-tab">Agent Graph</button>
                 <button class="tab" data-tab="chart-tab">Population Chart</button>
+                <button class="tab" data-tab="hash-tab">Hash Database</button>
             </div>
             <div class="tab-content" id="graph-tab">
                 <div id="sim-graph-canvas"></div>
             </div>
             <div class="tab-content" id="chart-tab" style="display:none">
                 <canvas id="population-chart"></canvas>
+            </div>
+            <div class="tab-content" id="hash-tab" style="display:none">
+                <div class="hash-db-container">
+                    <div class="hash-db-toolbar">
+                        <input type="text" id="hash-search" placeholder="Search agent ID or hash...">
+                        <select id="hash-status-filter">
+                            <option value="">All Statuses</option>
+                            <option value="clean">Clean</option>
+                            <option value="infected">Infected</option>
+                            <option value="quarantined">Quarantined</option>
+                            <option value="recovered">Recovered</option>
+                        </select>
+                        <span class="hash-entry-count"><span id="hash-count">0</span> entries</span>
+                    </div>
+                    <div class="hash-db-table-wrap">
+                        <table class="hash-db-table">
+                            <thead>
+                                <tr>
+                                    <th class="hash-col-expand"></th>
+                                    <th>Agent</th>
+                                    <th>Hash</th>
+                                    <th>Status</th>
+                                    <th>Cluster</th>
+                                    <th>Contagion</th>
+                                </tr>
+                            </thead>
+                            <tbody id="hash-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -178,6 +209,7 @@
         <span>Detection Rate: <strong id="stat-detection-rate">-</strong></span>
         <span>FPR: <strong id="stat-fpr">-</strong></span>
         <span>MTTQ: <strong id="stat-mttq">-</strong></span>
+        <span>Clusters: <strong id="stat-clusters">-</strong></span>
         <button id="btn-export">Download Results</button>
     </div>
 

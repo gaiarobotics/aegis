@@ -83,7 +83,7 @@ class SimAgent:
     quarantine_tick: int | None = None
     recovery_tick: int | None = None
     secondary_infections: int = 0
-    detection_modules: list[str] = field(default_factory=list)
+    has_aegis: bool = False
 
     def compute_susceptibility(self, base_susceptibility: float) -> dict[str, float]:
         """Return per-technique susceptibility values in [0, 1]."""
@@ -206,6 +206,7 @@ class SimConfig:
     population: PopulationConfig = field(default_factory=PopulationConfig)
     corpus: CorpusConfig = field(default_factory=CorpusConfig)
     modules: ModuleToggles = field(default_factory=ModuleToggles)
+    aegis_adoption_rate: float = 1.0
 
 
 # ---------------------------------------------------------------------------

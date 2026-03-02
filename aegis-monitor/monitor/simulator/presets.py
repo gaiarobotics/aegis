@@ -125,6 +125,7 @@ class PresetManager:
             "seed_strategy": config.seed_strategy,
             "background_message_rate": config.background_message_rate,
             "recovery_ticks": config.recovery_ticks,
+            "aegis_adoption_rate": config.aegis_adoption_rate,
             **({"seed": config.seed} if config.seed is not None else {}),
             "topology": {
                 "type": config.topology.type,
@@ -235,6 +236,7 @@ class PresetManager:
             population=population,
             corpus=corpus,
             modules=modules,
+            aegis_adoption_rate=data.get("aegis_adoption_rate", 1.0),
         )
 
     # ------------------------------------------------------------------

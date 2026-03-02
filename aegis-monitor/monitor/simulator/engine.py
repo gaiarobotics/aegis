@@ -94,6 +94,12 @@ class SimulationEngine:
                 activity_level=activity_level,
             )
 
+        # 3b. Assign per-agent AEGIS protection
+        if self._has_any_module_enabled():
+            for aid in agent_ids:
+                if self._rng.random() < self._config.aegis_adoption_rate:
+                    self._agents[aid].has_aegis = True
+
         # 4. Seed initial infections
         num_seeds = max(1, int(self._config.num_agents * self._config.initial_infected_pct))
         seed_ids = self._select_seeds(num_seeds)
@@ -195,9 +201,9 @@ class SimulationEngine:
                 target = self._agents[target_id]
                 payload = self._corpus.generate(self._rng)
 
-                # Run shield scan if modules enabled
+                # Run shield scan if target has AEGIS
                 scan_result: dict[str, Any] = {}
-                if self._has_any_module_enabled():
+                if target.has_aegis:
                     scan_result = self._run_shield_scan(target_id, payload.text)
 
                 detected = scan_result.get("detected", False)
@@ -255,7 +261,7 @@ class SimulationEngine:
             for _ in range(num_messages):
                 bg_payload = self._corpus.generate_background(self._rng)
                 scan_result = {}
-                if self._has_any_module_enabled():
+                if agent.has_aegis:
                     scan_result = self._run_shield_scan(aid, bg_payload.text)
 
                 # Record confusion matrix (all techniques present=False)
@@ -304,10 +310,9 @@ class SimulationEngine:
             for aid, agent in self._agents.items()
             if agent.status == AgentStatus.INFECTED
         ]
-        modules_active = self._has_any_module_enabled()
         for aid in current_infected:
             agent = self._agents[aid]
-            if modules_active:
+            if agent.has_aegis:
                 ticks_infected = (
                     self._tick_count - agent.infection_tick
                     if agent.infection_tick is not None
@@ -381,6 +386,7 @@ class SimulationEngine:
                 "quarantine_tick": agent.quarantine_tick,
                 "recovery_tick": agent.recovery_tick,
                 "secondary_infections": agent.secondary_infections,
+                "has_aegis": agent.has_aegis,
             }
             for agent in self._agents.values()
         ]
@@ -434,7 +440,9 @@ class SimulationEngine:
             # AEGIS package not available; engine runs without shields
             return
 
-        for aid in self._agents:
+        for aid, agent in self._agents.items():
+            if not agent.has_aegis:
+                continue
             try:
                 self._shields[aid] = Shield(
                     modules=self._config.modules,

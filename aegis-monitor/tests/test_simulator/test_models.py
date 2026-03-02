@@ -122,7 +122,7 @@ class TestSimAgent:
         assert agent.quarantine_tick is None
         assert agent.recovery_tick is None
         assert agent.secondary_infections == 0
-        assert agent.detection_modules == []
+        assert agent.has_aegis is False
 
     def test_susceptibility_keys(self):
         agent = SimAgent(agent_id="a-2", model="gpt-4")
@@ -167,6 +167,7 @@ class TestSimConfig:
         assert cfg.background_message_rate == 2.0
         assert cfg.recovery_ticks == 20
         assert cfg.seed is None
+        assert cfg.aegis_adoption_rate == 1.0
 
     def test_module_toggles_default_all_on(self):
         cfg = SimConfig()

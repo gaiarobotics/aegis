@@ -4,6 +4,7 @@ initial_infected_pct: 0.05
 seed_strategy: hubs
 background_message_rate: 1.0
 recovery_ticks: 30
+aegis_adoption_rate: 1.0
 topology:
   type: scale_free
   m: 5

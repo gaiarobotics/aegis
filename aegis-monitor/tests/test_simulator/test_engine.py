@@ -333,3 +333,92 @@ class TestExport:
         assert "agents" in results
         assert len(results["snapshots"]) == 1
         assert len(results["agents"]) == 10
+
+
+# ---------------------------------------------------------------------------
+# TestAegisAdoption
+# ---------------------------------------------------------------------------
+
+
+class TestAegisAdoption:
+    """Verify per-agent AEGIS adoption rate behaviour."""
+
+    def _make_config_with_modules(self, **kwargs) -> SimConfig:
+        """Build a SimConfig with modules ENABLED."""
+        return SimConfig(
+            num_agents=kwargs.get("num_agents", 50),
+            seed=kwargs.get("seed", 42),
+            initial_infected_pct=kwargs.get("initial_infected_pct", 0.05),
+            seed_strategy="random",
+            max_ticks=500,
+            modules=ModuleToggles(),  # all modules on by default
+            corpus=CorpusConfig(sources=[{"type": "builtin"}]),
+            aegis_adoption_rate=kwargs.get("aegis_adoption_rate", 1.0),
+        )
+
+    def test_full_adoption(self):
+        """With adoption_rate=1.0, every agent should have AEGIS."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = self._make_config_with_modules(
+            num_agents=50, seed=42, aegis_adoption_rate=1.0,
+        )
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        assert all(a["has_aegis"] for a in agents)
+
+    def test_zero_adoption(self):
+        """With adoption_rate=0.0, no agent should have AEGIS."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = self._make_config_with_modules(
+            num_agents=50, seed=42, aegis_adoption_rate=0.0,
+        )
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        assert not any(a["has_aegis"] for a in agents)
+
+    def test_partial_adoption(self):
+        """With adoption_rate=0.5, roughly half should have AEGIS."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = self._make_config_with_modules(
+            num_agents=200, seed=42, aegis_adoption_rate=0.5,
+        )
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        aegis_count = sum(1 for a in agents if a["has_aegis"])
+        # With 200 agents at 50%, expect ~100; allow generous margin
+        assert 60 <= aegis_count <= 140, (
+            f"Expected ~100 AEGIS agents, got {aegis_count}"
+        )
+
+    def test_modules_disabled_overrides_adoption(self):
+        """When all modules are disabled, has_aegis stays False regardless of rate."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=50, seed=42)
+        cfg.aegis_adoption_rate = 1.0  # rate is 1.0 but modules are off
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        assert not any(a["has_aegis"] for a in agents)
+
+    def test_deterministic_assignment(self):
+        """Same seed should produce identical AEGIS assignments."""
+        from monitor.simulator.engine import SimulationEngine
+
+        def run():
+            cfg = self._make_config_with_modules(
+                num_agents=50, seed=99, aegis_adoption_rate=0.5,
+            )
+            engine = SimulationEngine(cfg)
+            engine.generate()
+            return [a["has_aegis"] for a in engine.get_agent_states()]
+
+        run1 = run()
+        run2 = run()
+        assert run1 == run2

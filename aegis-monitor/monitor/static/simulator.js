@@ -59,6 +59,7 @@
     // ---- Config collection ----
     function collectConfig() {
         return {
+            aegis_adoption_rate: parseInt(el("m-adoption").value) / 100,
             num_agents: parseInt(el("p-agents").value),
             max_ticks: parseInt(el("p-max-ticks").value),
             initial_infected_pct: parseFloat(el("p-infected").value) / 100,
@@ -105,6 +106,11 @@
     // ---- Config application (reverse of collectConfig) ----
     function applyConfig(cfg) {
         if (!cfg) return;
+        if (cfg.aegis_adoption_rate !== undefined) {
+            var adoptVal = Math.round(cfg.aegis_adoption_rate * 100);
+            el("m-adoption").value = adoptVal;
+            el("adoption-val").textContent = cfg.aegis_adoption_rate.toFixed(2);
+        }
         if (cfg.num_agents !== undefined) el("p-agents").value = cfg.num_agents;
         if (cfg.max_ticks !== undefined) el("p-max-ticks").value = cfg.max_ticks;
         if (cfg.initial_infected_pct !== undefined) el("p-infected").value = Math.round(cfg.initial_infected_pct * 100);
@@ -785,6 +791,11 @@
         // Speed slider
         el("speed-slider").addEventListener("input", function (e) {
             el("speed-label").textContent = e.target.value;
+        });
+
+        // Adoption rate slider
+        el("m-adoption").addEventListener("input", function (e) {
+            el("adoption-val").textContent = (e.target.value / 100).toFixed(2);
         });
 
         // Sensitivity slider

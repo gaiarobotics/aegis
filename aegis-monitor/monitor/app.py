@@ -442,6 +442,7 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
         return {"agent_id": agent_id, "found": False}
 
     at_risk = graph.get_at_risk_agents(agent_id) if agent.is_compromised else []
+    has_aegis = graph.graph.nodes.get(agent_id, {}).get("has_aegis", False)
 
     return {
         "agent_id": agent_id,
@@ -451,6 +452,7 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
         "is_compromised": agent.is_compromised,
         "is_quarantined": agent.is_quarantined,
         "is_killswitched": agent.is_killswitched,
+        "has_aegis": has_aegis,
         "at_risk_agents": at_risk,
     }
 

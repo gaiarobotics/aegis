@@ -47,6 +47,17 @@
         }
     }
 
+    function muteColor(hex) {
+        // Mix a hex color with gray to produce a desaturated version
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        r = Math.round(r * 0.6 + 0x7f * 0.4);
+        g = Math.round(g * 0.6 + 0x8c * 0.4);
+        b = Math.round(b * 0.6 + 0x9b * 0.4);
+        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+
     function renderGraph(data) {
         if (!graphInstance) return;
 
@@ -65,11 +76,12 @@
             if (topicViewActive && node.topic_color) {
                 nodeColor = node.topic_color;
             }
+            var hasAegis = node.has_aegis || false;
             graphInstance.addNode(node.id, {
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
-                size: 8 + (node.trust_score || 0) * 0.1,
-                color: nodeColor,
+                size: hasAegis ? 10 + (node.trust_score || 0) * 0.1 : 7 + (node.trust_score || 0) * 0.1,
+                color: hasAegis ? nodeColor : muteColor(nodeColor),
                 label: node.id,
                 _data: node,
             });
@@ -161,6 +173,7 @@
                 data.is_killswitched ? "KILLSWITCHED" :
                 data.is_compromised ? "COMPROMISED" :
                 data.is_quarantined ? "QUARANTINED" : "Active");
+            setText("popup-aegis", data.has_aegis ? "Protected" : "Not installed");
             setText("popup-operator", data.operator_id || "—");
             setText("popup-heartbeat", "—");
             setText("popup-at-risk",

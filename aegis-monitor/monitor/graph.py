@@ -59,6 +59,7 @@ class AgentGraph:
             is_compromised=existing.get("is_compromised", False),
             is_quarantined=is_quarantined,
             is_killswitched=ks,
+            has_aegis=True,
             last_heartbeat=time.time(),
         )
         for edge in edges or []:
@@ -69,7 +70,7 @@ class AgentGraph:
             if target not in self._g:
                 self._g.add_node(target, trust_tier=0, trust_score=0.0,
                                  is_compromised=False, is_quarantined=False,
-                                 is_killswitched=False,
+                                 is_killswitched=False, has_aegis=False,
                                  operator_id="", last_heartbeat=0)
             self._g.add_edge(
                 agent_id,
@@ -93,6 +94,7 @@ class AgentGraph:
                 is_compromised=True,
                 is_quarantined=False,
                 is_killswitched=False,
+                has_aegis=False,
                 operator_id="",
                 last_heartbeat=0,
             )
@@ -109,6 +111,7 @@ class AgentGraph:
                 is_compromised=False,
                 is_quarantined=True,
                 is_killswitched=False,
+                has_aegis=False,
                 operator_id="",
                 last_heartbeat=0,
             )
@@ -125,6 +128,7 @@ class AgentGraph:
                 is_compromised=False,
                 is_quarantined=False,
                 is_killswitched=True,
+                has_aegis=False,
                 operator_id="",
                 last_heartbeat=0,
             )
@@ -145,6 +149,7 @@ class AgentGraph:
                 "is_compromised": compromised,
                 "is_quarantined": quarantined,
                 "is_killswitched": killswitched,
+                "has_aegis": data.get("has_aegis", False),
                 "color": _trust_color(tier, compromised, quarantined, killswitched),
                 "last_heartbeat": data.get("last_heartbeat", 0),
             })

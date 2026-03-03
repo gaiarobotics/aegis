@@ -397,6 +397,18 @@
         }
     }
 
+    function muteColor(hex) {
+        // Mix a hex color with gray to produce a desaturated version
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        // Blend 40% toward gray (#7f8c9b)
+        r = Math.round(r * 0.6 + 0x7f * 0.4);
+        g = Math.round(g * 0.6 + 0x8c * 0.4);
+        b = Math.round(b * 0.6 + 0x9b * 0.4);
+        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+
     function renderGraph(data) {
         if (!graphInstance) return;
         graphInstance.clear();
@@ -408,11 +420,13 @@
         nodes.forEach(function (node, i) {
             var angle = (2 * Math.PI * i) / Math.max(n, 1);
             var r = 10;
+            var baseColor = statusColor(node.status || "clean");
+            var hasAegis = node.has_aegis || false;
             graphInstance.addNode(node.id, {
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
-                size: 5 + (node.degree || 1) * 0.5,
-                color: statusColor(node.status || "clean"),
+                size: hasAegis ? 7 + (node.degree || 1) * 0.5 : 5 + (node.degree || 1) * 0.5,
+                color: hasAegis ? baseColor : muteColor(baseColor),
                 label: String(node.id),
             });
         });

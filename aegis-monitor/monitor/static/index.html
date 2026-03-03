@@ -107,6 +107,15 @@
         <!-- Graph -->
         <div class="graph-container">
             <div id="graph-canvas"></div>
+            <div class="graph-legend">
+                <span class="legend-item"><span class="legend-dot legend-aegis"></span>AEGIS</span>
+                <span class="legend-item"><span class="legend-dot legend-no-aegis"></span>No AEGIS</span>
+                <span class="legend-sep">|</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#2ecc71"></span>Trusted</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#f1c40f"></span>Attested</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#e74c3c"></span>Compromised</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#e67e22"></span>Killswitched</span>
+            </div>
 
             <!-- Agent detail popup -->
             <div class="agent-popup" id="agent-popup">
@@ -115,6 +124,7 @@
                 <div class="detail-row"><span class="label">Trust Tier</span><span id="popup-tier">—</span></div>
                 <div class="detail-row"><span class="label">Trust Score</span><span id="popup-score">—</span></div>
                 <div class="detail-row"><span class="label">Status</span><span id="popup-status">—</span></div>
+                <div class="detail-row"><span class="label">AEGIS</span><span id="popup-aegis">—</span></div>
                 <div class="detail-row"><span class="label">Operator</span><span id="popup-operator">—</span></div>
                 <div class="detail-row"><span class="label">Last Heartbeat</span><span id="popup-heartbeat">—</span></div>
                 <div class="detail-row"><span class="label">At-Risk Neighbors</span><span id="popup-at-risk">—</span></div>

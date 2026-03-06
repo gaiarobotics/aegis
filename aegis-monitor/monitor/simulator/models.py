@@ -83,6 +83,7 @@ class SimAgent:
     quarantine_tick: int | None = None
     recovery_tick: int | None = None
     secondary_infections: int = 0
+    infection_generation: int = 0
     has_aegis: bool = False
     content_hash: str | None = None
 
@@ -325,6 +326,7 @@ class TickSnapshot:
     tick: int
     counts: dict[str, int]
     r0: float
+    re: float = 0.0
     confusion: ConfusionMatrix = field(default_factory=ConfusionMatrix)
     events: list[dict[str, Any]] = field(default_factory=list)
     status_changes: list[dict[str, Any]] = field(default_factory=list)
@@ -338,6 +340,7 @@ class TickSnapshot:
             "tick": self.tick,
             "counts": self.counts,
             "r0": self.r0,
+            "re": self.re,
             "confusion": self.confusion.to_dict(),
             "events": self.events,
             "status_changes": self.status_changes,

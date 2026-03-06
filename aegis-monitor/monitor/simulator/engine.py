@@ -7,6 +7,7 @@ optionally integrating AEGIS Shield modules for detection measurement.
 from __future__ import annotations
 
 import random
+from collections import Counter
 from dataclasses import asdict
 from typing import Any
 
@@ -49,6 +50,7 @@ class SimulationEngine:
         self._snapshots: list[TickSnapshot] = []
         self._confusion: ConfusionMatrix = ConfusionMatrix()
         self._scanner: Any = None
+        self._re_ema: float = 0.0
 
         # Content hash integration
         self._topic_clusterer = TopicClusterer()
@@ -128,6 +130,7 @@ class SimulationEngine:
         for sid in seed_ids:
             self._agents[sid].status = AgentStatus.INFECTED
             self._agents[sid].infection_tick = 0
+            self._agents[sid].infection_generation = 0
             # Compute hash for seed agents
             if self._hash_available and self._corpus is not None:
                 seed_payload = self._corpus.generate(self._rng)
@@ -185,6 +188,7 @@ class SimulationEngine:
         self._snapshots.clear()
         self._confusion = ConfusionMatrix()
         self._scanner = None
+        self._re_ema = 0.0
         self._topic_clusterer = TopicClusterer()
         self._contagion_detector = ContagionDetector()
         self._rng = random.Random(self._config.seed)
@@ -272,6 +276,7 @@ class SimulationEngine:
                         if self._rng.random() < worm_susc:
                             target.status = AgentStatus.INFECTED
                             target.infection_tick = self._tick_count
+                            target.infection_generation = agent.infection_generation + 1
                             agent.secondary_infections += 1
                             # Mark newly infected agent as compromised
                             if hash_hex:
@@ -374,11 +379,34 @@ class SimulationEngine:
 
         # Phase 5: Compute metrics
         counts = self._count_statuses()
-        new_infections = sum(
-            1 for sc in status_changes if sc["to"] == AgentStatus.INFECTED.value
-        )
-        num_infectious = len(infected_ids)
-        r0 = new_infections / num_infectious if num_infectious > 0 else 0.0
+
+        # Count agents per infection generation (excluding clean).
+        gen_counts: Counter[int] = Counter()
+        for a in self._agents.values():
+            if a.status != AgentStatus.CLEAN:
+                gen_counts[a.infection_generation] += 1
+
+        # R0: basic reproduction number (single number, refined over time).
+        # Ratio of gen 1 to gen 0 — measures spread in a naive population.
+        if gen_counts[0] > 0 and gen_counts[1] > 0:
+            r0 = gen_counts[1] / gen_counts[0]
+        else:
+            r0 = 0.0
+
+        # Re(t): effective reproduction number (time-varying).
+        # Latest generation ratio with EMA smoothing.  Reflects current
+        # conditions: susceptible depletion, AEGIS interventions, etc.
+        raw_re = 0.0
+        if len(gen_counts) >= 2:
+            max_gen = max(gen_counts)
+            for g in range(max_gen, 0, -1):
+                if gen_counts[g - 1] > 0:
+                    raw_re = gen_counts[g] / gen_counts[g - 1]
+                    break
+
+        alpha = 0.3
+        self._re_ema = alpha * raw_re + (1 - alpha) * self._re_ema
+        re = self._re_ema
 
         # Compute cluster summary
         clusters = self._topic_clusterer.cluster()
@@ -389,6 +417,7 @@ class SimulationEngine:
             tick=self._tick_count,
             counts=counts,
             r0=r0,
+            re=re,
             confusion=tick_confusion,
             events=events,
             status_changes=status_changes,
@@ -612,17 +641,3 @@ class SimulationEngine:
             counts[agent.status.value] += 1
         return counts
 
-    def _compute_r0(self) -> float:
-        """Compute cohort R0 for the full simulation (used by export).
-
-        Average secondary infections across all agents that were ever infected.
-        """
-        ever_infected = [
-            a
-            for a in self._agents.values()
-            if a.status != AgentStatus.CLEAN
-        ]
-        if ever_infected:
-            total = sum(a.secondary_infections for a in ever_infected)
-            return total / len(ever_infected)
-        return 0.0

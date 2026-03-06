@@ -272,6 +272,7 @@
             // Clear stats
             el("tick-counter").textContent = "0";
             el("stat-r0").textContent = "-";
+            el("stat-re").textContent = "-";
             el("stat-infections").textContent = "0";
             el("stat-detection-rate").textContent = "-";
             el("stat-fpr").textContent = "-";
@@ -535,6 +536,16 @@
                         tension: 0.3,
                         pointRadius: 0,
                     },
+                    {
+                        label: "R\u2091",
+                        borderColor: "#e67e22",
+                        borderDash: [2, 3],
+                        data: [],
+                        yAxisID: "y1",
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 0,
+                    },
                 ],
             },
             options: {
@@ -555,7 +566,7 @@
                     },
                     y1: {
                         position: "right",
-                        title: { display: true, text: "R\u2080", color: "#f1c40f" },
+                        title: { display: true, text: "R\u2080 / R\u2091", color: "#f1c40f" },
                         ticks: { color: "#f1c40f" },
                         grid: { drawOnChartArea: false },
                         min: 0,
@@ -578,6 +589,7 @@
         populationChart.data.datasets[2].data.push((snapshot.counts.quarantined || 0) / total * 100);
         populationChart.data.datasets[3].data.push((snapshot.counts.recovered || 0) / total * 100);
         populationChart.data.datasets[4].data.push(snapshot.r0 || 0);
+        populationChart.data.datasets[5].data.push(snapshot.re || 0);
         populationChart.update();
     }
 
@@ -604,6 +616,7 @@
     function updateStats(snapshot) {
         if (!snapshot) return;
         el("stat-r0").textContent = (snapshot.r0 || 0).toFixed(2);
+        el("stat-re").textContent = (snapshot.re || 0).toFixed(2);
 
         var counts = snapshot.counts || {};
         var totalInfected = (counts.infected || 0) + (counts.quarantined || 0) + (counts.recovered || 0);

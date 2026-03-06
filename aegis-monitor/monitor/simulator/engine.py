@@ -249,11 +249,9 @@ class SimulationEngine:
                 # Record confusion matrix per technique
                 for technique in TechniqueType:
                     present = technique in payload.techniques
-                    tech_detected = (
-                        technique.value in scan_result.get("detected_techniques", [])
-                        if scan_result
-                        else False
-                    )
+                    # Shield blocks the entire message: if detected, all
+                    # present techniques count as detected.
+                    tech_detected = detected and present
                     tick_confusion.record(technique, present=present, detected=tech_detected)
                     self._confusion.record(technique, present=present, detected=tech_detected)
 
@@ -313,17 +311,13 @@ class SimulationEngine:
                     scan_result = self._run_shield_scan(aid, bg_payload.text)
 
                 # Record confusion matrix (all techniques present=False)
+                bg_detected = scan_result.get("detected", False)
                 for technique in TechniqueType:
-                    tech_detected = (
-                        technique.value in scan_result.get("detected_techniques", [])
-                        if scan_result
-                        else False
-                    )
                     tick_confusion.record(
-                        technique, present=False, detected=tech_detected
+                        technique, present=False, detected=bg_detected
                     )
                     self._confusion.record(
-                        technique, present=False, detected=tech_detected
+                        technique, present=False, detected=bg_detected
                     )
 
         # Phase 3: Recovery - quarantined agents recover after recovery_ticks
@@ -571,13 +565,25 @@ class SimulationEngine:
             # AEGIS package not available; engine runs without shields
             return
 
+        # Convert ModuleToggles dataclass to list[str] for Shield constructor
+        m = self._config.modules
+        enabled: list[str] = []
+        if m.scanner:
+            enabled.append("scanner")
+        if m.broker:
+            enabled.append("broker")
+        if m.identity:
+            enabled.append("identity")
+        if m.behavior:
+            enabled.append("behavior")
+        if m.recovery:
+            enabled.append("recovery")
+
         for aid, agent in self._agents.items():
             if not agent.has_aegis:
                 continue
             try:
-                self._shields[aid] = Shield(
-                    modules=self._config.modules,
-                )
+                self._shields[aid] = Shield(modules=enabled)
             except Exception:
                 pass
 
@@ -587,8 +593,11 @@ class SimulationEngine:
         if shield is None:
             return {}
         try:
-            result = shield.scan(text)
-            return result if isinstance(result, dict) else {}
+            result = shield.scan_input(text)
+            return {
+                "detected": result.is_threat,
+                "threat_score": result.threat_score,
+            }
         except Exception:
             return {}
 

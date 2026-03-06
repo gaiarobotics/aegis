@@ -343,28 +343,22 @@ class SimulationEngine:
                     }
                 )
 
-        # Phase 4: Quarantine of infected agents
-        # With AEGIS modules: behavior-driven detection that improves over time.
-        # Without AEGIS: very small flat probability representing the user
-        # noticing the compromise and manually disabling the agent.
+        # Phase 4: Quarantine of infected agents (AEGIS only)
+        # Quarantine is an AEGIS capability — agents without AEGIS have no
+        # automated detection mechanism and stay infected until max_ticks.
         current_infected = [
             aid
             for aid, agent in self._agents.items()
-            if agent.status == AgentStatus.INFECTED
+            if agent.status == AgentStatus.INFECTED and agent.has_aegis
         ]
         for aid in current_infected:
             agent = self._agents[aid]
-            if agent.has_aegis:
-                ticks_infected = (
-                    self._tick_count - agent.infection_tick
-                    if agent.infection_tick is not None
-                    else 0
-                )
-                detection_prob = min(0.5, ticks_infected * 0.02)
-            else:
-                # No immune system — only chance is the human operator
-                # spotting anomalous behavior (~0.5% per tick)
-                detection_prob = 0.005
+            ticks_infected = (
+                self._tick_count - agent.infection_tick
+                if agent.infection_tick is not None
+                else 0
+            )
+            detection_prob = min(0.5, ticks_infected * 0.02)
             if self._rng.random() < detection_prob:
                 agent.status = AgentStatus.QUARANTINED
                 agent.quarantine_tick = self._tick_count

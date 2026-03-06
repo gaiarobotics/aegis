@@ -48,7 +48,7 @@ class SimulationEngine:
         self._tick_count: int = 0
         self._snapshots: list[TickSnapshot] = []
         self._confusion: ConfusionMatrix = ConfusionMatrix()
-        self._shields: dict[str, Any] = {}
+        self._scanner: Any = None
 
         # Content hash integration
         self._topic_clusterer = TopicClusterer()
@@ -184,7 +184,7 @@ class SimulationEngine:
         self._tick_count = 0
         self._snapshots.clear()
         self._confusion = ConfusionMatrix()
-        self._shields.clear()
+        self._scanner = None
         self._topic_clusterer = TopicClusterer()
         self._contagion_detector = ContagionDetector()
         self._rng = random.Random(self._config.seed)
@@ -559,42 +559,39 @@ class SimulationEngine:
         return any([m.scanner, m.broker, m.identity, m.behavior, m.recovery])
 
     def _init_shields(self) -> None:
-        """Lazily import and initialize Shield instances.  Graceful on failure."""
+        """Initialize a shared Scanner instance for AEGIS detection.
+
+        Uses a single Scanner rather than per-agent Shield instances
+        since the simulator only needs stateless pattern-matching scans.
+        """
+        if not self._config.modules.scanner:
+            return
         try:
-            from aegis.shield import Shield  # type: ignore[import-not-found]
+            from aegis.core.config import AegisConfig  # type: ignore[import-not-found]
+            from aegis.scanner import Scanner  # type: ignore[import-not-found]
         except ImportError:
-            # AEGIS package not available; engine runs without shields
             return
 
-        # Convert ModuleToggles dataclass to list[str] for Shield constructor
-        m = self._config.modules
-        enabled: list[str] = []
-        if m.scanner:
-            enabled.append("scanner")
-        if m.broker:
-            enabled.append("broker")
-        if m.identity:
-            enabled.append("identity")
-        if m.behavior:
-            enabled.append("behavior")
-        if m.recovery:
-            enabled.append("recovery")
-
-        for aid, agent in self._agents.items():
-            if not agent.has_aegis:
-                continue
-            try:
-                self._shields[aid] = Shield(modules=enabled)
-            except Exception:
-                pass
+        try:
+            cfg = AegisConfig()
+            st = self._config.modules.scanner_toggles
+            cfg.scanner.pattern_matching = st.pattern_matching
+            cfg.scanner.semantic_analysis = st.semantic_analysis
+            cfg.scanner.sensitivity = self._config.modules.sensitivity
+            cfg.scanner.confidence_threshold = self._config.modules.confidence_threshold
+            self._scanner = Scanner(config=cfg)
+        except Exception:
+            pass
 
     def _run_shield_scan(self, agent_id: str, text: str) -> dict[str, Any]:
-        """Run a Shield scan for *agent_id*.  Returns empty dict on failure."""
-        shield = self._shields.get(agent_id)
-        if shield is None:
+        """Run a Scanner scan for *agent_id*.  Returns empty dict on failure."""
+        if self._scanner is None:
+            return {}
+        agent = self._agents.get(agent_id)
+        if agent is None or not agent.has_aegis:
             return {}
         try:
-            result = shield.scan_input(text)
+            result = self._scanner.scan_input(text)
             return {
                 "detected": result.is_threat,
                 "threat_score": result.threat_score,

@@ -386,10 +386,22 @@ class SimulationEngine:
             if a.status != AgentStatus.CLEAN:
                 gen_counts[a.infection_generation] += 1
 
-        # R0: basic reproduction number (single number, refined over time).
-        # Ratio of gen 1 to gen 0 — measures spread in a naive population.
-        if gen_counts[0] > 0 and gen_counts[1] > 0:
-            r0 = gen_counts[1] / gen_counts[0]
+        # R0: basic reproduction number (average of early generation ratios).
+        # A ratio gen(g)->gen(g+1) is included once gen(g+2) exists,
+        # confirming gen(g+1) is mostly formed.  Averaging multiple
+        # ratios provides finer resolution than gen1/gen0 alone.
+        # Cap at first 2 pairs to avoid susceptible-depletion bias.
+        max_gen = max(gen_counts) if gen_counts else 0
+        r0_ratios: list[float] = []
+        for g in range(min(2, max_gen)):
+            if (
+                gen_counts[g] > 0
+                and gen_counts[g + 1] > 0
+                and gen_counts.get(g + 2, 0) > 0
+            ):
+                r0_ratios.append(gen_counts[g + 1] / gen_counts[g])
+        if r0_ratios:
+            r0 = sum(r0_ratios) / len(r0_ratios)
         else:
             r0 = 0.0
 

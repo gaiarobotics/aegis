@@ -374,7 +374,11 @@ class SimulationEngine:
 
         # Phase 5: Compute metrics
         counts = self._count_statuses()
-        r0 = self._compute_r0()
+        new_infections = sum(
+            1 for sc in status_changes if sc["to"] == AgentStatus.INFECTED.value
+        )
+        num_infectious = len(infected_ids)
+        r0 = new_infections / num_infectious if num_infectious > 0 else 0.0
 
         # Compute cluster summary
         clusters = self._topic_clusterer.cluster()
@@ -609,28 +613,16 @@ class SimulationEngine:
         return counts
 
     def _compute_r0(self) -> float:
-        """Compute R0: average secondary infections per resolved agent.
+        """Compute cohort R0 for the full simulation (used by export).
 
-        Resolved agents are those who are quarantined or recovered.
-        If none are resolved yet, fall back to currently infected agents.
+        Average secondary infections across all agents that were ever infected.
         """
-        resolved = [
+        ever_infected = [
             a
             for a in self._agents.values()
-            if a.status in (AgentStatus.QUARANTINED, AgentStatus.RECOVERED)
+            if a.status != AgentStatus.CLEAN
         ]
-        if resolved:
-            total = sum(a.secondary_infections for a in resolved)
-            return total / len(resolved)
-
-        # Fallback: use currently infected agents
-        infected = [
-            a
-            for a in self._agents.values()
-            if a.status == AgentStatus.INFECTED
-        ]
-        if infected:
-            total = sum(a.secondary_infections for a in infected)
-            return total / len(infected)
-
+        if ever_infected:
+            total = sum(a.secondary_infections for a in ever_infected)
+            return total / len(ever_infected)
         return 0.0

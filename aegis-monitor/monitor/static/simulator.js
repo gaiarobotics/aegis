@@ -722,9 +722,9 @@
         // Store tick data for export
         tickData.push(snapshot);
 
-        // Check if simulation completed
-        if (snapshot.state === "completed" || (snapshot.counts && snapshot.counts.infected === 0 && snapshot.tick > 0)) {
-            simState = "completed";
+        // Sync simulation state from engine
+        if (snapshot.state) {
+            simState = snapshot.state;
             updateControls();
         }
     }

@@ -403,6 +403,7 @@ class SimulationEngine:
         if num_infected == 0 or self._tick_count >= self._config.max_ticks:
             self._state = SimState.COMPLETED
 
+        snapshot.state = self._state.value
         return snapshot
 
     # ------------------------------------------------------------------

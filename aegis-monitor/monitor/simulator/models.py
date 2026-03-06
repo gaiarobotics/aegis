@@ -329,11 +329,12 @@ class TickSnapshot:
     events: list[dict[str, Any]] = field(default_factory=list)
     status_changes: list[dict[str, Any]] = field(default_factory=list)
     cluster_summary: dict[str, Any] = field(default_factory=dict)
+    state: str = ""
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the snapshot to a dictionary."""
-        return {
+        d: dict[str, Any] = {
             "tick": self.tick,
             "counts": self.counts,
             "r0": self.r0,
@@ -343,3 +344,6 @@ class TickSnapshot:
             "cluster_summary": self.cluster_summary,
             "timestamp": self.timestamp,
         }
+        if self.state:
+            d["state"] = self.state
+        return d

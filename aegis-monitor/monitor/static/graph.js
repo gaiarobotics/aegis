@@ -15,6 +15,66 @@
     const RECONNECT_MS = 3000;
     let topicViewActive = false;
 
+    // ---- Dark-theme node hover ----
+    function drawDarkHover(context, data, settings) {
+        var size = settings.labelSize;
+        var font = settings.labelFont;
+        var weight = settings.labelWeight;
+
+        context.font = (weight ? weight + " " : "") + size + "px " + font;
+
+        var label = data.label;
+        if (!label) return;
+
+        var textWidth = context.measureText(label).width;
+        var padding = 4;
+        var boxWidth = Math.round(textWidth + 8 + data.size + 3 * padding);
+        var boxHeight = Math.round(Math.max(2 * data.size, size + 2 * padding) + 2 * padding);
+        var radius = 5;
+
+        var x = Math.round(data.x - data.size - padding);
+        var y = Math.round(data.y - boxHeight / 2);
+
+        // Draw rounded-rect background
+        context.beginPath();
+        context.moveTo(x + radius, y);
+        context.lineTo(x + boxWidth - radius, y);
+        context.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + radius);
+        context.lineTo(x + boxWidth, y + boxHeight - radius);
+        context.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - radius, y + boxHeight);
+        context.lineTo(x + radius, y + boxHeight);
+        context.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - radius);
+        context.lineTo(x, y + radius);
+        context.quadraticCurveTo(x, y, x + radius, y);
+        context.closePath();
+
+        context.fillStyle = "#1a2332";
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 2;
+        context.shadowBlur = 8;
+        context.shadowColor = "#00000080";
+        context.fill();
+
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 0;
+        context.shadowBlur = 0;
+        context.shadowColor = "transparent";
+
+        context.strokeStyle = "#2c3e50";
+        context.lineWidth = 1;
+        context.stroke();
+
+        // Draw node disc
+        context.beginPath();
+        context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
+        context.fillStyle = data.color;
+        context.fill();
+
+        // Draw label
+        context.fillStyle = "#e0e6ed";
+        context.fillText(label, Math.round(data.x + data.size + padding), Math.round(data.y + size / 3));
+    }
+
     // ---- Initialize graph ----
     function initGraph() {
         const container = document.getElementById("graph-canvas");
@@ -39,6 +99,7 @@
             maxCameraRatio: 10,
             defaultNodeType: "bordered",
             nodeProgramClasses: { bordered: AegisBorderProgram },
+            defaultDrawNodeHover: drawDarkHover,
         });
 
         sigmaInstance.on("clickNode", function (e) {

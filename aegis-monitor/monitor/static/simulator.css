@@ -892,25 +892,3 @@ body {
         max-height: 300px;
     }
 }
-
-/* Graph hover tooltip */
-.graph-tooltip {
-    position: absolute;
-    pointer-events: auto;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 6px 10px;
-    border-radius: 5px;
-    font-size: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-    opacity: 0;
-    transition: opacity 0.15s;
-    transform: translate(-50%, calc(-100% - 12px));
-    z-index: 10;
-    white-space: nowrap;
-}
-
-.graph-tooltip.visible {
-    opacity: 1;
-}

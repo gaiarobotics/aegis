@@ -31,39 +31,6 @@
             maxCameraRatio: 10,
         });
 
-        // Border overlay canvas for AEGIS indicators
-        var borderCanvas = document.createElement("canvas");
-        borderCanvas.style.position = "absolute";
-        borderCanvas.style.top = "0";
-        borderCanvas.style.left = "0";
-        borderCanvas.style.pointerEvents = "none";
-        borderCanvas.style.zIndex = "5";
-        container.appendChild(borderCanvas);
-
-        sigmaInstance.on("afterRender", function () {
-            var dpr = window.devicePixelRatio || 1;
-            var width = container.offsetWidth;
-            var height = container.offsetHeight;
-            borderCanvas.width = width * dpr;
-            borderCanvas.height = height * dpr;
-            borderCanvas.style.width = width + "px";
-            borderCanvas.style.height = height + "px";
-            var ctx = borderCanvas.getContext("2d");
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.clearRect(0, 0, width, height);
-            ctx.strokeStyle = "#3498db";
-            ctx.lineWidth = 2;
-
-            graphInstance.forEachNode(function (nodeId, attrs) {
-                if (!attrs._hasAegis) return;
-                var dd = sigmaInstance.getNodeDisplayData(nodeId);
-                if (!dd) return;
-                ctx.beginPath();
-                ctx.arc(dd.x, dd.y, dd.size + 2, 0, Math.PI * 2);
-                ctx.stroke();
-            });
-        });
-
         sigmaInstance.on("clickNode", function (e) {
             showAgentPopup(e.node);
         });
@@ -78,6 +45,17 @@
         } catch (err) {
             logEvent("system", "Failed to fetch graph: " + err.message);
         }
+    }
+
+    function muteColor(hex) {
+        // Mix a hex color with gray to produce a desaturated version
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        r = Math.round(r * 0.6 + 0x7f * 0.4);
+        g = Math.round(g * 0.6 + 0x8c * 0.4);
+        b = Math.round(b * 0.6 + 0x9b * 0.4);
+        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
     }
 
     function renderGraph(data) {
@@ -98,14 +76,14 @@
             if (topicViewActive && node.topic_color) {
                 nodeColor = node.topic_color;
             }
+            var hasAegis = node.has_aegis || false;
             graphInstance.addNode(node.id, {
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
-                size: 8 + (node.trust_score || 0) * 0.1,
-                color: nodeColor,
+                size: hasAegis ? 10 + (node.trust_score || 0) * 0.1 : 7 + (node.trust_score || 0) * 0.1,
+                color: hasAegis ? nodeColor : muteColor(nodeColor),
                 label: node.id,
                 _data: node,
-                _hasAegis: node.has_aegis || false,
             });
         });
 

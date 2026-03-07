@@ -21,7 +21,7 @@ class TestContactGraphCreation:
         graph = ContactGraph.generate(50, cfg, seed=42)
         assert graph.num_agents == 50
         # Every agent should have a get_neighbors result (even if empty list)
-        neighbors = graph.get_neighbors("agent-0")
+        neighbors = graph.get_neighbors("0")
         assert isinstance(neighbors, list)
 
     def test_scale_free_topology(self):
@@ -62,7 +62,7 @@ class TestContactGraphQueries:
         return ContactGraph.generate(50, cfg, seed=42)
 
     def test_get_neighbors(self, scale_free_graph: ContactGraph):
-        neighbors = scale_free_graph.get_neighbors("agent-0")
+        neighbors = scale_free_graph.get_neighbors("0")
         assert isinstance(neighbors, list)
 
     def test_get_hubs(self, scale_free_graph: ContactGraph):
@@ -94,7 +94,7 @@ class TestContactGraphQueries:
     def test_all_agent_ids(self, scale_free_graph: ContactGraph):
         ids = scale_free_graph.all_agent_ids()
         assert len(ids) == 50
-        assert "agent-0" in ids
+        assert "0" in ids
 
     def test_to_serializable(self, scale_free_graph: ContactGraph):
         data = scale_free_graph.to_serializable()

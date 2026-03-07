@@ -99,7 +99,7 @@ class ContactGraph:
         communities: dict[int, list[str]] = {}
         offset = 0
         for idx, size in enumerate(sizes):
-            communities[idx] = [f"agent-{i}" for i in range(offset, offset + size)]
+            communities[idx] = [str(i) for i in range(offset, offset + size)]
             offset += size
 
         return cls(g, communities=communities)
@@ -167,6 +167,6 @@ class ContactGraph:
 
 
 def _relabel(g: nx.Graph, n: int) -> nx.Graph:
-    """Relabel integer node IDs to ``agent-{i}`` strings."""
-    mapping = {i: f"agent-{i}" for i in range(n)}
+    """Relabel integer node IDs to string labels."""
+    mapping = {i: str(i) for i in range(n)}
     return nx.relabel_nodes(g, mapping)

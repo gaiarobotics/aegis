@@ -207,7 +207,7 @@ class SimConfig:
     population: PopulationConfig = field(default_factory=PopulationConfig)
     corpus: CorpusConfig = field(default_factory=CorpusConfig)
     modules: ModuleToggles = field(default_factory=ModuleToggles)
-    aegis_adoption_rate: float = 1.0
+    aegis_adoption_rate: float = 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +329,7 @@ class TickSnapshot:
     confusion: ConfusionMatrix = field(default_factory=ConfusionMatrix)
     events: list[dict[str, Any]] = field(default_factory=list)
     status_changes: list[dict[str, Any]] = field(default_factory=list)
+    transmission_attempts: list[dict[str, Any]] = field(default_factory=list)
     cluster_summary: dict[str, Any] = field(default_factory=dict)
     state: str = ""
     timestamp: float = field(default_factory=time.time)
@@ -343,6 +344,7 @@ class TickSnapshot:
             "confusion": self.confusion.to_dict(),
             "events": self.events,
             "status_changes": self.status_changes,
+            "transmission_attempts": self.transmission_attempts,
             "cluster_summary": self.cluster_summary,
             "timestamp": self.timestamp,
         }

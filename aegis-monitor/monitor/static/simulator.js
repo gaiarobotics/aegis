@@ -256,7 +256,11 @@
                 populationChart.data.datasets.forEach(function (ds) { ds.data = []; });
                 populationChart.update();
             }
-            // Clear graph
+            // Clear flash timers and graph
+            Object.keys(_flashTimers).forEach(function (k) {
+                clearTimeout(_flashTimers[k]);
+                delete _flashTimers[k];
+            });
             if (graphInstance) {
                 graphInstance.clear();
                 if (sigmaInstance) sigmaInstance.refresh();
@@ -483,6 +487,35 @@
         });
 
         if (sigmaInstance) sigmaInstance.refresh();
+    }
+
+    // ---- Edge flash for transmission attempts ----
+    var EDGE_FLASH_MS = 600;
+    var _flashTimers = {};
+
+    function flashEdge(source, target, success, blockedBy) {
+        if (!graphInstance) return;
+        // Edge keys may be source-target or target-source (undirected graph)
+        var key = source + "-" + target;
+        var altKey = target + "-" + source;
+        var edgeKey = graphInstance.hasEdge(key) ? key : (graphInstance.hasEdge(altKey) ? altKey : null);
+        if (!edgeKey) return;
+
+        var color = success ? "#e74c3c" : (blockedBy === "aegis" ? "#3498db" : "#2ecc71");
+        graphInstance.setEdgeAttribute(edgeKey, "color", color);
+        graphInstance.setEdgeAttribute(edgeKey, "size", success ? 2 : 1.5);
+
+        // Cancel any existing timer for this edge
+        if (_flashTimers[edgeKey]) clearTimeout(_flashTimers[edgeKey]);
+
+        _flashTimers[edgeKey] = setTimeout(function () {
+            if (graphInstance.hasEdge(edgeKey)) {
+                graphInstance.setEdgeAttribute(edgeKey, "color", "#2c3e5050");
+                graphInstance.setEdgeAttribute(edgeKey, "size", 0.5);
+            }
+            delete _flashTimers[edgeKey];
+            if (sigmaInstance) sigmaInstance.refresh();
+        }, EDGE_FLASH_MS);
     }
 
     function statusColor(status) {
@@ -727,6 +760,14 @@
                 if (graphInstance.hasNode(change.agent_id)) {
                     graphInstance.setNodeAttribute(change.agent_id, "color", statusColor(change.to));
                 }
+            });
+            if (sigmaInstance) sigmaInstance.refresh();
+        }
+
+        // Flash edges for transmission attempts
+        if (snapshot.transmission_attempts && snapshot.transmission_attempts.length > 0 && graphInstance) {
+            snapshot.transmission_attempts.forEach(function (attempt) {
+                flashEdge(attempt.source, attempt.target, attempt.success, attempt.blocked_by);
             });
             if (sigmaInstance) sigmaInstance.refresh();
         }

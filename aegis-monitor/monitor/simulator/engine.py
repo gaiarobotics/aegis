@@ -215,6 +215,7 @@ class SimulationEngine:
         self._tick_count += 1
         events: list[dict[str, Any]] = []
         status_changes: list[dict[str, Any]] = []
+        transmission_attempts: list[dict[str, Any]] = []
         tick_confusion = ConfusionMatrix()
 
         # Phase 1: Infected agents spread
@@ -288,6 +289,19 @@ class SimulationEngine:
                                     "source": aid,
                                 }
                             )
+                            transmission_attempts.append(
+                                {"source": aid, "target": target_id, "success": True}
+                            )
+                        else:
+                            # Susceptibility roll failed
+                            transmission_attempts.append(
+                                {"source": aid, "target": target_id, "success": False, "blocked_by": "natural"}
+                            )
+                    elif not payload.is_benign and TechniqueType.WORM_PROPAGATION in payload.techniques:
+                        # Worm payload was blocked by AEGIS detection
+                        transmission_attempts.append(
+                            {"source": aid, "target": target_id, "success": False, "blocked_by": "aegis"}
+                        )
 
         # Phase 2: Background benign traffic
         clean_ids = [
@@ -395,6 +409,7 @@ class SimulationEngine:
             confusion=tick_confusion,
             events=events,
             status_changes=status_changes,
+            transmission_attempts=transmission_attempts,
             cluster_summary=cluster_summary,
         )
         self._snapshots.append(snapshot)

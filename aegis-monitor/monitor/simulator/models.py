@@ -83,7 +83,6 @@ class SimAgent:
     quarantine_tick: int | None = None
     recovery_tick: int | None = None
     secondary_infections: int = 0
-    infection_generation: int = 0
     has_aegis: bool = False
     content_hash: str | None = None
 

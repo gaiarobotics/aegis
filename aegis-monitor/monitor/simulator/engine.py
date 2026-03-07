@@ -6,8 +6,8 @@ optionally integrating AEGIS Shield modules for detection measurement.
 
 from __future__ import annotations
 
+import math
 import random
-from collections import Counter
 from dataclasses import asdict
 from typing import Any
 
@@ -50,7 +50,7 @@ class SimulationEngine:
         self._snapshots: list[TickSnapshot] = []
         self._confusion: ConfusionMatrix = ConfusionMatrix()
         self._scanner: Any = None
-        self._re_ema: float = 0.0
+        self._r0: float = 0.0
 
         # Content hash integration
         self._topic_clusterer = TopicClusterer()
@@ -130,7 +130,6 @@ class SimulationEngine:
         for sid in seed_ids:
             self._agents[sid].status = AgentStatus.INFECTED
             self._agents[sid].infection_tick = 0
-            self._agents[sid].infection_generation = 0
             # Compute hash for seed agents
             if self._hash_available and self._corpus is not None:
                 seed_payload = self._corpus.generate(self._rng)
@@ -143,6 +142,9 @@ class SimulationEngine:
         # 5. Optionally init Shield instances
         if self._has_any_module_enabled():
             self._init_shields()
+
+        # 6. Compute analytical R0 from the generated graph and agents
+        self._r0 = self._compute_r0()
 
         self._state = SimState.READY
 
@@ -188,7 +190,7 @@ class SimulationEngine:
         self._snapshots.clear()
         self._confusion = ConfusionMatrix()
         self._scanner = None
-        self._re_ema = 0.0
+        self._r0 = 0.0
         self._topic_clusterer = TopicClusterer()
         self._contagion_detector = ContagionDetector()
         self._rng = random.Random(self._config.seed)
@@ -276,7 +278,6 @@ class SimulationEngine:
                         if self._rng.random() < worm_susc:
                             target.status = AgentStatus.INFECTED
                             target.infection_tick = self._tick_count
-                            target.infection_generation = agent.infection_generation + 1
                             agent.secondary_infections += 1
                             # Mark newly infected agent as compromised
                             if hash_hex:
@@ -380,45 +381,14 @@ class SimulationEngine:
         # Phase 5: Compute metrics
         counts = self._count_statuses()
 
-        # Count agents per infection generation (excluding clean).
-        gen_counts: Counter[int] = Counter()
-        for a in self._agents.values():
-            if a.status != AgentStatus.CLEAN:
-                gen_counts[a.infection_generation] += 1
-
-        # R0: basic reproduction number (average of early generation ratios).
-        # A ratio gen(g)->gen(g+1) is included once gen(g+2) exists,
-        # confirming gen(g+1) is mostly formed.  Averaging multiple
-        # ratios provides finer resolution than gen1/gen0 alone.
-        # Cap at first 2 pairs to avoid susceptible-depletion bias.
-        max_gen = max(gen_counts) if gen_counts else 0
-        r0_ratios: list[float] = []
-        for g in range(min(2, max_gen)):
-            if (
-                gen_counts[g] > 0
-                and gen_counts[g + 1] > 0
-                and gen_counts.get(g + 2, 0) > 0
-            ):
-                r0_ratios.append(gen_counts[g + 1] / gen_counts[g])
-        if r0_ratios:
-            r0 = sum(r0_ratios) / len(r0_ratios)
-        else:
-            r0 = 0.0
+        # R0: static analytical value computed at generate time.
+        r0 = self._r0
 
         # Re(t): effective reproduction number (time-varying).
-        # Latest generation ratio with EMA smoothing.  Reflects current
-        # conditions: susceptible depletion, AEGIS interventions, etc.
-        raw_re = 0.0
-        if len(gen_counts) >= 2:
-            max_gen = max(gen_counts)
-            for g in range(max_gen, 0, -1):
-                if gen_counts[g - 1] > 0:
-                    raw_re = gen_counts[g] / gen_counts[g - 1]
-                    break
-
-        alpha = 0.3
-        self._re_ema = alpha * raw_re + (1 - alpha) * self._re_ema
-        re = self._re_ema
+        # Standard mean-field approximation: Re = R0 × S(t)/N.
+        n = len(self._agents)
+        susceptible_fraction = counts.get(AgentStatus.CLEAN.value, 0) / n if n else 0
+        re = r0 * susceptible_fraction
 
         # Compute cluster summary
         clusters = self._topic_clusterer.cluster()
@@ -652,4 +622,72 @@ class SimulationEngine:
         for agent in self._agents.values():
             counts[agent.status.value] += 1
         return counts
+
+    def _compute_r0(self) -> float:
+        """Compute R0 analytically from the generated graph and agent properties.
+
+        R0 is the expected number of secondary infections caused by a single
+        infected agent in a fully susceptible population.  For each agent, we
+        compute the probability of infecting each of its neighbours over its
+        expected infectious lifetime, then average across all agents.
+        """
+        if not self._agents or self._graph is None:
+            return 0.0
+
+        p_worm = self._config.corpus.technique_probabilities.get(
+            TechniqueType.WORM_PROPAGATION.value, 0.0
+        )
+        if p_worm == 0.0:
+            return 0.0
+
+        tau_aegis = self._expected_infectious_duration(with_aegis=True)
+        tau_no_aegis = self._expected_infectious_duration(with_aegis=False)
+
+        r0_sum = 0.0
+        for aid, agent in self._agents.items():
+            neighbors = self._graph.get_neighbors(aid)
+            k = len(neighbors)
+            if k == 0:
+                continue
+
+            c = max(1, int(agent.activity_level * 2))
+            tau = tau_aegis if agent.has_aegis else tau_no_aegis
+            contact_prob = min(c, k) / k
+
+            r0_i = 0.0
+            for nid in neighbors:
+                neighbor = self._agents[nid]
+                model_spec = self._get_model_spec(neighbor.model)
+                susc = neighbor.compute_susceptibility(model_spec.base_susceptibility)
+                worm_susc = susc.get(TechniqueType.WORM_PROPAGATION.value, 0.0)
+
+                q = contact_prob * p_worm * worm_susc
+                if q <= 0.0:
+                    continue
+                # 1 - (1-q)^tau, using log to avoid floating point issues
+                r0_i += 1.0 - math.exp(tau * math.log(1.0 - q))
+
+            r0_sum += r0_i
+
+        return r0_sum / len(self._agents)
+
+    def _expected_infectious_duration(self, *, with_aegis: bool) -> float:
+        """Return the expected infectious duration in ticks.
+
+        With AEGIS, detection probability ramps as ``min(0.5, t * 0.02)``
+        per tick.  Without AEGIS, agents stay infectious for ``max_ticks``.
+        """
+        if not with_aegis:
+            return float(self._config.max_ticks)
+
+        # E[τ] = Σ P(survive to tick t) for t = 0, 1, 2, ...
+        survival = 1.0
+        total = 1.0  # tick 0
+        for t in range(1, self._config.max_ticks + 1):
+            detection_prob = min(0.5, t * 0.02)
+            survival *= 1.0 - detection_prob
+            if survival < 1e-12:
+                break
+            total += survival
+        return total
 

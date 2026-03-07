@@ -401,7 +401,7 @@
                 size: 5 + (node.degree || 1) * 0.5,
                 color: baseColor,
                 borderColor: hasAegis ? "#ffffff" : "#00000000",
-                borderSize: hasAegis ? 0.15 : 0,
+                borderSize: hasAegis ? 0.2 : 0,
                 label: String(node.id),
                 forceLabel: true,
             });

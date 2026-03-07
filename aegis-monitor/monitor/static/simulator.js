@@ -371,22 +371,11 @@
             }
         });
 
+        /*
         var tooltip = document.createElement("div");
         tooltip.className = "sigma-tooltip";
         container.appendChild(tooltip);
-
-        sigmaInstance.on("enterNode", function (e) {
-            var nodeData = sigmaInstance.getNodeDisplayData(e.node);
-            if (!nodeData) return;
-            tooltip.textContent = e.node;
-            tooltip.style.display = "block";
-            tooltip.style.left = (nodeData.x + nodeData.size + 6) + "px";
-            tooltip.style.top = (nodeData.y - 10) + "px";
-        });
-
-        sigmaInstance.on("leaveNode", function () {
-            tooltip.style.display = "none";
-        });
+        */
     }
 
     async function fetchGraph() {
@@ -426,9 +415,12 @@
             graphInstance.addNode(node.id, {
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
-                size: hasAegis ? 7 + (node.degree || 1) * 0.5 : 5 + (node.degree || 1) * 0.5,
+                size: 5 + (node.degree || 1) * 0.5,
                 color: hasAegis ? baseColor : muteColor(baseColor),
                 label: String(node.id),
+                // type: hasAegis ? 'circle' : 'square',
+                forceLabel: true,
+                _hasAegis: hasAegis,
             });
         });
 
@@ -983,4 +975,5 @@
         el("btn-delete-preset").addEventListener("click", deletePreset);
     });
 })();
+
 

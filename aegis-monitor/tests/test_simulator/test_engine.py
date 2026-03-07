@@ -251,7 +251,7 @@ class TestTickExecution:
             f"current={current_infected}"
         )
 
-    def test_r0_computed(self):
+    def test_reproduction_metrics_computed(self):
         from monitor.simulator.engine import SimulationEngine
 
         cfg = _make_config(num_agents=20)
@@ -259,7 +259,32 @@ class TestTickExecution:
         engine.generate()
         engine.start()
         snapshot = engine.tick()
-        assert isinstance(snapshot.r0, float)
+        assert isinstance(snapshot.seed_r, float)
+        assert isinstance(snapshot.re, float)
+
+    def test_empirical_reproduction_uses_realized_offspring(self):
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=4, seed=42)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+
+        agent_ids = list(engine._agents.keys())
+        engine._seed_ids = {agent_ids[0], agent_ids[1]}
+        engine._tick_count = 3
+
+        engine._agents[agent_ids[0]].infection_tick = 0
+        engine._agents[agent_ids[0]].secondary_infections = 3
+        engine._agents[agent_ids[1]].infection_tick = 0
+        engine._agents[agent_ids[1]].secondary_infections = 1
+        engine._agents[agent_ids[2]].infection_tick = 1
+        engine._agents[agent_ids[2]].secondary_infections = 2
+        engine._agents[agent_ids[3]].infection_tick = 3
+        engine._agents[agent_ids[3]].secondary_infections = 99
+
+        assert engine._compute_seed_r() == pytest.approx(2.0)
+        assert engine._compute_running_re() == pytest.approx(2.0)
+
 
     def test_confusion_matrix_populated(self):
         from monitor.simulator.engine import SimulationEngine
@@ -506,3 +531,4 @@ class TestContentHashing:
         engine.reset()
         entries = engine.get_embedding_entries()
         assert entries == []
+

@@ -202,11 +202,11 @@ class TestTickSnapshot:
         snap = TickSnapshot(
             tick=1,
             counts={"clean": 45, "infected": 5},
-            r0=2.5,
+            seed_r=2.5,
         )
         assert snap.tick == 1
         assert snap.counts == {"clean": 45, "infected": 5}
-        assert snap.r0 == 2.5
+        assert snap.seed_r == 2.5
         assert snap.events == []
         assert snap.status_changes == []
 
@@ -214,11 +214,12 @@ class TestTickSnapshot:
         snap = TickSnapshot(
             tick=0,
             counts={"clean": 50},
-            r0=0.0,
+            seed_r=0.0,
         )
         d = snap.to_dict()
         assert d["tick"] == 0
         assert "counts" in d
+        assert "seed_r" in d
         assert "confusion" in d
         assert "timestamp" in d
 
@@ -287,3 +288,4 @@ class TestConfusionMatrix:
         assert entry.tp == 0
         # Internal dict should remain empty
         assert cm._entries == {}
+

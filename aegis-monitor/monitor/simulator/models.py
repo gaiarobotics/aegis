@@ -324,7 +324,7 @@ class TickSnapshot:
 
     tick: int
     counts: dict[str, int]
-    r0: float
+    seed_r: float
     re: float = 0.0
     confusion: ConfusionMatrix = field(default_factory=ConfusionMatrix)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -338,7 +338,7 @@ class TickSnapshot:
         d: dict[str, Any] = {
             "tick": self.tick,
             "counts": self.counts,
-            "r0": self.r0,
+            "seed_r": self.seed_r,
             "re": self.re,
             "confusion": self.confusion.to_dict(),
             "events": self.events,
@@ -349,3 +349,4 @@ class TickSnapshot:
         if self.state:
             d["state"] = self.state
         return d
+

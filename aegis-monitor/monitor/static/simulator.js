@@ -527,7 +527,7 @@
                         pointRadius: 0,
                     },
                     {
-                        label: "R\u2080",
+                        label: "Seed R",
                         borderColor: "#f1c40f",
                         borderDash: [5, 5],
                         data: [],
@@ -566,7 +566,7 @@
                     },
                     y1: {
                         position: "right",
-                        title: { display: true, text: "R\u2080 / R\u2091", color: "#f1c40f" },
+                        title: { display: true, text: "Seed R / R\u2091", color: "#f1c40f" },
                         ticks: { color: "#f1c40f" },
                         grid: { drawOnChartArea: false },
                         min: 0,
@@ -588,7 +588,7 @@
         populationChart.data.datasets[1].data.push((snapshot.counts.infected || 0) / total * 100);
         populationChart.data.datasets[2].data.push((snapshot.counts.quarantined || 0) / total * 100);
         populationChart.data.datasets[3].data.push((snapshot.counts.recovered || 0) / total * 100);
-        populationChart.data.datasets[4].data.push(snapshot.r0 || 0);
+        populationChart.data.datasets[4].data.push(snapshot.seed_r || 0);
         populationChart.data.datasets[5].data.push(snapshot.re || 0);
         populationChart.update();
     }
@@ -615,7 +615,7 @@
     // ---- Summary stats ----
     function updateStats(snapshot) {
         if (!snapshot) return;
-        el("stat-r0").textContent = (snapshot.r0 || 0).toFixed(2);
+        el("stat-r0").textContent = (snapshot.seed_r || 0).toFixed(2);
         el("stat-re").textContent = (snapshot.re || 0).toFixed(2);
 
         var counts = snapshot.counts || {};
@@ -1004,3 +1004,4 @@
         el("btn-delete-preset").addEventListener("click", deletePreset);
     });
 })();
+

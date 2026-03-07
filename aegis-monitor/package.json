@@ -1,0 +1,17 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "esbuild monitor/static/src/vendor.js --bundle --outfile=monitor/static/vendor-sigma.min.js --format=iife --minify",
+    "build:dev": "esbuild monitor/static/src/vendor.js --bundle --outfile=monitor/static/vendor-sigma.min.js --format=iife",
+    "dev": "npm run build && uvicorn monitor.app:app --host 0.0.0.0 --port 8080 --reload",
+    "start": "npm run build && uvicorn monitor.app:app --host 0.0.0.0 --port 8080"
+  },
+  "dependencies": {
+    "sigma": "3.0.2",
+    "graphology": "0.25.4",
+    "@sigma/node-border": "3.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.0"
+  }
+}

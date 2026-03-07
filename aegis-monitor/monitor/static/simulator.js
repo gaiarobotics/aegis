@@ -350,6 +350,14 @@
         graphInstance = new graphology.Graph({ multi: false, type: "undirected" });
         var container = el("sim-graph-canvas");
         if (!container) return;
+
+        var AegisBorderProgram = createNodeBorderProgram({
+            borders: [
+                { size: { attribute: "borderSize", defaultValue: 0, mode: "relative" }, color: { attribute: "borderColor", defaultValue: "#00000000" } },
+                { size: { fill: true }, color: { attribute: "color" } },
+            ],
+        });
+
         sigmaInstance = new Sigma(graphInstance, container, {
             renderLabels: true,
             labelColor: { color: "#e0e6ed" },
@@ -360,22 +368,9 @@
             defaultEdgeColor: "#2c3e50",
             minCameraRatio: 0.1,
             maxCameraRatio: 10,
+            defaultNodeType: "bordered",
+            nodeProgramClasses: { bordered: AegisBorderProgram },
         });
-
-        // Hide Sigma's hover canvas (white bg + white text = unreadable on dark theme)
-        // and replace with an HTML tooltip
-        var canvases = container.querySelectorAll("canvas");
-        canvases.forEach(function (c) {
-            if (c.className.indexOf("hovers") !== -1) {
-                c.style.opacity = "0";
-            }
-        });
-
-        /*
-        var tooltip = document.createElement("div");
-        tooltip.className = "sigma-tooltip";
-        container.appendChild(tooltip);
-        */
     }
 
     async function fetchGraph() {
@@ -385,18 +380,6 @@
         } catch (err) {
             // Graph endpoint may not be available yet
         }
-    }
-
-    function muteColor(hex) {
-        // Mix a hex color with gray to produce a desaturated version
-        var r = parseInt(hex.slice(1, 3), 16);
-        var g = parseInt(hex.slice(3, 5), 16);
-        var b = parseInt(hex.slice(5, 7), 16);
-        // Blend 40% toward gray (#7f8c9b)
-        r = Math.round(r * 0.6 + 0x7f * 0.4);
-        g = Math.round(g * 0.6 + 0x8c * 0.4);
-        b = Math.round(b * 0.6 + 0x9b * 0.4);
-        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
     }
 
     function renderGraph(data) {
@@ -416,11 +399,11 @@
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
                 size: 5 + (node.degree || 1) * 0.5,
-                color: hasAegis ? baseColor : muteColor(baseColor),
+                color: baseColor,
+                borderColor: hasAegis ? "#ffffff" : "#00000000",
+                borderSize: hasAegis ? 0.15 : 0,
                 label: String(node.id),
-                // type: hasAegis ? 'circle' : 'square',
                 forceLabel: true,
-                _hasAegis: hasAegis,
             });
         });
 

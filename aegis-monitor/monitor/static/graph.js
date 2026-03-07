@@ -1,7 +1,7 @@
 /**
  * AEGIS Monitor — graph visualization and real-time dashboard.
  *
- * Uses Sigma.js v2 with graphology for WebGL-accelerated rendering.
+ * Uses Sigma.js v3 with graphology for WebGL-accelerated rendering.
  */
 
 (function () {
@@ -21,6 +21,14 @@
         if (!container) return;
 
         graphInstance = new graphology.Graph({ multi: false, type: "directed" });
+
+        var AegisBorderProgram = createNodeBorderProgram({
+            borders: [
+                { size: { attribute: "borderSize", defaultValue: 0, mode: "relative" }, color: { attribute: "borderColor", defaultValue: "#00000000" } },
+                { size: { fill: true }, color: { attribute: "color" } },
+            ],
+        });
+
         sigmaInstance = new Sigma(graphInstance, container, {
             renderLabels: true,
             labelColor: { color: "#e0e6ed" },
@@ -29,6 +37,8 @@
             defaultEdgeColor: "#2c3e50",
             minCameraRatio: 0.1,
             maxCameraRatio: 10,
+            defaultNodeType: "bordered",
+            nodeProgramClasses: { bordered: AegisBorderProgram },
         });
 
         sigmaInstance.on("clickNode", function (e) {
@@ -82,6 +92,8 @@
                 y: r * Math.sin(angle),
                 size: hasAegis ? 10 + (node.trust_score || 0) * 0.1 : 7 + (node.trust_score || 0) * 0.1,
                 color: hasAegis ? nodeColor : muteColor(nodeColor),
+                borderColor: hasAegis ? "#3498db" : "#00000000",
+                borderSize: hasAegis ? 0.15 : 0,
                 label: node.id,
                 _data: node,
             });

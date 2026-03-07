@@ -13,7 +13,8 @@ Real-time monitoring dashboard for AEGIS-protected agent networks.
 
 ```bash
 pip install -e ".[dev]"
-uvicorn monitor.app:app --host 0.0.0.0 --port 8080 --reload
+npm install
+npm run dev    # builds JS vendor bundle, starts uvicorn with --reload
 ```
 
 Open `http://localhost:8080` to view the dashboard.

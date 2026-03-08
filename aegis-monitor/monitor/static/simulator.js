@@ -858,6 +858,12 @@
         return CLUSTER_PALETTE[id % CLUSTER_PALETTE.length];
     }
 
+    function escapeHtml(text) {
+        var d = document.createElement("div");
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
     // ---- Hash Database ----
     async function fetchHashDatabase() {
         try {
@@ -904,10 +910,18 @@
                 }
                 lifetimeHTML = '<span class="centroid-lifetime">' + ticks + " tick" + (ticks !== 1 ? "s" : "") + "</span>";
             }
+            var wormCount = c.worm_count || 0;
+            var postCount = c.post_count || 0;
+            var countsHTML = postCount + ' post' + (postCount !== 1 ? 's' : '');
+            if (wormCount > 0) {
+                countsHTML += ', <span class="centroid-worm-count">' + wormCount + ' worm' + (wormCount !== 1 ? 's' : '') + '</span>';
+            }
             header.innerHTML = '<span class="centroid-dot" style="background:' + clusterColor(c.cluster_id) + '"></span>'
                 + '<strong>Cluster ' + c.cluster_id + '</strong>'
                 + (c.active === false ? '<span class="centroid-dissolved-badge">dissolved</span>' : '')
-                + '<span class="centroid-count">' + c.member_count + ' agents' + lifetimeHTML + '</span>';
+                + '<span class="centroid-count">' + c.member_count + ' agents'
+                + '<span class="centroid-post-count">' + countsHTML + '</span>'
+                + lifetimeHTML + '</span>';
             card.appendChild(header);
 
             // Status breakdown
@@ -932,6 +946,25 @@
             textEl.textContent = fullText;
             textEl.title = fullText;
             card.appendChild(textEl);
+
+            // Worm entries — shown only when expanded (CSS handles visibility)
+            if (c.worm_entries && c.worm_entries.length > 0) {
+                var wormSection = document.createElement("div");
+                wormSection.className = "centroid-worms";
+                wormSection.innerHTML = '<div class="centroid-worms-header">Known Worm Payloads</div>';
+                c.worm_entries.forEach(function (w) {
+                    var wormEl = document.createElement("div");
+                    wormEl.className = "centroid-worm-entry";
+                    var distLabel = w.distance != null ? "d=" + w.distance : "d=?";
+                    wormEl.innerHTML = '<span class="centroid-worm-meta">'
+                        + '<span class="hash-badge hash-badge-infected">' + w.agent_id.slice(0, 8) + '</span>'
+                        + '<span class="centroid-worm-dist">' + distLabel + '</span>'
+                        + '</span>'
+                        + '<div class="centroid-worm-text">' + escapeHtml(w.text) + '</div>';
+                    wormSection.appendChild(wormEl);
+                });
+                card.appendChild(wormSection);
+            }
 
             // Click to toggle expanded/collapsed
             card.addEventListener("click", function () {

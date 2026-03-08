@@ -542,6 +542,9 @@ class SimulationEngine:
                 "representative_text": data["representative_text"],
                 "member_count": data["member_count"],
                 "member_statuses": data["member_statuses"],
+                "post_count": data.get("post_count", 0),
+                "worm_count": data.get("worm_count", 0),
+                "worm_entries": data.get("worm_entries", []),
                 "active": data["active"],
                 "formed_tick": data.get("formed_tick"),
                 "dissolved_tick": data.get("dissolved_tick"),
@@ -649,19 +652,49 @@ class SimulationEngine:
                 if centroid_agent and centroid_agent.last_payload_text:
                     representative_text = centroid_agent.last_payload_text
 
-            # Count current statuses of cluster members
+            # Collect known worm payloads from infected members
+            worm_entries: list[dict[str, Any]] = []
+            if member_hashes and centroid_agent_id:
+                centroid_h = next(
+                    h for a, h in member_hashes if a == centroid_agent_id
+                )
+                for aid_w in raw_members:
+                    agent_w = self._agents.get(aid_w)
+                    if (
+                        agent_w
+                        and agent_w.status
+                        in (AgentStatus.INFECTED, AgentStatus.QUARANTINED)
+                        and agent_w.last_payload_text
+                        and aid_w != centroid_agent_id
+                    ):
+                        h_w = hex_to_int(agent_w.content_hash) if agent_w.content_hash else None
+                        dist = hamming_distance(h_w, centroid_h) if h_w is not None else None
+                        worm_entries.append({
+                            "agent_id": aid_w,
+                            "text": agent_w.last_payload_text,
+                            "distance": dist,
+                        })
+                worm_entries.sort(key=lambda e: e["distance"] if e["distance"] is not None else 999)
+
+            # Count current statuses and posts of cluster members
             status_counts: dict[str, int] = {}
+            post_count = 0
             for aid in raw_members:
                 agent = self._agents.get(aid)
                 if agent:
                     s = agent.status.value
                     status_counts[s] = status_counts.get(s, 0) + 1
+                    if agent.last_payload_text:
+                        post_count += 1
 
             if stable_id in self._stable_clusters:
                 entry = self._stable_clusters[stable_id]
                 entry["members"] = raw_members
                 entry["member_count"] = len(raw_members)
                 entry["member_statuses"] = status_counts
+                entry["post_count"] = post_count
+                entry["worm_count"] = len(worm_entries)
+                entry["worm_entries"] = worm_entries
                 entry["active"] = True
                 entry["dissolved_tick"] = None
                 if centroid_agent_id:
@@ -676,6 +709,9 @@ class SimulationEngine:
                     "representative_text": representative_text,
                     "member_count": len(raw_members),
                     "member_statuses": status_counts,
+                    "post_count": post_count,
+                    "worm_count": len(worm_entries),
+                    "worm_entries": worm_entries,
                     "active": True,
                     "formed_tick": self._tick_count,
                     "dissolved_tick": None,

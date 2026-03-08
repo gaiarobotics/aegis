@@ -69,7 +69,7 @@ class TestTopicClusterer:
 
     def test_close_hashes_same_cluster(self):
         """Agents with similar hashes (within threshold) cluster together."""
-        tc = TopicClusterer(threshold=16)
+        tc = TopicClusterer(threshold=16, min_samples=1)
         # Only a few bits differ between these
         tc.update("agent-1", "00000000000000000000000000000000")
         tc.update("agent-2", "00000000000000000000000000000001")  # 4 bits diff
@@ -79,7 +79,7 @@ class TestTopicClusterer:
 
     def test_cluster_colors(self):
         """get_cluster_colors returns hex color strings."""
-        tc = TopicClusterer(threshold=16)
+        tc = TopicClusterer(threshold=16, min_samples=1)
         tc.update("agent-1", "a" * 32)
         tc.update("agent-2", "a" * 32)
 
@@ -136,24 +136,17 @@ class TestTopicClustererDBSCAN:
         from each other (the cluster should still form around the core
         point B, but only if there is genuine density).
         """
-        # With min_samples=2, a core point needs at least 2 neighbours
-        # within eps.  If B is close to both A and C, B has 2 neighbours
-        # so it's a core point, and both A and C are reachable from B.
-        # DBSCAN *will* put all three together in that case — that's
-        # correct density-based behaviour.
+        # With min_samples=3, a core point needs at least 3 points
+        # (including itself) in its eps-neighbourhood.  With only 3
+        # agents where B is close to both A and C, B's neighbourhood is
+        # {A, B, C} = 3 → B is still core, chaining all three together.
         #
-        # The real anti-chaining benefit shows when the chain is longer
-        # and intermediaries lack sufficient density.
-        #
-        # Test: A-B close, C-D close, B-C close but NO other cross-links.
-        # With min_samples=2: B needs 2 neighbours within eps to be core.
-        # B has A and C → core.  C has B and D → core.
-        # So DBSCAN forms {A,B,C,D} — same as union-find for 4-chains.
-        #
-        # Better test: raise min_samples to 3 so intermediaries with only
-        # 2 neighbours are NOT core.  Then A(1 nbr) - B(2 nbrs) can't
-        # form a dense cluster.
-        tc = TopicClusterer(threshold=16, min_samples=3)
+        # To prevent chaining we need min_samples=4: B then needs 3
+        # *other* neighbours within eps.  With only A and C nearby,
+        # B has 3 points in its neighbourhood (including itself) which
+        # is < 4, so B is NOT core.  All three become noise and get
+        # their own singleton clusters.
+        tc = TopicClusterer(threshold=16, min_samples=4)
 
         # A is close to B (distance ~8 bits)
         tc.update("A", "00000000000000000000000000000000")
@@ -162,10 +155,10 @@ class TestTopicClustererDBSCAN:
         tc.update("C", "00000000000000000000000000ffff0f")  # close to B, far from A
 
         clusters = tc.cluster()
-        # With min_samples=3, none of these have 3 neighbours within eps,
-        # so all are noise → each gets its own cluster.
+        # With min_samples=4, none of these have 4 points in their
+        # eps-neighbourhood, so all are noise → each gets its own cluster.
         assert clusters["A"] != clusters["C"], (
-            "A and C should not chain through B when min_samples=3"
+            "A and C should not chain through B when min_samples=4"
         )
 
     def test_dbscan_dense_cluster_forms(self):

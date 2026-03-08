@@ -10,6 +10,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover
+    np = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,10 +93,13 @@ class TopicClusterer:
             forms a cluster).
     """
 
-    def __init__(self, threshold: int = 16, min_samples: int = 1) -> None:
+    def __init__(self, threshold: int = 16, min_samples: int = 3) -> None:
         self._threshold = threshold
         self._min_samples = min_samples
         self._hashes: dict[str, int] = {}  # agent_id -> latest hash int
+        self._next_stable_cluster_id: int = 0
+        self._stable_clusters: dict[int, dict] = {}
+        self._update_counter: int = 0
 
     def update(self, agent_id: str, hash_hex: str) -> None:
         """Store the latest hash for an agent."""
@@ -184,6 +192,342 @@ class TopicClusterer:
         for agent_id, cluster_id in clusters.items():
             result[agent_id] = _CLUSTER_PALETTE[cluster_id % len(_CLUSTER_PALETTE)]
         return result
+
+    # -- Stable cluster tracking ------------------------------------------
+
+    def update_stable_clusters(
+        self, agent_statuses: dict[str, str],
+    ) -> dict[str, int]:
+        """Run raw clustering, match to stable IDs, compute centroids.
+
+        Args:
+            agent_statuses: ``{agent_id: status_string}`` where status is
+                one of ``"active"``, ``"compromised"``, ``"quarantined"``.
+
+        Returns:
+            ``{agent_id: stable_cluster_id}``
+        """
+        raw_clusters = self.cluster()
+        self._update_counter += 1
+
+        if not raw_clusters:
+            for data in self._stable_clusters.values():
+                if data["active"]:
+                    data["active"] = False
+                    data["dissolved_at"] = self._update_counter
+            return {}
+
+        # Group agents by raw cluster ID
+        raw_groups: dict[int, set[str]] = {}
+        for aid, raw_cid in raw_clusters.items():
+            raw_groups.setdefault(raw_cid, set()).add(aid)
+
+        # Greedy Jaccard matching against existing stable clusters
+        candidates: list[tuple[float, int, int]] = []
+        for raw_cid, raw_members in raw_groups.items():
+            for stable_id, stable_data in self._stable_clusters.items():
+                stable_members = stable_data["members"]
+                intersection = len(raw_members & stable_members)
+                union = len(raw_members | stable_members)
+                jaccard = intersection / union if union > 0 else 0.0
+                if jaccard > 0.3:
+                    candidates.append((jaccard, raw_cid, stable_id))
+
+        candidates.sort(key=lambda x: -x[0])
+
+        matched_raw: set[int] = set()
+        matched_stable: set[int] = set()
+        raw_to_stable: dict[int, int] = {}
+
+        for jaccard, raw_cid, stable_id in candidates:
+            if raw_cid in matched_raw or stable_id in matched_stable:
+                continue
+            raw_to_stable[raw_cid] = stable_id
+            matched_raw.add(raw_cid)
+            matched_stable.add(stable_id)
+
+        # New stable IDs for unmatched groups
+        for raw_cid in raw_groups:
+            if raw_cid not in matched_raw:
+                raw_to_stable[raw_cid] = self._next_stable_cluster_id
+                self._next_stable_cluster_id += 1
+
+        # Agent -> stable cluster mapping
+        agent_to_stable: dict[str, int] = {}
+        for aid, raw_cid in raw_clusters.items():
+            agent_to_stable[aid] = raw_to_stable[raw_cid]
+
+        # Mark dissolved clusters
+        newly_dissolved = set(self._stable_clusters.keys()) - matched_stable
+        for stable_id in newly_dissolved:
+            data = self._stable_clusters[stable_id]
+            if data["active"]:
+                data["active"] = False
+                data["dissolved_at"] = self._update_counter
+
+        # Update or create stable cluster entries
+        for raw_cid, raw_members in raw_groups.items():
+            stable_id = raw_to_stable[raw_cid]
+
+            # Compute centroid (bit-wise majority vote -> closest agent)
+            member_hashes: list[tuple[str, int]] = []
+            for aid in raw_members:
+                if aid in self._hashes:
+                    member_hashes.append((aid, self._hashes[aid]))
+
+            centroid_agent_id: str | None = None
+            if member_hashes:
+                num = len(member_hashes)
+                mean_hash = 0
+                for bit in range(128):
+                    count = sum(1 for _, h in member_hashes if h & (1 << bit))
+                    if count > num / 2:
+                        mean_hash |= (1 << bit)
+
+                best_aid = member_hashes[0][0]
+                best_dist = hamming_distance(member_hashes[0][1], mean_hash)
+                for aid, h in member_hashes[1:]:
+                    d = hamming_distance(h, mean_hash)
+                    if d < best_dist:
+                        best_dist = d
+                        best_aid = aid
+                centroid_agent_id = best_aid
+
+            # Count statuses
+            status_counts: dict[str, int] = {}
+            compromised_count = 0
+            for aid in raw_members:
+                s = agent_statuses.get(aid, "active")
+                status_counts[s] = status_counts.get(s, 0) + 1
+                if s in ("compromised", "quarantined"):
+                    compromised_count += 1
+
+            if stable_id in self._stable_clusters:
+                entry = self._stable_clusters[stable_id]
+                entry["members"] = raw_members
+                entry["member_count"] = len(raw_members)
+                entry["member_statuses"] = status_counts
+                entry["compromised_count"] = compromised_count
+                entry["active"] = True
+                entry["dissolved_at"] = None
+                if centroid_agent_id:
+                    entry["centroid_agent_id"] = centroid_agent_id
+            else:
+                self._stable_clusters[stable_id] = {
+                    "cluster_id": stable_id,
+                    "members": raw_members,
+                    "centroid_agent_id": centroid_agent_id,
+                    "member_count": len(raw_members),
+                    "member_statuses": status_counts,
+                    "compromised_count": compromised_count,
+                    "active": True,
+                    "formed_at": self._update_counter,
+                    "dissolved_at": None,
+                }
+
+        return agent_to_stable
+
+    def get_cluster_centroids(self) -> list[dict]:
+        """Return sorted list of all clusters with centroid info."""
+        return [
+            {
+                "cluster_id": data["cluster_id"],
+                "centroid_agent_id": data.get("centroid_agent_id"),
+                "member_count": data["member_count"],
+                "member_statuses": data["member_statuses"],
+                "compromised_count": data.get("compromised_count", 0),
+                "active": data["active"],
+                "formed_at": data.get("formed_at"),
+                "dissolved_at": data.get("dissolved_at"),
+            }
+            for data in sorted(
+                self._stable_clusters.values(),
+                key=lambda d: d["cluster_id"],
+            )
+        ]
+
+    def get_cluster_colors_stable(self) -> dict[str, str]:
+        """Return ``{agent_id: hex_color}`` using stable cluster IDs."""
+        result: dict[str, str] = {}
+        for data in self._stable_clusters.values():
+            if not data["active"]:
+                continue
+            color = _CLUSTER_PALETTE[data["cluster_id"] % len(_CLUSTER_PALETTE)]
+            for aid in data["members"]:
+                result[aid] = color
+        return result
+
+    # -- Distance matrix & dendrogram -------------------------------------
+
+    def build_distance_matrix(
+        self,
+    ) -> tuple[list[str], list[int], Any] | None:
+        """Build pairwise Hamming distance matrix.
+
+        Returns ``(ids, hash_ints, dist_matrix)`` or ``None``.
+        """
+        if np is None or not self._hashes:
+            return None
+
+        ids = list(self._hashes.keys())
+        hash_ints = [self._hashes[aid] for aid in ids]
+        n = len(ids)
+        if n < 2:
+            return None
+
+        dist = np.zeros((n, n), dtype=np.float64)
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = hamming_distance(hash_ints[i], hash_ints[j])
+                dist[i, j] = d
+                dist[j, i] = d
+
+        return ids, hash_ints, dist
+
+    def get_dendrogram_data(
+        self,
+        agent_statuses: dict[str, str],
+        compromised_agents: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Compute hierarchical linkage data for dendrogram rendering.
+
+        Args:
+            agent_statuses: ``{agent_id: status}``
+            compromised_agents: Set of compromised agent IDs.
+
+        Returns:
+            ``{labels, linkage, leaves, method}`` or empty dict.
+        """
+        result = self.build_distance_matrix()
+        if result is None:
+            return {}
+
+        ids, hash_ints, dist = result
+        n = len(ids)
+        if n < 2:
+            return {}
+
+        compromised = compromised_agents or set()
+
+        # Get stable cluster mapping
+        # (use cached _stable_clusters to avoid re-clustering)
+        stable_map: dict[str, int] = {}
+        for data in self._stable_clusters.values():
+            if data["active"]:
+                for aid in data["members"]:
+                    stable_map[aid] = data["cluster_id"]
+
+        method = "average"
+        try:
+            from scipy.spatial.distance import squareform
+            from scipy.cluster.hierarchy import linkage
+
+            condensed = squareform(dist)
+            Z = linkage(condensed, method="average")
+        except ImportError:
+            Z = self._single_linkage_fallback(dist)
+            method = "single-fallback"
+
+        leaves: list[dict[str, Any]] = []
+        for i, aid in enumerate(ids):
+            status = agent_statuses.get(aid, "active")
+            is_compromised = aid in compromised or status in ("compromised", "quarantined")
+            leaf: dict[str, Any] = {
+                "agent_id": aid,
+                "status": status,
+                "cluster_id": stable_map.get(aid, -1),
+            }
+            leaves.append(leaf)
+
+        return {
+            "labels": ids,
+            "linkage": Z.tolist(),
+            "leaves": leaves,
+            "method": method,
+        }
+
+    @staticmethod
+    def _single_linkage_fallback(dist: Any) -> Any:
+        """Pure-numpy single-linkage producing a scipy-format linkage matrix."""
+        n = dist.shape[0]
+        sizes: dict[int, int] = {i: 1 for i in range(n)}
+        dists: dict[tuple[int, int], float] = {}
+        for i in range(n):
+            for j in range(i + 1, n):
+                dists[(i, j)] = dist[i, j]
+
+        Z = np.zeros((n - 1, 4), dtype=np.float64)
+        next_id = n
+
+        for step in range(n - 1):
+            min_key = min(dists, key=dists.__getitem__)
+            min_dist = dists[min_key]
+            a, b = min_key
+
+            Z[step, 0] = a
+            Z[step, 1] = b
+            Z[step, 2] = min_dist
+            Z[step, 3] = sizes[a] + sizes[b]
+
+            active = set(sizes.keys()) - {a, b}
+            new_dists: dict[tuple[int, int], float] = {}
+            for c in active:
+                key_ac = (min(a, c), max(a, c))
+                key_bc = (min(b, c), max(b, c))
+                d_ac = dists.get(key_ac, float("inf"))
+                d_bc = dists.get(key_bc, float("inf"))
+                d_new = min(d_ac, d_bc)
+                new_key = (min(next_id, c), max(next_id, c))
+                new_dists[new_key] = d_new
+
+            keys_to_remove = [k for k in dists if a in k or b in k]
+            for k in keys_to_remove:
+                del dists[k]
+
+            dists.update(new_dists)
+            sizes[next_id] = sizes.pop(a) + sizes.pop(b)
+            next_id += 1
+
+        return Z
+
+    # -- Nearest neighbors -------------------------------------------------
+
+    def get_nearest_neighbors(self, top_k: int = 5) -> dict[str, Any]:
+        """Return per-agent nearest neighbors by Hamming distance.
+
+        Returns ``{entries: [{agent_id, hash, neighbors: [{agent_id, distance, hash}]}]}``
+        """
+        agents = list(self._hashes.keys())
+        if not agents:
+            return {"entries": []}
+
+        entries: list[dict[str, Any]] = []
+        for aid in agents:
+            h = self._hashes[aid]
+            distances: list[tuple[str, int]] = []
+            for other_id in agents:
+                if other_id == aid:
+                    continue
+                d = hamming_distance(h, self._hashes[other_id])
+                distances.append((other_id, d))
+
+            distances.sort(key=lambda x: x[1])
+            neighbors = [
+                {
+                    "agent_id": other_id,
+                    "distance": dist,
+                    "hash": f"{self._hashes[other_id]:032x}"[:12] + "...",
+                }
+                for other_id, dist in distances[:top_k]
+            ]
+
+            entries.append({
+                "agent_id": aid,
+                "hash": f"{h:032x}",
+                "neighbors": neighbors,
+            })
+
+        return {"entries": entries}
 
 
 # ------------------------------------------------------------------

@@ -343,3 +343,186 @@ body {
     padding-top: 8px;
     border-top: 1px solid var(--border);
 }
+
+/* Topic clusters metric */
+.metric.topic-clusters .value { color: #1abc9c; }
+
+/* Topic view toggle button */
+.topic-toggle-btn {
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    pointer-events: all;
+}
+.topic-toggle-btn:hover { color: var(--text); border-color: var(--blue); }
+.topic-toggle-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* Topic Clusters panel */
+.topic-clusters-panel {
+    position: absolute;
+    bottom: 120px;
+    left: 0;
+    right: 0;
+    max-height: 300px;
+    background: rgba(15, 25, 35, 0.95);
+    border-top: 1px solid var(--border);
+    z-index: 6;
+    display: none;
+}
+.topic-clusters-panel.visible { display: block; }
+
+.topic-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 16px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+}
+.topic-panel-header:hover { color: var(--text); }
+.topic-panel-arrow { font-size: 10px; }
+.topic-panel-header.collapsed .topic-panel-arrow { transform: rotate(-90deg); }
+
+.topic-panel-body {
+    overflow-y: auto;
+    max-height: 260px;
+    padding: 8px 16px;
+}
+
+/* Tab bar */
+.topic-tab-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+.topic-tab {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.topic-tab:hover { color: var(--text); }
+.topic-tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* Centroid cards */
+#topic-centroid-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.centroid-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--blue);
+    border-radius: 4px;
+    padding: 8px 12px;
+    min-width: 220px;
+    max-width: 320px;
+    flex: 1 1 220px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+.centroid-card:hover { border-color: var(--text-muted); }
+.centroid-card.dissolved { opacity: 0.55; }
+.centroid-card.expanded { max-width: 100%; flex-basis: 100%; }
+
+.centroid-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    flex-wrap: wrap;
+}
+.centroid-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.centroid-count {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-left: auto;
+}
+.centroid-lifetime {
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-left: 6px;
+}
+.centroid-dissolved-badge {
+    background: var(--red);
+    color: #fff;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    text-transform: uppercase;
+}
+
+.centroid-statuses {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+.centroid-compromised {
+    color: var(--red);
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+}
+.status-badge-active { background: #2ecc7133; color: #2ecc71; }
+.status-badge-compromised { background: #e74c3c33; color: #e74c3c; }
+.status-badge-quarantined { background: #f1c40f33; color: #f1c40f; }
+
+/* Dendrogram */
+.dendro-container {
+    position: relative;
+    overflow-x: auto;
+    min-height: 200px;
+}
+.dendro-container canvas {
+    display: block;
+}
+.dendro-tooltip {
+    position: absolute;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text);
+    z-index: 10;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.dendro-payload {
+    color: var(--text-muted);
+    font-size: 10px;
+    max-height: 80px;
+    overflow: hidden;
+    word-break: break-all;
+    margin-top: 2px;
+}

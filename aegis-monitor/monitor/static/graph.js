@@ -14,6 +14,23 @@
     let reconnectTimer = null;
     const RECONNECT_MS = 3000;
     let topicViewActive = false;
+    let topicPanelVisible = false;
+    let activeTopicTab = "clusters";
+
+    var CLUSTER_PALETTE = [
+        "#1abc9c", "#2ecc71", "#3498db", "#9b59b6",
+        "#e74c3c", "#e67e22", "#f1c40f", "#1f77b4",
+        "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#17becf", "#bcbd22", "#7f7f7f",
+    ];
+    function clusterColor(cid) {
+        return CLUSTER_PALETTE[cid % CLUSTER_PALETTE.length];
+    }
+    function escapeHtml(str) {
+        var div = document.createElement("div");
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+    }
 
     // ---- Dark-theme node hover ----
     function drawDarkHover(context, data, settings) {
@@ -215,6 +232,7 @@
         setText("m-killswitched", data.killswitched_agents || 0);
         setText("m-clusters", data.cluster_count || 0);
         setText("m-agents", data.total_agents || 0);
+        setText("m-topic-clusters", data.topic_cluster_count || 0);
 
         // Update strain filters
         const strainDiv = document.getElementById("strain-filters");
@@ -317,6 +335,12 @@
         } else if (type === "killswitch") {
             logEvent("killswitch", "KILLSWITCH: " + data.action + " rule " + data.rule_id);
             fetchKillswitchRules();
+        } else if (type === "topic_clusters_updated") {
+            setText("m-topic-clusters", data.active_cluster_count || 0);
+            if (topicPanelVisible) {
+                fetchTopicClusters();
+                if (activeTopicTab === "dendrogram") fetchDendrogram();
+            }
         }
 
         // Refresh graph and metrics
@@ -454,6 +478,362 @@
         }
     };
 
+    // ---- Topic Clusters ----
+    async function fetchTopicClusters() {
+        try {
+            var resp = await fetch("/api/v1/topic-clusters");
+            var data = await resp.json();
+            renderCentroidCards(data || []);
+        } catch (err) {
+            // silent
+        }
+    }
+
+    function renderCentroidCards(centroids) {
+        var container = document.getElementById("topic-centroid-cards");
+        if (!container) return;
+        container.innerHTML = "";
+
+        if (!centroids || centroids.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-muted);font-size:12px;">No topic clusters detected</p>';
+            return;
+        }
+
+        centroids.forEach(function (c) {
+            var card = document.createElement("div");
+            card.className = "centroid-card" + (c.active === false ? " dissolved" : "");
+            card.style.borderLeftColor = clusterColor(c.cluster_id);
+
+            // Header
+            var header = document.createElement("div");
+            header.className = "centroid-header";
+            var lifetimeHTML = "";
+            if (c.formed_at != null) {
+                var updates;
+                if (c.dissolved_at != null) {
+                    updates = c.dissolved_at - c.formed_at;
+                } else {
+                    updates = "active";
+                }
+                lifetimeHTML = '<span class="centroid-lifetime">' + updates + (typeof updates === "number" ? " updates" : "") + "</span>";
+            }
+            header.innerHTML = '<span class="centroid-dot" style="background:' + clusterColor(c.cluster_id) + '"></span>'
+                + '<strong>Cluster ' + c.cluster_id + '</strong>'
+                + (c.active === false ? '<span class="centroid-dissolved-badge">dissolved</span>' : '')
+                + '<span class="centroid-count">' + c.member_count + ' agents'
+                + lifetimeHTML + '</span>';
+            card.appendChild(header);
+
+            // Status breakdown
+            if (c.member_statuses) {
+                var statuses = document.createElement("div");
+                statuses.className = "centroid-statuses";
+                var parts = [];
+                ["active", "compromised", "quarantined"].forEach(function (s) {
+                    var n = c.member_statuses[s] || 0;
+                    if (n > 0) {
+                        parts.push('<span class="status-badge status-badge-' + s + '">' + n + ' ' + s + '</span>');
+                    }
+                });
+                statuses.innerHTML = parts.join(" ");
+                card.appendChild(statuses);
+            }
+
+            // Compromised count
+            if (c.compromised_count > 0) {
+                var compEl = document.createElement("div");
+                compEl.className = "centroid-compromised";
+                compEl.textContent = c.compromised_count + " compromised agent" + (c.compromised_count !== 1 ? "s" : "");
+                card.appendChild(compEl);
+            }
+
+            // Click to toggle expanded
+            card.addEventListener("click", function () {
+                card.classList.toggle("expanded");
+            });
+
+            container.appendChild(card);
+        });
+    }
+
+    // ---- Dendrogram ----
+    async function fetchDendrogram() {
+        try {
+            var resp = await fetch("/api/v1/dendrogram");
+            var data = await resp.json();
+            if (data && data.linkage && data.linkage.length > 0) {
+                renderDendrogram(data);
+            }
+        } catch (err) {
+            // silent
+        }
+    }
+
+    function renderDendrogram(data) {
+        var canvas = document.getElementById("dendro-canvas");
+        var container = document.getElementById("topic-dendrogram-view");
+        if (!canvas || !container) return;
+
+        var labels = data.labels || [];
+        var Z = data.linkage || [];
+        var leaves = data.leaves || [];
+        var n = labels.length;
+        if (n < 2) return;
+
+        var LEAF_SPACING = n > 500 ? 8 : n > 200 ? 14 : 24;
+        var TOP_MARGIN = 30;
+        var BOTTOM_MARGIN = n <= 80 ? 100 : 40;
+        var LEFT_MARGIN = 60;
+        var RIGHT_MARGIN = 20;
+        var containerHeight = container.clientHeight || 220;
+        var canvasWidth = Math.max(container.clientWidth, n * LEAF_SPACING + LEFT_MARGIN + RIGHT_MARGIN);
+        var canvasHeight = containerHeight;
+
+        var dpr = window.devicePixelRatio || 1;
+        canvas.width = canvasWidth * dpr;
+        canvas.height = canvasHeight * dpr;
+        canvas.style.width = canvasWidth + "px";
+        canvas.style.height = canvasHeight + "px";
+
+        var ctx = canvas.getContext("2d");
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // Build tree nodes: 0..n-1 = leaves, n..2n-2 = internal
+        var nodes = [];
+        for (var i = 0; i < n; i++) {
+            nodes.push({ id: i, isLeaf: true, left: null, right: null, height: 0, x: 0, y: 0 });
+        }
+        for (var i = 0; i < Z.length; i++) {
+            var leftIdx = Math.round(Z[i][0]);
+            var rightIdx = Math.round(Z[i][1]);
+            var mergeHeight = Z[i][2];
+            nodes.push({ id: n + i, isLeaf: false, left: leftIdx, right: rightIdx, height: mergeHeight, x: 0, y: 0 });
+        }
+
+        // In-order traversal for leaf ordering
+        var leafOrder = [];
+        function inorder(nodeId) {
+            var node = nodes[nodeId];
+            if (node.isLeaf) { leafOrder.push(nodeId); return; }
+            inorder(node.left);
+            inorder(node.right);
+        }
+        inorder(nodes.length - 1);
+
+        // Max merge height for scaling
+        var maxHeight = 0;
+        for (var i = 0; i < Z.length; i++) {
+            if (Z[i][2] > maxHeight) maxHeight = Z[i][2];
+        }
+        if (maxHeight === 0) maxHeight = 1;
+
+        var drawableHeight = canvasHeight - TOP_MARGIN - BOTTOM_MARGIN;
+
+        // Assign x to leaves
+        for (var i = 0; i < leafOrder.length; i++) {
+            nodes[leafOrder[i]].x = LEFT_MARGIN + i * LEAF_SPACING + LEAF_SPACING / 2;
+            nodes[leafOrder[i]].y = canvasHeight - BOTTOM_MARGIN;
+        }
+
+        // Assign x and y to internal nodes
+        function assignInternal(nodeId) {
+            var node = nodes[nodeId];
+            if (node.isLeaf) return;
+            assignInternal(node.left);
+            assignInternal(node.right);
+            var leftNode = nodes[node.left];
+            var rightNode = nodes[node.right];
+            node.x = (leftNode.x + rightNode.x) / 2;
+            node.y = TOP_MARGIN + (1 - node.height / maxHeight) * drawableHeight;
+        }
+        assignInternal(nodes.length - 1);
+
+        // Draw U-shaped connectors
+        ctx.strokeStyle = "#4a6785";
+        ctx.lineWidth = 1;
+        for (var i = n; i < nodes.length; i++) {
+            var node = nodes[i];
+            var leftNode = nodes[node.left];
+            var rightNode = nodes[node.right];
+            ctx.beginPath();
+            ctx.moveTo(leftNode.x, leftNode.y);
+            ctx.lineTo(leftNode.x, node.y);
+            ctx.lineTo(rightNode.x, node.y);
+            ctx.lineTo(rightNode.x, rightNode.y);
+            ctx.stroke();
+        }
+
+        // Hit targets for tooltips
+        var hitTargets = [];
+
+        // Draw leaf dots
+        for (var i = 0; i < leafOrder.length; i++) {
+            var leafIdx = leafOrder[i];
+            var leafNode = nodes[leafIdx];
+            var leafInfo = leaves[leafIdx] || {};
+            var isCompromised = leafInfo.status === "compromised" || leafInfo.status === "quarantined";
+            var cid = leafInfo.cluster_id;
+            var color = isCompromised ? "#e74c3c" : (cid !== undefined && cid !== -1 ? clusterColor(cid) : "#95a5a6");
+            var dotRadius = isCompromised ? 5 : 3;
+
+            if (isCompromised) {
+                // Glow ring
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(leafNode.x, leafNode.y, 9, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(231, 76, 60, 0.18)";
+                ctx.fill();
+                ctx.restore();
+                ctx.beginPath();
+                ctx.arc(leafNode.x, leafNode.y, 7, 0, Math.PI * 2);
+                ctx.strokeStyle = "rgba(231, 76, 60, 0.55)";
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            ctx.beginPath();
+            ctx.arc(leafNode.x, leafNode.y, dotRadius, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            hitTargets.push({
+                x: leafNode.x, y: leafNode.y,
+                r: isCompromised ? 12 : 8,
+                label: leafInfo.agent_id || labels[leafIdx] || "?",
+                status: leafInfo.status || "?",
+                clusterId: cid,
+                type: "leaf",
+            });
+        }
+
+        // Draw rotated leaf labels
+        ctx.font = "10px 'JetBrains Mono', monospace";
+        ctx.textAlign = "right";
+        for (var i = 0; i < leafOrder.length; i++) {
+            var leafIdx = leafOrder[i];
+            var leafNode = nodes[leafIdx];
+            var leafInfo = leaves[leafIdx] || {};
+            var isCompromised = leafInfo.status === "compromised" || leafInfo.status === "quarantined";
+            if (!isCompromised && n > 80) continue;
+            var lbl = leafInfo.agent_id || labels[leafIdx] || "";
+            if (lbl.length > 10) lbl = lbl.slice(0, 10) + "..";
+            ctx.fillStyle = isCompromised ? "#e74c3c" : "#7f8c9b";
+            ctx.save();
+            ctx.translate(leafNode.x, leafNode.y + 8);
+            ctx.rotate(-Math.PI / 3);
+            ctx.fillText(lbl, 0, 0);
+            ctx.restore();
+        }
+
+        // Y-axis scale ticks
+        ctx.fillStyle = "#7f8c9b";
+        ctx.strokeStyle = "#2c3e5066";
+        ctx.font = "10px 'JetBrains Mono', monospace";
+        ctx.textAlign = "right";
+        var numTicks = 5;
+        for (var t = 0; t <= numTicks; t++) {
+            var frac = t / numTicks;
+            var tickY = TOP_MARGIN + (1 - frac) * drawableHeight;
+            var tickVal = (frac * maxHeight).toFixed(1);
+            ctx.fillText(tickVal, LEFT_MARGIN - 8, tickY + 3);
+            ctx.beginPath();
+            ctx.setLineDash([3, 4]);
+            ctx.moveTo(LEFT_MARGIN, tickY);
+            ctx.lineTo(canvasWidth - RIGHT_MARGIN, tickY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Hit targets for internal nodes
+        for (var i = n; i < nodes.length; i++) {
+            var node = nodes[i];
+            hitTargets.push({
+                x: node.x, y: node.y, r: 6,
+                label: "merge",
+                mergeDistance: node.height.toFixed(2),
+                size: Math.round(Z[i - n][3]),
+                type: "internal",
+            });
+        }
+
+        // Tooltip handler
+        var tooltip = document.getElementById("dendro-tooltip");
+        canvas.onmousemove = function (e) {
+            var rect = canvas.getBoundingClientRect();
+            var mx = e.clientX - rect.left;
+            var my = e.clientY - rect.top;
+            var best = null;
+            var bestDist = Infinity;
+            for (var i = 0; i < hitTargets.length; i++) {
+                var ht = hitTargets[i];
+                var dx = mx - ht.x;
+                var dy = my - ht.y;
+                var d = dx * dx + dy * dy;
+                if (d < ht.r * ht.r && d < bestDist) {
+                    best = ht;
+                    bestDist = d;
+                }
+            }
+            if (best && tooltip) {
+                var tipHtml;
+                if (best.type === "leaf") {
+                    var parts = best.label;
+                    if (best.clusterId !== undefined && best.clusterId !== -1) parts += " | C" + best.clusterId;
+                    parts += " | " + best.status;
+                    tipHtml = escapeHtml(parts);
+                } else {
+                    tipHtml = escapeHtml("merge d=" + best.mergeDistance + " | " + best.size + " members");
+                }
+                tooltip.innerHTML = tipHtml;
+                tooltip.style.display = "block";
+                tooltip.style.left = (mx + 12) + "px";
+                tooltip.style.top = (my - 8) + "px";
+            } else if (tooltip) {
+                tooltip.style.display = "none";
+            }
+        };
+        canvas.onmouseleave = function () {
+            if (tooltip) tooltip.style.display = "none";
+        };
+    }
+
+    // ---- Topic panel setup ----
+    function setupTopicPanel() {
+        // Panel toggle
+        var toggle = document.getElementById("topic-panel-toggle");
+        var body = document.getElementById("topic-panel-body");
+        if (toggle && body) {
+            toggle.addEventListener("click", function () {
+                var isHidden = body.style.display === "none";
+                body.style.display = isHidden ? "" : "none";
+                toggle.classList.toggle("collapsed", !isHidden);
+            });
+        }
+
+        // Tab switching
+        document.querySelectorAll(".topic-tab").forEach(function (tab) {
+            tab.addEventListener("click", function () {
+                document.querySelectorAll(".topic-tab").forEach(function (t) { t.classList.remove("active"); });
+                tab.classList.add("active");
+                activeTopicTab = tab.dataset.topicTab;
+
+                var clustersView = document.getElementById("topic-clusters-view");
+                var dendroView = document.getElementById("topic-dendrogram-view");
+                if (clustersView) clustersView.style.display = "none";
+                if (dendroView) dendroView.style.display = "none";
+
+                if (activeTopicTab === "dendrogram") {
+                    if (dendroView) dendroView.style.display = "";
+                    fetchDendrogram();
+                } else {
+                    if (clustersView) clustersView.style.display = "";
+                    fetchTopicClusters();
+                }
+            });
+        });
+    }
+
     // ---- Filter listeners ----
     function setupFilters() {
         document.querySelectorAll('[data-filter]').forEach(function (el) {
@@ -470,6 +850,16 @@
             btn.classList.toggle("active", topicViewActive);
             btn.textContent = topicViewActive ? "Trust view" : "Topic view";
             fetchGraph();
+
+            // Show/hide topic clusters panel
+            var panel = document.getElementById("topic-clusters-panel");
+            if (panel) {
+                topicPanelVisible = topicViewActive;
+                panel.classList.toggle("visible", topicPanelVisible);
+                if (topicPanelVisible) {
+                    fetchTopicClusters();
+                }
+            }
         });
     }
 
@@ -478,6 +868,7 @@
         initGraph();
         setupFilters();
         setupTopicToggle();
+        setupTopicPanel();
         fetchGraph();
         fetchMetrics();
         fetchKillswitchRules();

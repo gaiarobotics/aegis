@@ -27,6 +27,10 @@
             <span class="value" id="m-clusters">0</span>
             <span class="label">Strains</span>
         </div>
+        <div class="metric topic-clusters">
+            <span class="value" id="m-topic-clusters">0</span>
+            <span class="label">Topic Clusters</span>
+        </div>
         <div class="metric killswitched">
             <span class="value" id="m-killswitched">0</span>
             <span class="label">Killswitched</span>
@@ -115,6 +119,31 @@
                 <span class="legend-item"><span class="legend-dot" style="background:#f1c40f"></span>Attested</span>
                 <span class="legend-item"><span class="legend-dot" style="background:#e74c3c"></span>Compromised</span>
                 <span class="legend-item"><span class="legend-dot" style="background:#e67e22"></span>Killswitched</span>
+                <span class="legend-sep">|</span>
+                <button id="topic-view-toggle" class="topic-toggle-btn">Topic view</button>
+            </div>
+
+            <!-- Topic Clusters panel -->
+            <div class="topic-clusters-panel" id="topic-clusters-panel">
+                <div class="topic-panel-header" id="topic-panel-toggle">
+                    <span>Topic Clusters</span>
+                    <span class="topic-panel-arrow">&#9660;</span>
+                </div>
+                <div class="topic-panel-body" id="topic-panel-body">
+                    <div class="topic-tab-bar">
+                        <button class="topic-tab active" data-topic-tab="clusters">Clusters</button>
+                        <button class="topic-tab" data-topic-tab="dendrogram">Dendrogram</button>
+                    </div>
+                    <div class="topic-tab-content" id="topic-clusters-view">
+                        <div id="topic-centroid-cards"></div>
+                    </div>
+                    <div class="topic-tab-content" id="topic-dendrogram-view" style="display:none;">
+                        <div class="dendro-container">
+                            <canvas id="dendro-canvas"></canvas>
+                            <div id="dendro-tooltip" class="dendro-tooltip" style="display:none;"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Agent detail popup -->

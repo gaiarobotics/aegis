@@ -10,6 +10,8 @@ import random
 from dataclasses import asdict
 from typing import Any
 
+import numpy as np
+
 from monitor.contagion import (
     ContagionDetector,
     TopicClusterer,
@@ -533,6 +535,105 @@ class SimulationEngine:
         self._update_stable_clusters()
         return self._build_centroid_list()
 
+    def _build_distance_matrix(
+        self,
+    ) -> tuple[list[str], list[int], "np.ndarray"] | None:
+        """Build pairwise Hamming distance matrix for agents with hashes.
+
+        Returns ``(ids, hash_ints, dist_matrix)`` or ``None`` when no
+        agents have hashes.
+        """
+        agents_with_hashes = [
+            (aid, agent)
+            for aid, agent in self._agents.items()
+            if agent.content_hash is not None
+        ]
+        if not agents_with_hashes:
+            return None
+
+        ids: list[str] = []
+        hash_ints: list[int] = []
+        for aid, agent in agents_with_hashes:
+            ids.append(aid)
+            hash_ints.append(hex_to_int(agent.content_hash))  # type: ignore[arg-type]
+
+        n = len(ids)
+        dist = np.zeros((n, n), dtype=np.float64)
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = hamming_distance(hash_ints[i], hash_ints[j])
+                dist[i, j] = d
+                dist[j, i] = d
+
+        return ids, hash_ints, dist
+
+    def get_scatter_data(self) -> list[dict[str, Any]]:
+        """Project agent content hashes to 2D via classical MDS on pairwise
+        Hamming distances.  Returns a list of point dicts suitable for a
+        scatter chart."""
+        result = self._build_distance_matrix()
+        if result is None:
+            return []
+
+        ids, hash_ints, dist = result
+        n = len(ids)
+        stable_map = self._update_stable_clusters()
+
+        # Classical MDS: double-center the squared distance matrix
+        D2 = dist ** 2
+        H = np.eye(n) - np.ones((n, n)) / n
+        B = -0.5 * H @ D2 @ H
+
+        eigvals, eigvecs = np.linalg.eigh(B)
+
+        # Take the top 2 eigenvalues (they come sorted ascending from eigh)
+        idx = np.argsort(eigvals)[::-1]
+        coords = np.zeros((n, 2), dtype=np.float64)
+        for dim in range(min(2, n)):
+            lam = max(eigvals[idx[dim]], 0.0)
+            coords[:, dim] = eigvecs[:, idx[dim]] * np.sqrt(lam)
+
+        # Pre-compute centroid hashes for distance calculation
+        centroid_hashes: dict[int, int] = {}
+        for data in self._stable_clusters.values():
+            if data["active"] and data["centroid_agent_id"]:
+                cagent = self._agents.get(data["centroid_agent_id"])
+                if cagent and cagent.content_hash:
+                    centroid_hashes[data["cluster_id"]] = hex_to_int(
+                        cagent.content_hash
+                    )
+
+        points: list[dict[str, Any]] = []
+        for i, aid in enumerate(ids):
+            agent = self._agents[aid]
+            cluster_id = stable_map.get(aid, -1)
+            is_centroid = False
+            dist_from_centroid: int | None = None
+
+            # Check if this agent is a centroid
+            for data in self._stable_clusters.values():
+                if data["centroid_agent_id"] == aid:
+                    is_centroid = True
+                    break
+
+            # Compute distance from cluster centroid
+            if cluster_id in centroid_hashes:
+                dist_from_centroid = hamming_distance(
+                    hash_ints[i], centroid_hashes[cluster_id]
+                )
+
+            points.append({
+                "agent_id": aid,
+                "x": float(coords[i, 0]),
+                "y": float(coords[i, 1]),
+                "status": agent.status.value,
+                "cluster_id": cluster_id,
+                "is_centroid": is_centroid,
+                "distance_from_centroid": dist_from_centroid,
+            })
+
+        return points
+
     def _build_centroid_list(self) -> list[dict[str, Any]]:
         """Build the centroid response list from the stable cluster cache."""
         return [
@@ -718,6 +819,112 @@ class SimulationEngine:
                 }
 
         return agent_to_stable
+
+    def get_dendrogram_data(self) -> dict[str, Any]:
+        """Compute hierarchical agglomerative clustering and return linkage
+        data suitable for rendering a dendrogram on the client."""
+        result = self._build_distance_matrix()
+        if result is None:
+            return {}
+
+        ids, hash_ints, dist = result
+        n = len(ids)
+        if n < 2:
+            return {}
+
+        stable_map = self._update_stable_clusters()
+
+        # Convert NxN to condensed form and compute linkage
+        method = "average"
+        try:
+            from scipy.spatial.distance import squareform
+            from scipy.cluster.hierarchy import linkage
+
+            condensed = squareform(dist)
+            Z = linkage(condensed, method="average")
+        except ImportError:
+            Z = self._single_linkage_fallback(dist)
+            method = "single-fallback"
+
+        leaves: list[dict[str, Any]] = []
+        for i, aid in enumerate(ids):
+            agent = self._agents[aid]
+            is_worm = agent.status in (AgentStatus.INFECTED, AgentStatus.QUARANTINED)
+            leaf: dict[str, Any] = {
+                "agent_id": aid,
+                "status": agent.status.value,
+                "cluster_id": stable_map.get(aid, -1),
+            }
+            if is_worm and agent.last_payload_text:
+                leaf["payload"] = agent.last_payload_text
+            leaves.append(leaf)
+
+        return {
+            "labels": ids,
+            "linkage": Z.tolist(),
+            "leaves": leaves,
+            "method": method,
+        }
+
+    @staticmethod
+    def _single_linkage_fallback(dist: "np.ndarray") -> "np.ndarray":
+        """Pure-numpy single-linkage producing a scipy-format linkage matrix.
+
+        Uses dict-based distance tracking so we never need to resize numpy
+        arrays during the merge loop.
+        """
+        n = dist.shape[0]
+        # Track active cluster sizes
+        sizes: dict[int, int] = {i: 1 for i in range(n)}
+        # Pairwise distances keyed by (min_id, max_id)
+        dists: dict[tuple[int, int], float] = {}
+        for i in range(n):
+            for j in range(i + 1, n):
+                dists[(i, j)] = dist[i, j]
+
+        Z = np.zeros((n - 1, 4), dtype=np.float64)
+        next_id = n
+
+        for step in range(n - 1):
+            # Find the minimum distance pair
+            min_key = min(dists, key=dists.__getitem__)
+            min_dist = dists[min_key]
+            a, b = min_key
+
+            Z[step, 0] = a
+            Z[step, 1] = b
+            Z[step, 2] = min_dist
+            Z[step, 3] = sizes[a] + sizes[b]
+
+            # Collect all active cluster IDs except a and b
+            active = set(sizes.keys()) - {a, b}
+
+            # Compute distances from new cluster to every other active cluster
+            new_dists: dict[tuple[int, int], float] = {}
+            for c in active:
+                key_ac = (min(a, c), max(a, c))
+                key_bc = (min(b, c), max(b, c))
+                d_ac = dists.get(key_ac, float("inf"))
+                d_bc = dists.get(key_bc, float("inf"))
+                d_new = min(d_ac, d_bc)  # single-linkage
+                new_key = (min(next_id, c), max(next_id, c))
+                new_dists[new_key] = d_new
+
+            # Remove old entries involving a or b
+            keys_to_remove = [
+                k for k in dists if a in k or b in k
+            ]
+            for k in keys_to_remove:
+                del dists[k]
+
+            # Insert new cluster distances
+            dists.update(new_dists)
+
+            # Update sizes
+            sizes[next_id] = sizes.pop(a) + sizes.pop(b)
+            next_id += 1
+
+        return Z
 
     # ------------------------------------------------------------------
     # Internal helpers

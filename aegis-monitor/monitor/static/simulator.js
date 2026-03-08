@@ -19,6 +19,9 @@
     var latestConfusion = {};
     var runInterval = null;
     var hashData = [];
+    var scatterChart = null;
+    var activeHashView = "clusters";
+    var dendrogramData = null;
 
     // ---- Utility ----
     function el(id) {
@@ -268,13 +271,23 @@
             // Clear confusion matrix
             latestConfusion = {};
             showConfusion("aggregate");
-            // Clear hash database and centroids
+            // Clear hash database, centroids, and scatter chart
             hashData = [];
             var hashBody = el("hash-table-body");
             if (hashBody) hashBody.innerHTML = "";
             el("hash-count").textContent = "0";
             var centroidContainer = el("cluster-centroids");
             if (centroidContainer) centroidContainer.innerHTML = "";
+            if (scatterChart) {
+                scatterChart.destroy();
+                scatterChart = null;
+            }
+            dendrogramData = null;
+            var dendroCanvas = el("dendrogram-canvas");
+            if (dendroCanvas) {
+                var dctx = dendroCanvas.getContext("2d");
+                dctx.clearRect(0, 0, dendroCanvas.width, dendroCanvas.height);
+            }
             // Clear stats
             el("tick-counter").textContent = "0";
             el("stat-r0").textContent = "-";
@@ -779,10 +792,16 @@
             el("stat-clusters").textContent = snapshot.cluster_summary.num_clusters;
         }
 
-        // Auto-fetch hash DB if hash-tab is visible
+        // Auto-fetch hash DB, scatter, or dendrogram data if hash-tab is visible
         var hashTab = document.getElementById("hash-tab");
         if (hashTab && hashTab.style.display !== "none") {
-            fetchHashDatabase();
+            if (activeHashView === "scatter") {
+                fetchScatterData();
+            } else if (activeHashView === "tree") {
+                fetchDendrogramData();
+            } else {
+                fetchHashDatabase();
+            }
         }
 
         // Log events
@@ -1072,6 +1091,462 @@
         return html;
     }
 
+    // ---- Scatter chart ----
+    function initScatterChart() {
+        var canvas = el("scatter-chart");
+        if (!canvas) return;
+        var ctx = canvas.getContext("2d");
+        scatterChart = new Chart(ctx, {
+            type: "scatter",
+            data: { datasets: [] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        title: { display: true, text: "MDS Dim 1", color: "#7f8c9b" },
+                        ticks: { color: "#7f8c9b" },
+                        grid: { color: "#1a283666" },
+                    },
+                    y: {
+                        title: { display: true, text: "MDS Dim 2", color: "#7f8c9b" },
+                        ticks: { color: "#7f8c9b" },
+                        grid: { color: "#1a283666" },
+                    },
+                },
+                plugins: {
+                    legend: { labels: { color: "#e0e6ed" } },
+                    tooltip: {
+                        callbacks: {
+                            label: function (ctx) {
+                                var p = ctx.raw;
+                                var parts = [p.agentId.slice(0, 12)];
+                                if (p.clusterId !== undefined && p.clusterId !== -1) parts.push("C" + p.clusterId);
+                                if (p.distFromCentroid != null) parts.push("d=" + p.distFromCentroid);
+                                parts.push(p.status);
+                                if (p.isCentroid) parts.push("(centroid)");
+                                return parts.join(" | ");
+                            },
+                        },
+                    },
+                },
+                animation: { duration: 0 },
+            },
+        });
+    }
+
+    async function fetchScatterData() {
+        try {
+            var data = await apiGet("/api/v1/simulator/scatter");
+            renderScatterChart(data || []);
+        } catch (err) {
+            // No data yet
+        }
+    }
+
+    function renderScatterChart(points) {
+        if (!scatterChart) return;
+
+        // Group points by cluster, separating worm agents
+        var clusterGroups = {};
+        var wormPoints = [];
+
+        points.forEach(function (p) {
+            var isWorm = p.status === "infected" || p.status === "quarantined";
+            var point = {
+                x: p.x,
+                y: p.y,
+                agentId: p.agent_id,
+                status: p.status,
+                clusterId: p.cluster_id,
+                isCentroid: p.is_centroid,
+                distFromCentroid: p.distance_from_centroid,
+            };
+
+            if (isWorm) {
+                wormPoints.push(point);
+            } else {
+                var cid = p.cluster_id !== undefined ? p.cluster_id : -1;
+                if (!clusterGroups[cid]) clusterGroups[cid] = { normal: [], centroids: [] };
+                if (p.is_centroid) {
+                    clusterGroups[cid].centroids.push(point);
+                } else {
+                    clusterGroups[cid].normal.push(point);
+                }
+            }
+        });
+
+        var datasets = [];
+
+        // One dataset per cluster for normal (non-worm) agents
+        Object.keys(clusterGroups).sort(function (a, b) { return parseInt(a) - parseInt(b); }).forEach(function (cid) {
+            var group = clusterGroups[cid];
+            var color = parseInt(cid) === -1 ? "#95a5a6" : clusterColor(parseInt(cid));
+            var label = parseInt(cid) === -1 ? "Unclustered" : "Cluster " + cid;
+
+            if (group.normal.length > 0) {
+                datasets.push({
+                    label: label,
+                    data: group.normal,
+                    backgroundColor: color,
+                    borderColor: color,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                });
+            }
+
+            if (group.centroids.length > 0) {
+                datasets.push({
+                    label: label + " (centroid)",
+                    data: group.centroids,
+                    backgroundColor: color,
+                    borderColor: "#ffffff",
+                    borderWidth: 2,
+                    pointRadius: 9,
+                    pointHoverRadius: 11,
+                    pointStyle: "rectRot",
+                });
+            }
+        });
+
+        // Worm agents (infected/quarantined) — always red
+        if (wormPoints.length > 0) {
+            // Separate worm centroids
+            var wormNormal = [];
+            var wormCentroids = [];
+            wormPoints.forEach(function (p) {
+                if (p.isCentroid) wormCentroids.push(p);
+                else wormNormal.push(p);
+            });
+
+            if (wormNormal.length > 0) {
+                datasets.push({
+                    label: "Worm",
+                    data: wormNormal,
+                    backgroundColor: "#e74c3c",
+                    borderColor: "#e74c3c",
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                });
+            }
+            if (wormCentroids.length > 0) {
+                datasets.push({
+                    label: "Worm (centroid)",
+                    data: wormCentroids,
+                    backgroundColor: "#e74c3c",
+                    borderColor: "#ffffff",
+                    borderWidth: 2,
+                    pointRadius: 9,
+                    pointHoverRadius: 11,
+                    pointStyle: "rectRot",
+                });
+            }
+        }
+
+        scatterChart.data.datasets = datasets;
+        scatterChart.update();
+    }
+
+    // ---- Dendrogram (Tree view) ----
+    async function fetchDendrogramData() {
+        try {
+            var data = await apiGet("/api/v1/simulator/dendrogram");
+            if (data && data.linkage && data.linkage.length > 0) {
+                dendrogramData = data;
+                renderDendrogram(data);
+            }
+        } catch (err) {
+            // No data yet
+        }
+    }
+
+    function renderDendrogram(data) {
+        var canvas = el("dendrogram-canvas");
+        var container = el("hash-tree-view");
+        if (!canvas || !container) return;
+
+        var labels = data.labels || [];
+        var Z = data.linkage || [];
+        var leaves = data.leaves || [];
+        var n = labels.length;
+        if (n < 2) return;
+
+        var LEAF_SPACING = n > 500 ? 8 : n > 200 ? 14 : 24;
+        var TOP_MARGIN = 30;
+        var BOTTOM_MARGIN = n <= 80 ? 100 : 40;
+        var LEFT_MARGIN = 60;
+        var RIGHT_MARGIN = 20;
+        var containerHeight = container.clientHeight || 500;
+        var canvasWidth = Math.max(container.clientWidth, n * LEAF_SPACING + LEFT_MARGIN + RIGHT_MARGIN);
+        var canvasHeight = containerHeight;
+
+        var dpr = window.devicePixelRatio || 1;
+        canvas.width = canvasWidth * dpr;
+        canvas.height = canvasHeight * dpr;
+        canvas.style.width = canvasWidth + "px";
+        canvas.style.height = canvasHeight + "px";
+
+        var ctx = canvas.getContext("2d");
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // Build tree nodes: 0..n-1 = leaves, n..2n-2 = internal
+        var nodes = [];
+        for (var i = 0; i < n; i++) {
+            nodes.push({ id: i, isLeaf: true, left: null, right: null, height: 0, x: 0, y: 0 });
+        }
+        for (var i = 0; i < Z.length; i++) {
+            var leftIdx = Math.round(Z[i][0]);
+            var rightIdx = Math.round(Z[i][1]);
+            var mergeHeight = Z[i][2];
+            nodes.push({
+                id: n + i,
+                isLeaf: false,
+                left: leftIdx,
+                right: rightIdx,
+                height: mergeHeight,
+                x: 0,
+                y: 0,
+            });
+        }
+
+        // In-order traversal to get leaf ordering
+        var leafOrder = [];
+        function inorder(nodeId) {
+            var node = nodes[nodeId];
+            if (node.isLeaf) {
+                leafOrder.push(nodeId);
+                return;
+            }
+            inorder(node.left);
+            inorder(node.right);
+        }
+        inorder(nodes.length - 1); // root is last node
+
+        // Find max merge height for scaling
+        var maxHeight = 0;
+        for (var i = 0; i < Z.length; i++) {
+            if (Z[i][2] > maxHeight) maxHeight = Z[i][2];
+        }
+        if (maxHeight === 0) maxHeight = 1;
+
+        var drawableHeight = canvasHeight - TOP_MARGIN - BOTTOM_MARGIN;
+
+        // Assign x to leaves
+        for (var i = 0; i < leafOrder.length; i++) {
+            nodes[leafOrder[i]].x = LEFT_MARGIN + i * LEAF_SPACING + LEAF_SPACING / 2;
+            nodes[leafOrder[i]].y = canvasHeight - BOTTOM_MARGIN;
+        }
+
+        // Assign x and y to internal nodes (bottom-up)
+        function assignInternal(nodeId) {
+            var node = nodes[nodeId];
+            if (node.isLeaf) return;
+            assignInternal(node.left);
+            assignInternal(node.right);
+            var leftNode = nodes[node.left];
+            var rightNode = nodes[node.right];
+            node.x = (leftNode.x + rightNode.x) / 2;
+            node.y = TOP_MARGIN + (1 - node.height / maxHeight) * drawableHeight;
+        }
+        assignInternal(nodes.length - 1);
+
+        // Draw U-shaped connectors
+        ctx.strokeStyle = "#4a6785";
+        ctx.lineWidth = 1;
+        for (var i = n; i < nodes.length; i++) {
+            var node = nodes[i];
+            var leftNode = nodes[node.left];
+            var rightNode = nodes[node.right];
+
+            ctx.beginPath();
+            // Left vertical
+            ctx.moveTo(leftNode.x, leftNode.y);
+            ctx.lineTo(leftNode.x, node.y);
+            // Horizontal bar
+            ctx.lineTo(rightNode.x, node.y);
+            // Right vertical
+            ctx.lineTo(rightNode.x, rightNode.y);
+            ctx.stroke();
+        }
+
+        // Build hit targets for tooltips
+        var hitTargets = [];
+
+        // Draw leaf dots — worm agents get a glowing ring highlight
+        for (var i = 0; i < leafOrder.length; i++) {
+            var leafIdx = leafOrder[i];
+            var leafNode = nodes[leafIdx];
+            var leafInfo = leaves[leafIdx] || {};
+            var isWorm = leafInfo.status === "infected" || leafInfo.status === "quarantined";
+            var cid = leafInfo.cluster_id;
+            var color = isWorm ? "#e74c3c" : (cid !== undefined && cid !== -1 ? clusterColor(cid) : "#95a5a6");
+            var dotRadius = isWorm ? 5 : 3;
+
+            if (isWorm) {
+                // Outer glow
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(leafNode.x, leafNode.y, 9, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(231, 76, 60, 0.18)";
+                ctx.fill();
+                ctx.restore();
+                // Ring
+                ctx.beginPath();
+                ctx.arc(leafNode.x, leafNode.y, 7, 0, Math.PI * 2);
+                ctx.strokeStyle = "rgba(231, 76, 60, 0.55)";
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            ctx.beginPath();
+            ctx.arc(leafNode.x, leafNode.y, dotRadius, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            hitTargets.push({
+                x: leafNode.x,
+                y: leafNode.y,
+                r: isWorm ? 12 : 8,
+                label: leafInfo.agent_id || labels[leafIdx] || "?",
+                status: leafInfo.status || "?",
+                clusterId: cid,
+                payload: leafInfo.payload || null,
+                type: "leaf",
+            });
+        }
+
+        // Draw rotated leaf labels — always for worm agents, others only if n <= 80
+        ctx.font = "10px 'JetBrains Mono', monospace";
+        ctx.textAlign = "right";
+        for (var i = 0; i < leafOrder.length; i++) {
+            var leafIdx = leafOrder[i];
+            var leafNode = nodes[leafIdx];
+            var leafInfo = leaves[leafIdx] || {};
+            var isWorm = leafInfo.status === "infected" || leafInfo.status === "quarantined";
+            if (!isWorm && n > 80) continue;
+            var lbl = leafInfo.agent_id || labels[leafIdx] || "";
+            if (lbl.length > 10) lbl = lbl.slice(0, 10) + "..";
+            ctx.fillStyle = isWorm ? "#e74c3c" : "#7f8c9b";
+            ctx.save();
+            ctx.translate(leafNode.x, leafNode.y + 8);
+            ctx.rotate(-Math.PI / 3);
+            ctx.fillText(lbl, 0, 0);
+            ctx.restore();
+        }
+
+        // Draw y-axis scale ticks
+        ctx.fillStyle = "#7f8c9b";
+        ctx.strokeStyle = "#2c3e5066";
+        ctx.font = "10px 'JetBrains Mono', monospace";
+        ctx.textAlign = "right";
+        var numTicks = 5;
+        for (var t = 0; t <= numTicks; t++) {
+            var frac = t / numTicks;
+            var tickY = TOP_MARGIN + (1 - frac) * drawableHeight;
+            var tickVal = (frac * maxHeight).toFixed(1);
+            ctx.fillText(tickVal, LEFT_MARGIN - 8, tickY + 3);
+            // Dashed grid line
+            ctx.beginPath();
+            ctx.setLineDash([3, 4]);
+            ctx.moveTo(LEFT_MARGIN, tickY);
+            ctx.lineTo(canvasWidth - RIGHT_MARGIN, tickY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Hit targets for internal nodes
+        for (var i = n; i < nodes.length; i++) {
+            var node = nodes[i];
+            hitTargets.push({
+                x: node.x,
+                y: node.y,
+                r: 6,
+                label: "merge",
+                mergeDistance: node.height.toFixed(2),
+                size: Math.round(Z[i - n][3]),
+                type: "internal",
+            });
+        }
+
+        // Tooltip handler
+        var tooltip = el("dendro-tooltip");
+        canvas.onmousemove = function (e) {
+            var rect = canvas.getBoundingClientRect();
+            var mx = e.clientX - rect.left;
+            var my = e.clientY - rect.top;
+            var best = null;
+            var bestDist = Infinity;
+            for (var i = 0; i < hitTargets.length; i++) {
+                var ht = hitTargets[i];
+                var dx = mx - ht.x;
+                var dy = my - ht.y;
+                var d = dx * dx + dy * dy;
+                if (d < ht.r * ht.r && d < bestDist) {
+                    best = ht;
+                    bestDist = d;
+                }
+            }
+            if (best && tooltip) {
+                var tipHtml;
+                if (best.type === "leaf") {
+                    var parts = best.label;
+                    if (best.clusterId !== undefined && best.clusterId !== -1) parts += " | C" + best.clusterId;
+                    parts += " | " + best.status;
+                    if (best.payload) {
+                        var truncated = best.payload.length > 120 ? best.payload.slice(0, 120) + "..." : best.payload;
+                        tipHtml = escapeHtml(parts) + '<div class="dendro-payload">' + escapeHtml(truncated) + '</div>';
+                    } else {
+                        tipHtml = escapeHtml(parts);
+                    }
+                } else {
+                    tipHtml = escapeHtml("merge d=" + best.mergeDistance + " | " + best.size + " members");
+                }
+                tooltip.innerHTML = tipHtml;
+                tooltip.style.display = "block";
+                tooltip.style.left = (mx + 12) + "px";
+                tooltip.style.top = (my - 8) + "px";
+            } else if (tooltip) {
+                tooltip.style.display = "none";
+            }
+        };
+        canvas.onmouseleave = function () {
+            if (tooltip) tooltip.style.display = "none";
+        };
+    }
+
+    function setupHashViewTabs() {
+        document.querySelectorAll(".hash-view-tab").forEach(function (tab) {
+            tab.addEventListener("click", function () {
+                document.querySelectorAll(".hash-view-tab").forEach(function (t) {
+                    t.classList.remove("active");
+                });
+                tab.classList.add("active");
+                activeHashView = tab.dataset.hashView;
+
+                var clustersView = el("hash-clusters-view");
+                var scatterView = el("hash-scatter-view");
+                var treeView = el("hash-tree-view");
+
+                if (clustersView) clustersView.style.display = "none";
+                if (scatterView) scatterView.style.display = "none";
+                if (treeView) treeView.style.display = "none";
+
+                if (activeHashView === "scatter") {
+                    if (scatterView) scatterView.style.display = "";
+                    if (!scatterChart) initScatterChart();
+                    fetchScatterData();
+                } else if (activeHashView === "tree") {
+                    if (treeView) treeView.style.display = "";
+                    fetchDendrogramData();
+                } else {
+                    if (clustersView) clustersView.style.display = "";
+                    fetchHashDatabase();
+                }
+            });
+        });
+    }
+
     // ---- Collapsible panels ----
     function setupPanels() {
         document.querySelectorAll(".panel-header").forEach(function (header) {
@@ -1114,7 +1589,14 @@
                 }
                 // Fetch hash data when switching to hash tab
                 if (tab.dataset.tab === "hash-tab") {
-                    fetchHashDatabase();
+                    if (activeHashView === "scatter") {
+                        if (!scatterChart) initScatterChart();
+                        fetchScatterData();
+                    } else if (activeHashView === "tree") {
+                        fetchDendrogramData();
+                    } else {
+                        fetchHashDatabase();
+                    }
                 }
             });
         });
@@ -1138,6 +1620,7 @@
         initChart();
         setupPanels();
         setupTabs();
+        setupHashViewTabs();
         updateControls();
         loadPresetList();
         connectWS();

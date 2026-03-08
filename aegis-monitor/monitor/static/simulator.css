@@ -879,6 +879,109 @@ body {
     border-radius: 3px;
 }
 
+/* ========== HASH VIEW SUB-TABS ========== */
+.hash-view-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.hash-view-tab {
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.hash-view-tab:hover {
+    color: var(--text);
+    border-color: var(--gray);
+}
+
+.hash-view-tab.active {
+    background: var(--border);
+    color: var(--text);
+    border-color: var(--blue);
+}
+
+.hash-clusters-view {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.hash-scatter-view {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+.hash-scatter-view canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* ========== DENDROGRAM TREE VIEW ========== */
+.hash-tree-view {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.hash-tree-view canvas {
+    display: block;
+    height: 100%;
+}
+
+.dendro-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 10;
+    background: rgba(15, 25, 35, 0.92);
+    color: #e0e6ed;
+    border: 1px solid #3498db;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 3px;
+    pointer-events: none;
+    white-space: nowrap;
+    max-width: 400px;
+}
+
+.dendro-payload {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(52, 152, 219, 0.3);
+    font-size: 11px;
+    color: #e74c3c;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 80px;
+    overflow: hidden;
+}
+
+.hash-tree-view::-webkit-scrollbar {
+    height: 6px;
+}
+
+.hash-tree-view::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.hash-tree-view::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+
 /* ========== CLUSTER CENTROIDS ========== */
 .cluster-centroids {
     display: flex;

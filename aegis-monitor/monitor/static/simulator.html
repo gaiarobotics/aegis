@@ -132,32 +132,46 @@
             </div>
             <div class="tab-content" id="hash-tab" style="display:none">
                 <div class="hash-db-container">
-                    <div id="cluster-centroids" class="cluster-centroids"></div>
-                    <div class="hash-db-toolbar">
-                        <input type="text" id="hash-search" placeholder="Search agent ID or hash...">
-                        <select id="hash-status-filter">
-                            <option value="">All Statuses</option>
-                            <option value="clean">Clean</option>
-                            <option value="infected">Infected</option>
-                            <option value="quarantined">Quarantined</option>
-                            <option value="recovered">Recovered</option>
-                        </select>
-                        <span class="hash-entry-count"><span id="hash-count">0</span> entries</span>
+                    <div class="hash-view-tabs">
+                        <button class="hash-view-tab active" data-hash-view="clusters">Clusters</button>
+                        <button class="hash-view-tab" data-hash-view="tree">Tree</button>
+                        <button class="hash-view-tab" data-hash-view="scatter">Scatter</button>
                     </div>
-                    <div class="hash-db-table-wrap">
-                        <table class="hash-db-table">
-                            <thead>
-                                <tr>
-                                    <th class="hash-col-expand"></th>
-                                    <th>Agent</th>
-                                    <th>Hash</th>
-                                    <th>Status</th>
-                                    <th>Cluster</th>
-                                    <th>Contagion</th>
-                                </tr>
-                            </thead>
-                            <tbody id="hash-table-body"></tbody>
-                        </table>
+                    <div id="hash-clusters-view" class="hash-clusters-view">
+                        <div id="cluster-centroids" class="cluster-centroids"></div>
+                        <div class="hash-db-toolbar">
+                            <input type="text" id="hash-search" placeholder="Search agent ID or hash...">
+                            <select id="hash-status-filter">
+                                <option value="">All Statuses</option>
+                                <option value="clean">Clean</option>
+                                <option value="infected">Infected</option>
+                                <option value="quarantined">Quarantined</option>
+                                <option value="recovered">Recovered</option>
+                            </select>
+                            <span class="hash-entry-count"><span id="hash-count">0</span> entries</span>
+                        </div>
+                        <div class="hash-db-table-wrap">
+                            <table class="hash-db-table">
+                                <thead>
+                                    <tr>
+                                        <th class="hash-col-expand"></th>
+                                        <th>Agent</th>
+                                        <th>Hash</th>
+                                        <th>Status</th>
+                                        <th>Cluster</th>
+                                        <th>Contagion</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="hash-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div id="hash-scatter-view" class="hash-scatter-view" style="display:none">
+                        <canvas id="scatter-chart"></canvas>
+                    </div>
+                    <div id="hash-tree-view" class="hash-tree-view" style="display:none">
+                        <canvas id="dendrogram-canvas"></canvas>
+                        <div class="dendro-tooltip" id="dendro-tooltip"></div>
                     </div>
                 </div>
             </div>

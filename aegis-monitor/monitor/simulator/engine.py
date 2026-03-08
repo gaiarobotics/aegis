@@ -51,21 +51,19 @@ class SimulationEngine:
         self._scanner: Any = None
         self._seed_ids: set[str] = set()
 
-        # Content hash integration — use a tighter clustering threshold
-        # than the default (16) since the simulator corpus is narrower.
-        self._topic_clusterer = TopicClusterer(threshold=6)
+        # Content hash integration — SemanticHasher (384-dim sentence
+        # embeddings) produces far better cluster separation than the
+        # deprecated StyleHasher (5-dim statistical features).
+        self._topic_clusterer = TopicClusterer(threshold=2, min_samples=3)
         self._contagion_detector = ContagionDetector()
         self._next_stable_cluster_id: int = 0
         self._stable_clusters: dict[int, dict[str, Any]] = {}
         self._hash_available = False
-        self._style_hasher: Any = None
-        self._compute_profile_fn: Any = None
+        self._semantic_hasher: Any = None
         try:
-            from aegis.behavior.content_hash import StyleHasher
-            from aegis.behavior.message_drift import MessageDriftDetector
+            from aegis.behavior.content_hash import SemanticHasher
 
-            self._style_hasher = StyleHasher()
-            self._compute_profile_fn = MessageDriftDetector.compute_profile
+            self._semantic_hasher = SemanticHasher()
             self._hash_available = True
         except ImportError:
             pass
@@ -183,7 +181,7 @@ class SimulationEngine:
         self._confusion = ConfusionMatrix()
         self._scanner = None
         self._seed_ids.clear()
-        self._topic_clusterer = TopicClusterer(threshold=6)
+        self._topic_clusterer = TopicClusterer(threshold=2, min_samples=3)
         self._contagion_detector = ContagionDetector()
         self._next_stable_cluster_id = 0
         self._stable_clusters.clear()
@@ -694,8 +692,7 @@ class SimulationEngine:
         if not self._hash_available:
             return None
         try:
-            profile = self._compute_profile_fn(text)
-            hash_int = self._style_hasher.hash(profile)
+            hash_int = self._semantic_hasher.hash(text)
             return f"{hash_int:032x}"
         except Exception:
             return None

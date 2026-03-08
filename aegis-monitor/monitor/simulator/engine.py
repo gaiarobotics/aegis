@@ -54,7 +54,7 @@ class SimulationEngine:
         # Content hash integration — SemanticHasher (384-dim sentence
         # embeddings) produces far better cluster separation than the
         # deprecated StyleHasher (5-dim statistical features).
-        self._topic_clusterer = TopicClusterer(threshold=2, min_samples=3)
+        self._topic_clusterer = TopicClusterer(threshold=46, min_samples=2)
         self._contagion_detector = ContagionDetector()
         self._next_stable_cluster_id: int = 0
         self._stable_clusters: dict[int, dict[str, Any]] = {}
@@ -181,7 +181,7 @@ class SimulationEngine:
         self._confusion = ConfusionMatrix()
         self._scanner = None
         self._seed_ids.clear()
-        self._topic_clusterer = TopicClusterer(threshold=2, min_samples=3)
+        self._topic_clusterer = TopicClusterer(threshold=46, min_samples=2)
         self._contagion_detector = ContagionDetector()
         self._next_stable_cluster_id = 0
         self._stable_clusters.clear()

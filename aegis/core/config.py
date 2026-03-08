@@ -220,7 +220,6 @@ class ContentHashConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     enabled: bool = True
     window_size: int = 20
-    semantic_enabled: bool = True  # attempt Tier A; graceful fallback if missing
 
 
 class BehaviorConfig(BaseModel):

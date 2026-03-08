@@ -167,7 +167,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
     elif not comp_hash:
         # Fallback path: no hash provided, use graph node hash (unchanged behaviour)
         node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
-        fallback_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
+        fallback_hash = node_attrs.get("content_hash", "")
         if fallback_hash:
             contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash)
         validation_status = "confirmed"
@@ -258,12 +258,9 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         edges=edges,
     )
 
-    # Extract content hashes
-    style_hash = data.get("style_hash", "")
+    # Extract content hash
     content_hash = data.get("content_hash", "")
     metadata: dict[str, Any] = {}
-    if style_hash:
-        metadata["style_hash"] = style_hash
     if content_hash:
         metadata["content_hash"] = content_hash
 
@@ -287,19 +284,16 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
             message_count=edge.get("message_count", 0),
         ))
 
-    # Store hashes in graph node attributes
-    if style_hash or content_hash:
+    # Store hash in graph node attributes
+    if content_hash:
         node_data = graph.graph.nodes.get(agent_id)
         if node_data is not None:
-            if style_hash:
-                node_data["style_hash"] = style_hash
-            if content_hash:
-                node_data["content_hash"] = content_hash
+            node_data["content_hash"] = content_hash
 
     # Topic clustering and contagion detection
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     contagion_detector: ContagionDetector = app.state.contagion_detector
-    hash_for_analysis = content_hash or style_hash
+    hash_for_analysis = content_hash
     topic_velocity = data.get("topic_velocity", 0.0)
     if hash_for_analysis:
         topic_clusterer.update(agent_id, hash_for_analysis)

@@ -54,8 +54,7 @@ class SimulationEngine:
         self._seed_ids: set[str] = set()
 
         # Content hash integration — SemanticHasher (384-dim sentence
-        # embeddings) produces far better cluster separation than the
-        # deprecated StyleHasher (5-dim statistical features).
+        # embeddings) for content fingerprinting and cluster analysis.
         self._topic_clusterer = TopicClusterer(threshold=46, min_samples=2)
         self._contagion_detector = ContagionDetector()
         self._next_stable_cluster_id: int = 0

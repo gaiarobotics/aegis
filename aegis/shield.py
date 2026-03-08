@@ -133,7 +133,6 @@ class Shield:
         self._prompt_monitor = None
         self._isolation_forest = None
         self._content_hash_tracker = None
-        self._style_hasher = None
         self._integrity_monitor = None
         self._killswitch = None
         self._remote_quarantine = None
@@ -220,14 +219,12 @@ class Shield:
                     logger.debug("IsolationForest init failed", exc_info=True)
                 # Content hash tracker (LSH fingerprinting)
                 try:
-                    from aegis.behavior.content_hash import ContentHashTracker, StyleHasher
+                    from aegis.behavior.content_hash import ContentHashTracker
                     ch_cfg = self._config.behavior.content_hash
                     if ch_cfg.enabled:
                         self._content_hash_tracker = ContentHashTracker(
                             window_size=ch_cfg.window_size,
-                            semantic_enabled=ch_cfg.semantic_enabled,
                         )
-                    self._style_hasher = StyleHasher()
                 except Exception:
                     logger.debug("Content hash tracker init failed", exc_info=True)
             except Exception:
@@ -639,11 +636,11 @@ class Shield:
 
         # Compute per-message content hash for compromise reports
         _per_msg_hash_hex = ""
-        if self._style_hasher is not None:
+        if self._content_hash_tracker is not None:
             try:
-                from aegis.behavior.message_drift import MessageDriftDetector
-                profile = MessageDriftDetector.compute_profile(text)
-                _per_msg_hash_hex = f"{self._style_hasher.hash(profile):032x}"
+                from aegis.behavior.content_hash import SemanticHasher
+                _hasher = SemanticHasher()
+                _per_msg_hash_hex = f"{_hasher.hash(text):032x}"
             except Exception:
                 logger.debug("Per-message hash computation failed", exc_info=True)
 
@@ -676,11 +673,7 @@ class Shield:
         # Content hash update
         if self._content_hash_tracker is not None:
             try:
-                profile = None
-                if self._message_drift_detector is not None:
-                    from aegis.behavior.message_drift import MessageDriftDetector
-                    profile = MessageDriftDetector.compute_profile(text)
-                self._content_hash_tracker.update(text, profile=profile)
+                self._content_hash_tracker.update(text)
             except Exception:
                 logger.debug("Content hash update failed", exc_info=True)
 
@@ -705,7 +698,7 @@ class Shield:
                 # Lever 2: content hash similarity
                 if not contagion_hit and self._content_hash_tracker is not None:
                     hashes = self._content_hash_tracker.get_hashes()
-                    check_hash = hashes.get("style_hash") or hashes.get("content_hash", "")
+                    check_hash = hashes.get("content_hash", "")
                     if check_hash:
                         threshold = self._config.monitoring.contagion_similarity_threshold
                         suspicious, sim_score = self._remote_threat_intel.check_hash(

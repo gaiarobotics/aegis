@@ -85,6 +85,7 @@ class SimAgent:
     secondary_infections: int = 0
     has_aegis: bool = False
     content_hash: str | None = None
+    last_payload_text: str | None = None
 
     def compute_susceptibility(self, base_susceptibility: float) -> dict[str, float]:
         """Return per-technique susceptibility values in [0, 1]."""

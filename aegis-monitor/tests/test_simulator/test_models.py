@@ -167,7 +167,7 @@ class TestSimConfig:
         assert cfg.background_message_rate == 2.0
         assert cfg.recovery_ticks == 20
         assert cfg.seed is None
-        assert cfg.aegis_adoption_rate == 1.0
+        assert cfg.aegis_adoption_rate == 0.9
 
     def test_module_toggles_default_all_on(self):
         cfg = SimConfig()

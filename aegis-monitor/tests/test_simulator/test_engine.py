@@ -508,7 +508,10 @@ class TestContentHashing:
             engine.tick()
             if engine.state != SimState.RUNNING:
                 break
-        entries = engine.get_embedding_entries()
+        result = engine.get_embedding_entries()
+        assert "entries" in result
+        assert "centroids" in result
+        entries = result["entries"]
         assert len(entries) > 0, "Should have embedding entries after ticks"
         for entry in entries:
             assert "neighbors" in entry
@@ -518,7 +521,7 @@ class TestContentHashing:
                 assert "agent_id" in neighbor
 
     def test_reset_clears_hash_state(self):
-        """After reset, get_embedding_entries() should return empty list."""
+        """After reset, get_embedding_entries() should return empty entries."""
         pytest.importorskip("aegis")
         from monitor.simulator.engine import SimulationEngine
 
@@ -529,6 +532,6 @@ class TestContentHashing:
         engine.tick()
         engine.stop()
         engine.reset()
-        entries = engine.get_embedding_entries()
-        assert entries == []
+        result = engine.get_embedding_entries()
+        assert result == {"entries": [], "centroids": []}
 

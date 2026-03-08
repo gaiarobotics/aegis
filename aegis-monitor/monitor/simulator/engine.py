@@ -51,9 +51,12 @@ class SimulationEngine:
         self._scanner: Any = None
         self._seed_ids: set[str] = set()
 
-        # Content hash integration
-        self._topic_clusterer = TopicClusterer()
+        # Content hash integration — use a tighter clustering threshold
+        # than the default (16) since the simulator corpus is narrower.
+        self._topic_clusterer = TopicClusterer(threshold=6)
         self._contagion_detector = ContagionDetector()
+        self._next_stable_cluster_id: int = 0
+        self._stable_clusters: dict[int, dict[str, Any]] = {}
         self._hash_available = False
         self._style_hasher: Any = None
         self._compute_profile_fn: Any = None
@@ -130,14 +133,6 @@ class SimulationEngine:
         for sid in seed_ids:
             self._agents[sid].status = AgentStatus.INFECTED
             self._agents[sid].infection_tick = 0
-            # Compute hash for seed agents
-            if self._hash_available and self._corpus is not None:
-                seed_payload = self._corpus.generate(self._rng)
-                hash_hex = self._compute_hash(seed_payload.text)
-                if hash_hex:
-                    self._agents[sid].content_hash = hash_hex
-                    self._topic_clusterer.update(sid, hash_hex)
-                    self._contagion_detector.mark_compromised(sid, hash_hex)
 
         # 5. Optionally init Shield instances
         if self._has_any_module_enabled():
@@ -188,8 +183,10 @@ class SimulationEngine:
         self._confusion = ConfusionMatrix()
         self._scanner = None
         self._seed_ids.clear()
-        self._topic_clusterer = TopicClusterer()
+        self._topic_clusterer = TopicClusterer(threshold=6)
         self._contagion_detector = ContagionDetector()
+        self._next_stable_cluster_id = 0
+        self._stable_clusters.clear()
         self._rng = random.Random(self._config.seed)
         self._state = SimState.IDLE
 
@@ -241,6 +238,7 @@ class SimulationEngine:
                 hash_hex = self._compute_hash(payload.text)
                 if hash_hex:
                     target.content_hash = hash_hex
+                    target.last_payload_text = payload.text
                     self._topic_clusterer.update(target_id, hash_hex)
 
                 # Run shield scan if target has AEGIS
@@ -321,6 +319,7 @@ class SimulationEngine:
                 bg_hash_hex = self._compute_hash(bg_payload.text)
                 if bg_hash_hex:
                     agent.content_hash = bg_hash_hex
+                    agent.last_payload_text = bg_payload.text
                     self._topic_clusterer.update(aid, bg_hash_hex)
 
                 scan_result = {}
@@ -457,23 +456,25 @@ class SimulationEngine:
             for agent in self._agents.values()
         ]
 
-    def get_embedding_entries(self) -> list[dict[str, Any]]:
-        """Return per-agent embedding entries with top-5 nearest neighbors."""
+    def get_embedding_entries(self) -> dict[str, Any]:
+        """Return per-agent embedding entries with top-5 nearest neighbors
+        and cluster centroid information."""
         agents_with_hashes = [
             (aid, agent)
             for aid, agent in self._agents.items()
             if agent.content_hash is not None
         ]
         if not agents_with_hashes:
-            return []
+            self._update_stable_clusters()
+            return {"entries": [], "centroids": self._build_centroid_list()}
+
+        # Update stable clusters and get agent -> stable_id mapping
+        stable_map = self._update_stable_clusters()
 
         # Pre-compute int hashes for distance calculations
         hash_ints: dict[str, int] = {}
         for aid, agent in agents_with_hashes:
             hash_ints[aid] = hex_to_int(agent.content_hash)  # type: ignore[arg-type]
-
-        # Get cluster assignments
-        clusters = self._topic_clusterer.cluster()
 
         entries: list[dict[str, Any]] = []
         agent_list = list(hash_ints.keys())
@@ -514,13 +515,175 @@ class SimulationEngine:
                     "agent_id": aid,
                     "hash": agent.content_hash,
                     "status": agent.status.value,
-                    "cluster_id": clusters.get(aid, -1),
+                    "cluster_id": stable_map.get(aid, -1),
                     "contagion_score": round(contagion_score, 4),
                     "neighbors": neighbors,
                 }
             )
 
-        return entries
+        return {
+            "entries": entries,
+            "centroids": self._build_centroid_list(),
+        }
+
+    def get_cluster_centroids(self) -> list[dict[str, Any]]:
+        """Return representative centroid info for all known clusters.
+
+        Clusters persist with stable auto-incrementing IDs even after
+        their members change status or the cluster dissolves.
+        """
+        self._update_stable_clusters()
+        return self._build_centroid_list()
+
+    def _build_centroid_list(self) -> list[dict[str, Any]]:
+        """Build the centroid response list from the stable cluster cache."""
+        return [
+            {
+                "cluster_id": data["cluster_id"],
+                "centroid_agent_id": data["centroid_agent_id"],
+                "representative_text": data["representative_text"],
+                "member_count": data["member_count"],
+                "member_statuses": data["member_statuses"],
+                "active": data["active"],
+                "formed_tick": data.get("formed_tick"),
+                "dissolved_tick": data.get("dissolved_tick"),
+            }
+            for data in sorted(
+                self._stable_clusters.values(),
+                key=lambda d: d["cluster_id"],
+            )
+        ]
+
+    def _update_stable_clusters(self) -> dict[str, int]:
+        """Run raw clustering, match results to stable IDs, update cache.
+
+        Returns ``{agent_id: stable_cluster_id}``.
+        """
+        raw_clusters = self._topic_clusterer.cluster()
+        if not raw_clusters:
+            for data in self._stable_clusters.values():
+                if data["active"]:
+                    data["active"] = False
+                    data["dissolved_tick"] = self._tick_count
+            return {}
+
+        # Group agents by raw cluster ID
+        raw_groups: dict[int, set[str]] = {}
+        for aid, raw_cid in raw_clusters.items():
+            raw_groups.setdefault(raw_cid, set()).add(aid)
+
+        # Greedy matching: find best (highest Jaccard) pairing between
+        # raw groups and existing stable clusters.
+        candidates: list[tuple[float, int, int]] = []
+        for raw_cid, raw_members in raw_groups.items():
+            for stable_id, stable_data in self._stable_clusters.items():
+                stable_members = stable_data["members"]
+                intersection = len(raw_members & stable_members)
+                union = len(raw_members | stable_members)
+                jaccard = intersection / union if union > 0 else 0.0
+                if jaccard > 0.3:
+                    candidates.append((jaccard, raw_cid, stable_id))
+
+        candidates.sort(key=lambda x: -x[0])
+
+        matched_raw: set[int] = set()
+        matched_stable: set[int] = set()
+        raw_to_stable: dict[int, int] = {}
+
+        for jaccard, raw_cid, stable_id in candidates:
+            if raw_cid in matched_raw or stable_id in matched_stable:
+                continue
+            raw_to_stable[raw_cid] = stable_id
+            matched_raw.add(raw_cid)
+            matched_stable.add(stable_id)
+
+        # Assign new stable IDs to unmatched raw groups
+        for raw_cid in raw_groups:
+            if raw_cid not in matched_raw:
+                raw_to_stable[raw_cid] = self._next_stable_cluster_id
+                self._next_stable_cluster_id += 1
+
+        # Build agent -> stable cluster mapping
+        agent_to_stable: dict[str, int] = {}
+        for aid, raw_cid in raw_clusters.items():
+            agent_to_stable[aid] = raw_to_stable[raw_cid]
+
+        # Determine which stable clusters are still active this tick.
+        # Any existing cluster not matched to a raw group dissolves.
+        newly_dissolved = set(self._stable_clusters.keys()) - matched_stable
+        for stable_id in newly_dissolved:
+            data = self._stable_clusters[stable_id]
+            if data["active"]:
+                data["active"] = False
+                data["dissolved_tick"] = self._tick_count
+
+        # Update or create stable cluster entries
+        for raw_cid, raw_members in raw_groups.items():
+            stable_id = raw_to_stable[raw_cid]
+
+            # Compute centroid (member closest to mean hash)
+            member_hashes: list[tuple[str, int]] = []
+            for aid in raw_members:
+                agent = self._agents.get(aid)
+                if agent and agent.content_hash:
+                    member_hashes.append((aid, hex_to_int(agent.content_hash)))
+
+            centroid_agent_id: str | None = None
+            representative_text: str | None = None
+            if member_hashes:
+                num = len(member_hashes)
+                mean_hash = 0
+                for bit in range(128):
+                    count = sum(1 for _, h in member_hashes if h & (1 << bit))
+                    if count > num / 2:
+                        mean_hash |= (1 << bit)
+
+                best_aid = member_hashes[0][0]
+                best_dist = hamming_distance(member_hashes[0][1], mean_hash)
+                for aid, h in member_hashes[1:]:
+                    d = hamming_distance(h, mean_hash)
+                    if d < best_dist:
+                        best_dist = d
+                        best_aid = aid
+
+                centroid_agent_id = best_aid
+                centroid_agent = self._agents.get(best_aid)
+                if centroid_agent and centroid_agent.last_payload_text:
+                    representative_text = centroid_agent.last_payload_text
+
+            # Count current statuses of cluster members
+            status_counts: dict[str, int] = {}
+            for aid in raw_members:
+                agent = self._agents.get(aid)
+                if agent:
+                    s = agent.status.value
+                    status_counts[s] = status_counts.get(s, 0) + 1
+
+            if stable_id in self._stable_clusters:
+                entry = self._stable_clusters[stable_id]
+                entry["members"] = raw_members
+                entry["member_count"] = len(raw_members)
+                entry["member_statuses"] = status_counts
+                entry["active"] = True
+                entry["dissolved_tick"] = None
+                if centroid_agent_id:
+                    entry["centroid_agent_id"] = centroid_agent_id
+                if representative_text:
+                    entry["representative_text"] = representative_text
+            else:
+                self._stable_clusters[stable_id] = {
+                    "cluster_id": stable_id,
+                    "members": raw_members,
+                    "centroid_agent_id": centroid_agent_id,
+                    "representative_text": representative_text,
+                    "member_count": len(raw_members),
+                    "member_statuses": status_counts,
+                    "active": True,
+                    "formed_tick": self._tick_count,
+                    "dissolved_tick": None,
+                }
+
+        return agent_to_stable
 
     # ------------------------------------------------------------------
     # Internal helpers

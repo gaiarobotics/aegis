@@ -268,11 +268,13 @@
             // Clear confusion matrix
             latestConfusion = {};
             showConfusion("aggregate");
-            // Clear hash database
+            // Clear hash database and centroids
             hashData = [];
             var hashBody = el("hash-table-body");
             if (hashBody) hashBody.innerHTML = "";
             el("hash-count").textContent = "0";
+            var centroidContainer = el("cluster-centroids");
+            if (centroidContainer) centroidContainer.innerHTML = "";
             // Clear stats
             el("tick-counter").textContent = "0";
             el("stat-r0").textContent = "-";
@@ -844,15 +846,100 @@
         }
     }
 
+    // ---- Cluster palette (matches contagion.py _CLUSTER_PALETTE) ----
+    var CLUSTER_PALETTE = [
+        "#1abc9c", "#2ecc71", "#3498db", "#9b59b6",
+        "#e74c3c", "#e67e22", "#f1c40f", "#1f77b4",
+        "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#17becf", "#bcbd22", "#7f7f7f",
+    ];
+
+    function clusterColor(id) {
+        return CLUSTER_PALETTE[id % CLUSTER_PALETTE.length];
+    }
+
     // ---- Hash Database ----
     async function fetchHashDatabase() {
         try {
-            hashData = await apiGet("/api/v1/simulator/embeddings");
+            var resp = await apiGet("/api/v1/simulator/embeddings");
+            // New format: { entries: [...], centroids: [...] }
+            if (resp && resp.entries) {
+                hashData = resp.entries;
+                renderCentroids(resp.centroids || []);
+            } else {
+                // Fallback for old format (plain list)
+                hashData = resp || [];
+                renderCentroids([]);
+            }
             renderHashTable();
         } catch (err) {
             hashData = [];
+            renderCentroids([]);
             renderHashTable();
         }
+    }
+
+    function renderCentroids(centroids) {
+        var container = el("cluster-centroids");
+        if (!container) return;
+        container.innerHTML = "";
+
+        if (!centroids || centroids.length === 0) return;
+
+        centroids.forEach(function (c) {
+            var card = document.createElement("div");
+            card.className = "centroid-card" + (c.active === false ? " dissolved" : "");
+            card.style.borderLeftColor = clusterColor(c.cluster_id);
+
+            // Header: cluster dot + ID + member count
+            var header = document.createElement("div");
+            header.className = "centroid-header";
+            var lifetimeHTML = "";
+            if (c.formed_tick != null) {
+                var ticks;
+                if (c.dissolved_tick != null) {
+                    ticks = c.dissolved_tick - c.formed_tick;
+                } else {
+                    ticks = (parseInt(el("tick-counter").textContent) || 0) - c.formed_tick;
+                }
+                lifetimeHTML = '<span class="centroid-lifetime">' + ticks + " tick" + (ticks !== 1 ? "s" : "") + "</span>";
+            }
+            header.innerHTML = '<span class="centroid-dot" style="background:' + clusterColor(c.cluster_id) + '"></span>'
+                + '<strong>Cluster ' + c.cluster_id + '</strong>'
+                + (c.active === false ? '<span class="centroid-dissolved-badge">dissolved</span>' : '')
+                + '<span class="centroid-count">' + c.member_count + ' agents' + lifetimeHTML + '</span>';
+            card.appendChild(header);
+
+            // Status breakdown
+            if (c.member_statuses) {
+                var statuses = document.createElement("div");
+                statuses.className = "centroid-statuses";
+                var parts = [];
+                ["clean", "infected", "quarantined", "recovered"].forEach(function (s) {
+                    var n = c.member_statuses[s] || 0;
+                    if (n > 0) {
+                        parts.push('<span class="hash-badge hash-badge-' + s + '">' + n + ' ' + s + '</span>');
+                    }
+                });
+                statuses.innerHTML = parts.join(" ");
+                card.appendChild(statuses);
+            }
+
+            // Representative text — full text always stored, CSS handles truncation
+            var textEl = document.createElement("div");
+            textEl.className = "centroid-text";
+            var fullText = c.representative_text || "(no text captured)";
+            textEl.textContent = fullText;
+            textEl.title = fullText;
+            card.appendChild(textEl);
+
+            // Click to toggle expanded/collapsed
+            card.addEventListener("click", function () {
+                card.classList.toggle("expanded");
+            });
+
+            container.appendChild(card);
+        });
     }
 
     function renderHashTable() {

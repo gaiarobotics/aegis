@@ -255,6 +255,34 @@ class TestBrokerAutoRegister:
         assert "manifest" in resp.reason.lower() or "not_registered" in resp.policy_rule
 
 
+class TestBrokerQuarantineEscalation:
+    def test_quarantine_property_exposed(self):
+        broker = Broker()
+        assert broker.quarantine is broker._quarantine
+
+    def test_write_during_quarantine_escalates(self):
+        broker = Broker()
+        broker.register_tool(_make_manifest())
+        broker._quarantine.enter_quarantine("test")
+        assert broker.quarantine.is_escalated is False
+
+        req = _make_request(read_write="write")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.DENY
+        assert broker.quarantine.is_escalated is True
+        assert "some_tool" in broker.quarantine.escalation_reason
+
+    def test_read_during_quarantine_does_not_escalate(self):
+        broker = Broker()
+        broker.register_tool(_make_manifest(read_write="read"))
+        broker._quarantine.enter_quarantine("test")
+
+        req = _make_request(read_write="read")
+        resp = broker.evaluate(req)
+        assert resp.decision == ActionDecision.ALLOW
+        assert broker.quarantine.is_escalated is False
+
+
 class TestBrokerDeniedWriteConcurrency:
     def test_denied_write_count_under_lock(self):
         """_record_denied_write should capture count under lock and pass to check_triggers."""

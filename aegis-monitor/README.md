@@ -13,7 +13,8 @@ Real-time monitoring dashboard for AEGIS-protected agent networks.
 
 ```bash
 pip install -e ".[dev]"
-uvicorn monitor.app:app --host 0.0.0.0 --port 8080 --reload
+npm install
+npm run dev    # builds JS vendor bundle, starts uvicorn with --reload
 ```
 
 Open `http://localhost:8080` to view the dashboard.
@@ -50,7 +51,7 @@ The simulator models prompt injection worm propagation across an agent populatio
 1. **Configure the scenario** in the left sidebar — set agent count (10–5,000), network topology, initial infection rate, technique probabilities, and AEGIS module toggles.
 2. **Generate** — creates the agent population and contact graph. The graph appears in the center panel.
 3. **Start** — begins auto-ticking at the rate set by the speed slider. Use **Step** for single-tick advancement, or **Pause**/**Resume** to control pacing.
-4. **Observe** — the population chart (center, "Population Chart" tab) shows clean/infected/quarantined/recovered percentages over time with R0 on the secondary axis. The confusion matrix (right sidebar) tracks AEGIS detection accuracy per attack technique.
+4. **Observe** — the population chart (center, "Population Chart" tab) shows clean/infected/quarantined/recovered percentages over time with Seed R and running R_e on the secondary axis. The confusion matrix (right sidebar) tracks AEGIS detection accuracy per attack technique.
 5. **Export** — click "Download Results" to save the full run as JSON (all tick snapshots, confusion matrices, per-agent state, and config).
 
 ### Key parameters
@@ -87,3 +88,4 @@ Save custom presets via the sidebar. Presets store the full config (topology, po
 ### Example scenario
 
 See [Moltbook Worm Outbreak](monitor/simulator/presets/scenarios/moltbook-worm-outbreak.md) for a guided walkthrough that runs the outbreak preset with and without AEGIS, explains what to watch for at each phase, and shows how to interpret the results.
+

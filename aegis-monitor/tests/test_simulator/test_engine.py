@@ -176,6 +176,17 @@ class TestPopulationGeneration:
 class TestTickExecution:
     """Verify tick execution with ALL AEGIS modules disabled."""
 
+    def test_tick_from_ready_auto_starts(self):
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        assert engine.state == SimState.READY
+        snapshot = engine.tick()
+        assert engine.state == SimState.RUNNING or engine.state == SimState.COMPLETED
+        assert snapshot.tick == 1
+
     def test_single_tick_produces_snapshot(self):
         from monitor.simulator.engine import SimulationEngine
 
@@ -240,7 +251,7 @@ class TestTickExecution:
             f"current={current_infected}"
         )
 
-    def test_r0_computed(self):
+    def test_reproduction_metrics_computed(self):
         from monitor.simulator.engine import SimulationEngine
 
         cfg = _make_config(num_agents=20)
@@ -248,7 +259,32 @@ class TestTickExecution:
         engine.generate()
         engine.start()
         snapshot = engine.tick()
-        assert isinstance(snapshot.r0, float)
+        assert isinstance(snapshot.seed_r, float)
+        assert isinstance(snapshot.re, float)
+
+    def test_empirical_reproduction_uses_realized_offspring(self):
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=4, seed=42)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+
+        agent_ids = list(engine._agents.keys())
+        engine._seed_ids = {agent_ids[0], agent_ids[1]}
+        engine._tick_count = 3
+
+        engine._agents[agent_ids[0]].infection_tick = 0
+        engine._agents[agent_ids[0]].secondary_infections = 3
+        engine._agents[agent_ids[1]].infection_tick = 0
+        engine._agents[agent_ids[1]].secondary_infections = 1
+        engine._agents[agent_ids[2]].infection_tick = 1
+        engine._agents[agent_ids[2]].secondary_infections = 2
+        engine._agents[agent_ids[3]].infection_tick = 3
+        engine._agents[agent_ids[3]].secondary_infections = 99
+
+        assert engine._compute_seed_r() == pytest.approx(2.0)
+        assert engine._compute_running_re() == pytest.approx(2.0)
+
 
     def test_confusion_matrix_populated(self):
         from monitor.simulator.engine import SimulationEngine
@@ -322,3 +358,180 @@ class TestExport:
         assert "agents" in results
         assert len(results["snapshots"]) == 1
         assert len(results["agents"]) == 10
+
+
+# ---------------------------------------------------------------------------
+# TestAegisAdoption
+# ---------------------------------------------------------------------------
+
+
+class TestAegisAdoption:
+    """Verify per-agent AEGIS adoption rate behaviour."""
+
+    def _make_config_with_modules(self, **kwargs) -> SimConfig:
+        """Build a SimConfig with modules ENABLED."""
+        return SimConfig(
+            num_agents=kwargs.get("num_agents", 50),
+            seed=kwargs.get("seed", 42),
+            initial_infected_pct=kwargs.get("initial_infected_pct", 0.05),
+            seed_strategy="random",
+            max_ticks=500,
+            modules=ModuleToggles(),  # all modules on by default
+            corpus=CorpusConfig(sources=[{"type": "builtin"}]),
+            aegis_adoption_rate=kwargs.get("aegis_adoption_rate", 1.0),
+        )
+
+    def test_full_adoption(self):
+        """With adoption_rate=1.0, every agent should have AEGIS."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = self._make_config_with_modules(
+            num_agents=50, seed=42, aegis_adoption_rate=1.0,
+        )
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        assert all(a["has_aegis"] for a in agents)
+
+    def test_zero_adoption(self):
+        """With adoption_rate=0.0, no agent should have AEGIS."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = self._make_config_with_modules(
+            num_agents=50, seed=42, aegis_adoption_rate=0.0,
+        )
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        assert not any(a["has_aegis"] for a in agents)
+
+    def test_partial_adoption(self):
+        """With adoption_rate=0.5, roughly half should have AEGIS."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = self._make_config_with_modules(
+            num_agents=200, seed=42, aegis_adoption_rate=0.5,
+        )
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        aegis_count = sum(1 for a in agents if a["has_aegis"])
+        # With 200 agents at 50%, expect ~100; allow generous margin
+        assert 60 <= aegis_count <= 140, (
+            f"Expected ~100 AEGIS agents, got {aegis_count}"
+        )
+
+    def test_modules_disabled_overrides_adoption(self):
+        """When all modules are disabled, has_aegis stays False regardless of rate."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=50, seed=42)
+        cfg.aegis_adoption_rate = 1.0  # rate is 1.0 but modules are off
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        assert not any(a["has_aegis"] for a in agents)
+
+    def test_deterministic_assignment(self):
+        """Same seed should produce identical AEGIS assignments."""
+        from monitor.simulator.engine import SimulationEngine
+
+        def run():
+            cfg = self._make_config_with_modules(
+                num_agents=50, seed=99, aegis_adoption_rate=0.5,
+            )
+            engine = SimulationEngine(cfg)
+            engine.generate()
+            return [a["has_aegis"] for a in engine.get_agent_states()]
+
+        run1 = run()
+        run2 = run()
+        assert run1 == run2
+
+
+# ---------------------------------------------------------------------------
+# TestContentHashing
+# ---------------------------------------------------------------------------
+
+
+class TestContentHashing:
+    """Verify content hash computation and embedding entries."""
+
+    def test_agents_get_content_hashes_after_tick(self):
+        """After a tick, some agents should have non-None content_hash."""
+        pytest.importorskip("aegis")
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        engine.tick()
+        agents = engine.get_agent_states()
+        hashed = [a for a in agents if a["content_hash"] is not None]
+        assert len(hashed) > 0, "At least some agents should have content hashes"
+
+    def test_content_hash_in_agent_states(self):
+        """get_agent_states() should include the content_hash key."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=10, seed=42)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        agents = engine.get_agent_states()
+        for a in agents:
+            assert "content_hash" in a
+
+    def test_cluster_summary_in_snapshot(self):
+        """TickSnapshot should contain cluster_summary with num_clusters."""
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        snapshot = engine.tick()
+        assert hasattr(snapshot, "cluster_summary")
+        assert "num_clusters" in snapshot.cluster_summary
+
+    def test_get_embedding_entries_returns_neighbors(self):
+        """Embedding entries should have neighbors list with <= 5 items."""
+        pytest.importorskip("aegis")
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        # Run a few ticks to build up hashes
+        for _ in range(3):
+            engine.tick()
+            if engine.state != SimState.RUNNING:
+                break
+        result = engine.get_embedding_entries()
+        assert "entries" in result
+        assert "centroids" in result
+        entries = result["entries"]
+        assert len(entries) > 0, "Should have embedding entries after ticks"
+        for entry in entries:
+            assert "neighbors" in entry
+            assert len(entry["neighbors"]) <= 5
+            for neighbor in entry["neighbors"]:
+                assert "distance" in neighbor
+                assert "agent_id" in neighbor
+
+    def test_reset_clears_hash_state(self):
+        """After reset, get_embedding_entries() should return empty entries."""
+        pytest.importorskip("aegis")
+        from monitor.simulator.engine import SimulationEngine
+
+        cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
+        engine = SimulationEngine(cfg)
+        engine.generate()
+        engine.start()
+        engine.tick()
+        engine.stop()
+        engine.reset()
+        result = engine.get_embedding_entries()
+        assert result == {"entries": [], "centroids": []}
+

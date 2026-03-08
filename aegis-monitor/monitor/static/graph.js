@@ -1,7 +1,7 @@
 /**
  * AEGIS Monitor — graph visualization and real-time dashboard.
  *
- * Uses Sigma.js v2 with graphology for WebGL-accelerated rendering.
+ * Uses Sigma.js v3 with graphology for WebGL-accelerated rendering.
  */
 
 (function () {
@@ -15,12 +15,80 @@
     const RECONNECT_MS = 3000;
     let topicViewActive = false;
 
+    // ---- Dark-theme node hover ----
+    function drawDarkHover(context, data, settings) {
+        var size = settings.labelSize;
+        var font = settings.labelFont;
+        var weight = settings.labelWeight;
+
+        context.font = (weight ? weight + " " : "") + size + "px " + font;
+
+        var label = data.label;
+        if (!label) return;
+
+        var textWidth = context.measureText(label).width;
+        var padding = 4;
+        var boxWidth = Math.round(textWidth + 8 + data.size + 3 * padding);
+        var boxHeight = Math.round(Math.max(2 * data.size, size + 2 * padding) + 2 * padding);
+        var radius = 5;
+
+        var x = Math.round(data.x - data.size - padding);
+        var y = Math.round(data.y - boxHeight / 2);
+
+        // Draw rounded-rect background
+        context.beginPath();
+        context.moveTo(x + radius, y);
+        context.lineTo(x + boxWidth - radius, y);
+        context.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + radius);
+        context.lineTo(x + boxWidth, y + boxHeight - radius);
+        context.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - radius, y + boxHeight);
+        context.lineTo(x + radius, y + boxHeight);
+        context.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - radius);
+        context.lineTo(x, y + radius);
+        context.quadraticCurveTo(x, y, x + radius, y);
+        context.closePath();
+
+        context.fillStyle = "#1a2332";
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 2;
+        context.shadowBlur = 8;
+        context.shadowColor = "#00000080";
+        context.fill();
+
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 0;
+        context.shadowBlur = 0;
+        context.shadowColor = "transparent";
+
+        context.strokeStyle = "#2c3e50";
+        context.lineWidth = 1;
+        context.stroke();
+
+        // Draw node disc
+        context.beginPath();
+        context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
+        context.fillStyle = data.color;
+        context.fill();
+
+        // Draw label
+        context.fillStyle = "#e0e6ed";
+        context.fillText(label, Math.round(data.x + data.size + padding), Math.round(data.y + size / 3));
+    }
+
     // ---- Initialize graph ----
     function initGraph() {
         const container = document.getElementById("graph-canvas");
         if (!container) return;
 
         graphInstance = new graphology.Graph({ multi: false, type: "directed" });
+
+        var AegisBorderProgram = createNodeBorderProgram({
+            borders: [
+                { size: { attribute: "borderSize", defaultValue: 0, mode: "relative" }, color: { attribute: "borderColor", defaultValue: "#00000000" } },
+                { size: { fill: true }, color: { attribute: "color" } },
+            ],
+        });
+
         sigmaInstance = new Sigma(graphInstance, container, {
             renderLabels: true,
             labelColor: { color: "#e0e6ed" },
@@ -29,6 +97,9 @@
             defaultEdgeColor: "#2c3e50",
             minCameraRatio: 0.1,
             maxCameraRatio: 10,
+            defaultNodeType: "bordered",
+            nodeProgramClasses: { bordered: AegisBorderProgram },
+            defaultDrawNodeHover: drawDarkHover,
         });
 
         sigmaInstance.on("clickNode", function (e) {
@@ -45,6 +116,17 @@
         } catch (err) {
             logEvent("system", "Failed to fetch graph: " + err.message);
         }
+    }
+
+    function muteColor(hex) {
+        // Mix a hex color with gray to produce a desaturated version
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        r = Math.round(r * 0.6 + 0x7f * 0.4);
+        g = Math.round(g * 0.6 + 0x8c * 0.4);
+        b = Math.round(b * 0.6 + 0x9b * 0.4);
+        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
     }
 
     function renderGraph(data) {
@@ -65,11 +147,14 @@
             if (topicViewActive && node.topic_color) {
                 nodeColor = node.topic_color;
             }
+            var hasAegis = node.has_aegis || false;
             graphInstance.addNode(node.id, {
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
-                size: 8 + (node.trust_score || 0) * 0.1,
-                color: nodeColor,
+                size: hasAegis ? 10 + (node.trust_score || 0) * 0.1 : 7 + (node.trust_score || 0) * 0.1,
+                color: hasAegis ? nodeColor : muteColor(nodeColor),
+                borderColor: hasAegis ? "#3498db" : "#00000000",
+                borderSize: hasAegis ? 0.15 : 0,
                 label: node.id,
                 _data: node,
             });
@@ -161,6 +246,7 @@
                 data.is_killswitched ? "KILLSWITCHED" :
                 data.is_compromised ? "COMPROMISED" :
                 data.is_quarantined ? "QUARANTINED" : "Active");
+            setText("popup-aegis", data.has_aegis ? "Protected" : "Not installed");
             setText("popup-operator", data.operator_id || "—");
             setText("popup-heartbeat", "—");
             setText("popup-at-risk",

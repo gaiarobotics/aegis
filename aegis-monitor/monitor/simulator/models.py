@@ -83,7 +83,9 @@ class SimAgent:
     quarantine_tick: int | None = None
     recovery_tick: int | None = None
     secondary_infections: int = 0
-    detection_modules: list[str] = field(default_factory=list)
+    has_aegis: bool = False
+    content_hash: str | None = None
+    last_payload_text: str | None = None
 
     def compute_susceptibility(self, base_susceptibility: float) -> dict[str, float]:
         """Return per-technique susceptibility values in [0, 1]."""
@@ -206,6 +208,7 @@ class SimConfig:
     population: PopulationConfig = field(default_factory=PopulationConfig)
     corpus: CorpusConfig = field(default_factory=CorpusConfig)
     modules: ModuleToggles = field(default_factory=ModuleToggles)
+    aegis_adoption_rate: float = 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -322,20 +325,31 @@ class TickSnapshot:
 
     tick: int
     counts: dict[str, int]
-    r0: float
+    seed_r: float
+    re: float = 0.0
     confusion: ConfusionMatrix = field(default_factory=ConfusionMatrix)
     events: list[dict[str, Any]] = field(default_factory=list)
     status_changes: list[dict[str, Any]] = field(default_factory=list)
+    transmission_attempts: list[dict[str, Any]] = field(default_factory=list)
+    cluster_summary: dict[str, Any] = field(default_factory=dict)
+    state: str = ""
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the snapshot to a dictionary."""
-        return {
+        d: dict[str, Any] = {
             "tick": self.tick,
             "counts": self.counts,
-            "r0": self.r0,
+            "seed_r": self.seed_r,
+            "re": self.re,
             "confusion": self.confusion.to_dict(),
             "events": self.events,
             "status_changes": self.status_changes,
+            "transmission_attempts": self.transmission_attempts,
+            "cluster_summary": self.cluster_summary,
             "timestamp": self.timestamp,
         }
+        if self.state:
+            d["state"] = self.state
+        return d
+

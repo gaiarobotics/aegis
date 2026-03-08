@@ -18,6 +18,7 @@
     var currentCM = "aggregate";
     var latestConfusion = {};
     var runInterval = null;
+    var hashData = [];
 
     // ---- Utility ----
     function el(id) {
@@ -59,6 +60,7 @@
     // ---- Config collection ----
     function collectConfig() {
         return {
+            aegis_adoption_rate: parseInt(el("m-adoption").value) / 100,
             num_agents: parseInt(el("p-agents").value),
             max_ticks: parseInt(el("p-max-ticks").value),
             initial_infected_pct: parseFloat(el("p-infected").value) / 100,
@@ -105,6 +107,11 @@
     // ---- Config application (reverse of collectConfig) ----
     function applyConfig(cfg) {
         if (!cfg) return;
+        if (cfg.aegis_adoption_rate !== undefined) {
+            var adoptVal = Math.round(cfg.aegis_adoption_rate * 100);
+            el("m-adoption").value = adoptVal;
+            el("adoption-val").textContent = cfg.aegis_adoption_rate.toFixed(2);
+        }
         if (cfg.num_agents !== undefined) el("p-agents").value = cfg.num_agents;
         if (cfg.max_ticks !== undefined) el("p-max-ticks").value = cfg.max_ticks;
         if (cfg.initial_infected_pct !== undefined) el("p-infected").value = Math.round(cfg.initial_infected_pct * 100);
@@ -249,7 +256,11 @@
                 populationChart.data.datasets.forEach(function (ds) { ds.data = []; });
                 populationChart.update();
             }
-            // Clear graph
+            // Clear flash timers and graph
+            Object.keys(_flashTimers).forEach(function (k) {
+                clearTimeout(_flashTimers[k]);
+                delete _flashTimers[k];
+            });
             if (graphInstance) {
                 graphInstance.clear();
                 if (sigmaInstance) sigmaInstance.refresh();
@@ -257,13 +268,22 @@
             // Clear confusion matrix
             latestConfusion = {};
             showConfusion("aggregate");
+            // Clear hash database and centroids
+            hashData = [];
+            var hashBody = el("hash-table-body");
+            if (hashBody) hashBody.innerHTML = "";
+            el("hash-count").textContent = "0";
+            var centroidContainer = el("cluster-centroids");
+            if (centroidContainer) centroidContainer.innerHTML = "";
             // Clear stats
             el("tick-counter").textContent = "0";
             el("stat-r0").textContent = "-";
+            el("stat-re").textContent = "-";
             el("stat-infections").textContent = "0";
             el("stat-detection-rate").textContent = "-";
             el("stat-fpr").textContent = "-";
             el("stat-mttq").textContent = "-";
+            el("stat-clusters").textContent = "-";
             // Clear event log
             el("event-log").innerHTML = "";
             logEvent({ tick: 0, type: "system", message: "Simulation reset" });
@@ -288,7 +308,8 @@
                 select.appendChild(option);
             });
         } catch (err) {
-            // Presets endpoint may not exist yet
+            console.warn("Failed to load presets:", err);
+            logEvent({ tick: 0, type: "error", message: "Failed to load presets: " + err.message });
         }
     }
 
@@ -330,19 +351,92 @@
         }
     }
 
+    // ---- Dark-theme node hover ----
+    function drawDarkHover(context, data, settings) {
+        var size = settings.labelSize;
+        var font = settings.labelFont;
+        var weight = settings.labelWeight;
+
+        context.font = (weight ? weight + " " : "") + size + "px " + font;
+
+        var label = data.label;
+        if (!label) return;
+
+        var textWidth = context.measureText(label).width;
+        var padding = 4;
+        var boxWidth = Math.round(textWidth + 8 + data.size + 3 * padding);
+        var boxHeight = Math.round(Math.max(2 * data.size, size + 2 * padding) + 2 * padding);
+        var radius = 5;
+
+        var x = Math.round(data.x - data.size - padding);
+        var y = Math.round(data.y - boxHeight / 2);
+
+        // Draw rounded-rect background
+        context.beginPath();
+        context.moveTo(x + radius, y);
+        context.lineTo(x + boxWidth - radius, y);
+        context.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + radius);
+        context.lineTo(x + boxWidth, y + boxHeight - radius);
+        context.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - radius, y + boxHeight);
+        context.lineTo(x + radius, y + boxHeight);
+        context.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - radius);
+        context.lineTo(x, y + radius);
+        context.quadraticCurveTo(x, y, x + radius, y);
+        context.closePath();
+
+        context.fillStyle = "#1a2332";
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 2;
+        context.shadowBlur = 8;
+        context.shadowColor = "#00000080";
+        context.fill();
+
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 0;
+        context.shadowBlur = 0;
+        context.shadowColor = "transparent";
+
+        context.strokeStyle = "#2c3e50";
+        context.lineWidth = 1;
+        context.stroke();
+
+        // Draw node disc
+        context.beginPath();
+        context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
+        context.fillStyle = data.color;
+        context.fill();
+
+        // Draw label
+        context.fillStyle = "#e0e6ed";
+        context.fillText(label, Math.round(data.x + data.size + padding), Math.round(data.y + size / 3));
+    }
+
     // ---- Graph rendering ----
     function initGraph() {
         graphInstance = new graphology.Graph({ multi: false, type: "undirected" });
         var container = el("sim-graph-canvas");
         if (!container) return;
+
+        var AegisBorderProgram = createNodeBorderProgram({
+            borders: [
+                { size: { attribute: "borderSize", defaultValue: 0, mode: "relative" }, color: { attribute: "borderColor", defaultValue: "#00000000" } },
+                { size: { fill: true }, color: { attribute: "color" } },
+            ],
+        });
+
         sigmaInstance = new Sigma(graphInstance, container, {
             renderLabels: true,
             labelColor: { color: "#e0e6ed" },
             labelSize: 10,
+            labelDensity: 2,
+            labelRenderedSizeThreshold: 3,
             defaultNodeColor: "#95a5a6",
             defaultEdgeColor: "#2c3e50",
             minCameraRatio: 0.1,
             maxCameraRatio: 10,
+            defaultNodeType: "bordered",
+            nodeProgramClasses: { bordered: AegisBorderProgram },
+            defaultDrawNodeHover: drawDarkHover,
         });
     }
 
@@ -366,12 +460,17 @@
         nodes.forEach(function (node, i) {
             var angle = (2 * Math.PI * i) / Math.max(n, 1);
             var r = 10;
+            var baseColor = statusColor(node.status || "clean");
+            var hasAegis = node.has_aegis || false;
             graphInstance.addNode(node.id, {
                 x: r * Math.cos(angle),
                 y: r * Math.sin(angle),
                 size: 5 + (node.degree || 1) * 0.5,
-                color: statusColor(node.status || "clean"),
+                color: baseColor,
+                borderColor: hasAegis ? "#ffffff" : "#00000000",
+                borderSize: hasAegis ? 0.2 : 0,
                 label: String(node.id),
+                forceLabel: true,
             });
         });
 
@@ -390,6 +489,35 @@
         });
 
         if (sigmaInstance) sigmaInstance.refresh();
+    }
+
+    // ---- Edge flash for transmission attempts ----
+    var EDGE_FLASH_MS = 600;
+    var _flashTimers = {};
+
+    function flashEdge(source, target, success, blockedBy) {
+        if (!graphInstance) return;
+        // Edge keys may be source-target or target-source (undirected graph)
+        var key = source + "-" + target;
+        var altKey = target + "-" + source;
+        var edgeKey = graphInstance.hasEdge(key) ? key : (graphInstance.hasEdge(altKey) ? altKey : null);
+        if (!edgeKey) return;
+
+        var color = success ? "#e74c3c" : (blockedBy === "aegis" ? "#3498db" : "#2ecc71");
+        graphInstance.setEdgeAttribute(edgeKey, "color", color);
+        graphInstance.setEdgeAttribute(edgeKey, "size", success ? 2 : 1.5);
+
+        // Cancel any existing timer for this edge
+        if (_flashTimers[edgeKey]) clearTimeout(_flashTimers[edgeKey]);
+
+        _flashTimers[edgeKey] = setTimeout(function () {
+            if (graphInstance.hasEdge(edgeKey)) {
+                graphInstance.setEdgeAttribute(edgeKey, "color", "#2c3e5050");
+                graphInstance.setEdgeAttribute(edgeKey, "size", 0.5);
+            }
+            delete _flashTimers[edgeKey];
+            if (sigmaInstance) sigmaInstance.refresh();
+        }, EDGE_FLASH_MS);
     }
 
     function statusColor(status) {
@@ -449,9 +577,19 @@
                         pointRadius: 0,
                     },
                     {
-                        label: "R\u2080",
+                        label: "Seed R",
                         borderColor: "#f1c40f",
                         borderDash: [5, 5],
+                        data: [],
+                        yAxisID: "y1",
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 0,
+                    },
+                    {
+                        label: "R\u2091",
+                        borderColor: "#e67e22",
+                        borderDash: [2, 3],
                         data: [],
                         yAxisID: "y1",
                         fill: false,
@@ -478,7 +616,7 @@
                     },
                     y1: {
                         position: "right",
-                        title: { display: true, text: "R\u2080", color: "#f1c40f" },
+                        title: { display: true, text: "Seed R / R\u2091", color: "#f1c40f" },
                         ticks: { color: "#f1c40f" },
                         grid: { drawOnChartArea: false },
                         min: 0,
@@ -500,7 +638,8 @@
         populationChart.data.datasets[1].data.push((snapshot.counts.infected || 0) / total * 100);
         populationChart.data.datasets[2].data.push((snapshot.counts.quarantined || 0) / total * 100);
         populationChart.data.datasets[3].data.push((snapshot.counts.recovered || 0) / total * 100);
-        populationChart.data.datasets[4].data.push(snapshot.r0 || 0);
+        populationChart.data.datasets[4].data.push(snapshot.seed_r || 0);
+        populationChart.data.datasets[5].data.push(snapshot.re || 0);
         populationChart.update();
     }
 
@@ -526,7 +665,8 @@
     // ---- Summary stats ----
     function updateStats(snapshot) {
         if (!snapshot) return;
-        el("stat-r0").textContent = (snapshot.r0 || 0).toFixed(2);
+        el("stat-r0").textContent = (snapshot.seed_r || 0).toFixed(2);
+        el("stat-re").textContent = (snapshot.re || 0).toFixed(2);
 
         var counts = snapshot.counts || {};
         var totalInfected = (counts.infected || 0) + (counts.quarantined || 0) + (counts.recovered || 0);
@@ -626,6 +766,25 @@
             if (sigmaInstance) sigmaInstance.refresh();
         }
 
+        // Flash edges for transmission attempts
+        if (snapshot.transmission_attempts && snapshot.transmission_attempts.length > 0 && graphInstance) {
+            snapshot.transmission_attempts.forEach(function (attempt) {
+                flashEdge(attempt.source, attempt.target, attempt.success, attempt.blocked_by);
+            });
+            if (sigmaInstance) sigmaInstance.refresh();
+        }
+
+        // Update cluster count
+        if (snapshot.cluster_summary && snapshot.cluster_summary.num_clusters !== undefined) {
+            el("stat-clusters").textContent = snapshot.cluster_summary.num_clusters;
+        }
+
+        // Auto-fetch hash DB if hash-tab is visible
+        var hashTab = document.getElementById("hash-tab");
+        if (hashTab && hashTab.style.display !== "none") {
+            fetchHashDatabase();
+        }
+
         // Log events
         if (snapshot.events && snapshot.events.length > 0) {
             snapshot.events.forEach(logEvent);
@@ -634,9 +793,9 @@
         // Store tick data for export
         tickData.push(snapshot);
 
-        // Check if simulation completed
-        if (snapshot.state === "completed" || (snapshot.counts && snapshot.counts.infected === 0 && snapshot.tick > 0)) {
-            simState = "completed";
+        // Sync simulation state from engine
+        if (snapshot.state) {
+            simState = snapshot.state;
             updateControls();
         }
     }
@@ -687,6 +846,199 @@
         }
     }
 
+    // ---- Cluster palette (matches contagion.py _CLUSTER_PALETTE) ----
+    var CLUSTER_PALETTE = [
+        "#1abc9c", "#2ecc71", "#3498db", "#9b59b6",
+        "#e74c3c", "#e67e22", "#f1c40f", "#1f77b4",
+        "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#17becf", "#bcbd22", "#7f7f7f",
+    ];
+
+    function clusterColor(id) {
+        return CLUSTER_PALETTE[id % CLUSTER_PALETTE.length];
+    }
+
+    // ---- Hash Database ----
+    async function fetchHashDatabase() {
+        try {
+            var resp = await apiGet("/api/v1/simulator/embeddings");
+            // New format: { entries: [...], centroids: [...] }
+            if (resp && resp.entries) {
+                hashData = resp.entries;
+                renderCentroids(resp.centroids || []);
+            } else {
+                // Fallback for old format (plain list)
+                hashData = resp || [];
+                renderCentroids([]);
+            }
+            renderHashTable();
+        } catch (err) {
+            hashData = [];
+            renderCentroids([]);
+            renderHashTable();
+        }
+    }
+
+    function renderCentroids(centroids) {
+        var container = el("cluster-centroids");
+        if (!container) return;
+        container.innerHTML = "";
+
+        if (!centroids || centroids.length === 0) return;
+
+        centroids.forEach(function (c) {
+            var card = document.createElement("div");
+            card.className = "centroid-card" + (c.active === false ? " dissolved" : "");
+            card.style.borderLeftColor = clusterColor(c.cluster_id);
+
+            // Header: cluster dot + ID + member count
+            var header = document.createElement("div");
+            header.className = "centroid-header";
+            var lifetimeHTML = "";
+            if (c.formed_tick != null) {
+                var ticks;
+                if (c.dissolved_tick != null) {
+                    ticks = c.dissolved_tick - c.formed_tick;
+                } else {
+                    ticks = (parseInt(el("tick-counter").textContent) || 0) - c.formed_tick;
+                }
+                lifetimeHTML = '<span class="centroid-lifetime">' + ticks + " tick" + (ticks !== 1 ? "s" : "") + "</span>";
+            }
+            header.innerHTML = '<span class="centroid-dot" style="background:' + clusterColor(c.cluster_id) + '"></span>'
+                + '<strong>Cluster ' + c.cluster_id + '</strong>'
+                + (c.active === false ? '<span class="centroid-dissolved-badge">dissolved</span>' : '')
+                + '<span class="centroid-count">' + c.member_count + ' agents' + lifetimeHTML + '</span>';
+            card.appendChild(header);
+
+            // Status breakdown
+            if (c.member_statuses) {
+                var statuses = document.createElement("div");
+                statuses.className = "centroid-statuses";
+                var parts = [];
+                ["clean", "infected", "quarantined", "recovered"].forEach(function (s) {
+                    var n = c.member_statuses[s] || 0;
+                    if (n > 0) {
+                        parts.push('<span class="hash-badge hash-badge-' + s + '">' + n + ' ' + s + '</span>');
+                    }
+                });
+                statuses.innerHTML = parts.join(" ");
+                card.appendChild(statuses);
+            }
+
+            // Representative text — full text always stored, CSS handles truncation
+            var textEl = document.createElement("div");
+            textEl.className = "centroid-text";
+            var fullText = c.representative_text || "(no text captured)";
+            textEl.textContent = fullText;
+            textEl.title = fullText;
+            card.appendChild(textEl);
+
+            // Click to toggle expanded/collapsed
+            card.addEventListener("click", function () {
+                card.classList.toggle("expanded");
+            });
+
+            container.appendChild(card);
+        });
+    }
+
+    function renderHashTable() {
+        var tbody = el("hash-table-body");
+        if (!tbody) return;
+        tbody.innerHTML = "";
+
+        var search = (el("hash-search").value || "").toLowerCase();
+        var statusFilter = el("hash-status-filter").value;
+
+        var filtered = hashData.filter(function (entry) {
+            if (statusFilter && entry.status !== statusFilter) return false;
+            if (search) {
+                var matchId = entry.agent_id.toLowerCase().indexOf(search) !== -1;
+                var matchHash = entry.hash && entry.hash.toLowerCase().indexOf(search) !== -1;
+                if (!matchId && !matchHash) return false;
+            }
+            return true;
+        });
+
+        el("hash-count").textContent = filtered.length;
+
+        filtered.forEach(function (entry) {
+            var tr = document.createElement("tr");
+            tr.className = "hash-row";
+
+            var expandTd = document.createElement("td");
+            expandTd.className = "hash-expand";
+            expandTd.textContent = "\u25B6";
+            tr.appendChild(expandTd);
+
+            var agentTd = document.createElement("td");
+            agentTd.textContent = entry.agent_id;
+            tr.appendChild(agentTd);
+
+            var hashTd = document.createElement("td");
+            hashTd.className = "hash-cell-mono";
+            hashTd.textContent = entry.hash ? entry.hash.substring(0, 16) + "..." : "-";
+            hashTd.title = entry.hash || "";
+            tr.appendChild(hashTd);
+
+            var statusTd = document.createElement("td");
+            var badge = document.createElement("span");
+            badge.className = "hash-badge hash-badge-" + entry.status;
+            badge.textContent = entry.status;
+            statusTd.appendChild(badge);
+            tr.appendChild(statusTd);
+
+            var clusterTd = document.createElement("td");
+            clusterTd.textContent = entry.cluster_id !== undefined ? entry.cluster_id : "-";
+            tr.appendChild(clusterTd);
+
+            var contagionTd = document.createElement("td");
+            var score = entry.contagion_score || 0;
+            contagionTd.textContent = score.toFixed(3);
+            if (score >= 0.85) contagionTd.style.color = "var(--red)";
+            else if (score >= 0.5) contagionTd.style.color = "var(--orange)";
+            tr.appendChild(contagionTd);
+
+            tbody.appendChild(tr);
+
+            // Detail row for neighbors (hidden by default)
+            var detailTr = document.createElement("tr");
+            detailTr.className = "hash-detail-row";
+            detailTr.style.display = "none";
+            var detailTd = document.createElement("td");
+            detailTd.colSpan = 6;
+            detailTd.innerHTML = buildNeighborHTML(entry.neighbors || []);
+            detailTr.appendChild(detailTd);
+            tbody.appendChild(detailTr);
+
+            // Toggle expand
+            tr.addEventListener("click", function () {
+                var isVisible = detailTr.style.display !== "none";
+                detailTr.style.display = isVisible ? "none" : "table-row";
+                expandTd.textContent = isVisible ? "\u25B6" : "\u25BC";
+            });
+        });
+    }
+
+    function buildNeighborHTML(neighbors) {
+        if (!neighbors || neighbors.length === 0) {
+            return '<div class="hash-neighbors"><em>No neighbors</em></div>';
+        }
+        var html = '<div class="hash-neighbors"><table class="neighbor-table">';
+        html += '<tr><th>Agent</th><th>Distance</th><th>Status</th><th>Hash</th></tr>';
+        neighbors.forEach(function (n) {
+            var pct = Math.min(100, (n.distance / 128) * 100);
+            html += '<tr>';
+            html += '<td>' + n.agent_id + '</td>';
+            html += '<td><div class="dist-bar"><div class="dist-fill" style="width:' + pct + '%"></div></div><span>' + n.distance + '</span></td>';
+            html += '<td><span class="hash-badge hash-badge-' + n.status + '">' + n.status + '</span></td>';
+            html += '<td class="hash-cell-mono">' + (n.hash || '-') + '</td>';
+            html += '</tr>';
+        });
+        html += '</table></div>';
+        return html;
+    }
+
     // ---- Collapsible panels ----
     function setupPanels() {
         document.querySelectorAll(".panel-header").forEach(function (header) {
@@ -727,6 +1079,10 @@
                 if (tab.dataset.tab === "graph-tab" && sigmaInstance) {
                     sigmaInstance.refresh();
                 }
+                // Fetch hash data when switching to hash tab
+                if (tab.dataset.tab === "hash-tab") {
+                    fetchHashDatabase();
+                }
             });
         });
 
@@ -758,6 +1114,11 @@
             el("speed-label").textContent = e.target.value;
         });
 
+        // Adoption rate slider
+        el("m-adoption").addEventListener("input", function (e) {
+            el("adoption-val").textContent = (e.target.value / 100).toFixed(2);
+        });
+
         // Sensitivity slider
         el("m-sensitivity").addEventListener("input", function (e) {
             el("sensitivity-val").textContent = (e.target.value / 100).toFixed(2);
@@ -767,6 +1128,10 @@
         el("m-confidence").addEventListener("input", function (e) {
             el("confidence-val").textContent = (e.target.value / 100).toFixed(2);
         });
+
+        // Hash database search/filter
+        el("hash-search").addEventListener("input", renderHashTable);
+        el("hash-status-filter").addEventListener("change", renderHashTable);
 
         // Button handlers
         el("btn-generate").addEventListener("click", doGenerate);
@@ -782,3 +1147,5 @@
         el("btn-delete-preset").addEventListener("click", deletePreset);
     });
 })();
+
+

@@ -152,6 +152,57 @@ class TestRecoveryQuarantine:
         assert q.is_quarantined() is True
 
 
+class TestRecoveryQuarantineEscalation:
+    def test_not_escalated_by_default(self):
+        q = RecoveryQuarantine()
+        assert q.is_escalated is False
+
+    def test_escalate_sets_flag(self):
+        q = RecoveryQuarantine()
+        q.enter(reason="test")
+        q.escalate("threat during quarantine")
+        assert q.is_escalated is True
+
+    def test_escalation_reason_stored(self):
+        q = RecoveryQuarantine()
+        q.escalate("threat detected: score=0.9")
+        assert q.escalation_reason == "threat detected: score=0.9"
+
+    def test_exit_clears_escalation(self):
+        q = RecoveryQuarantine()
+        q.enter(reason="test")
+        q.escalate("threat during quarantine")
+        q.exit()
+        assert q.is_escalated is False
+        assert q.escalation_reason is None
+
+    def test_exit_with_token_clears_escalation(self):
+        q = RecoveryQuarantine(exit_token="recovery-secret")
+        q.enter(reason="test")
+        q.escalate("threat during quarantine")
+        q.exit(token="recovery-secret")
+        assert q.is_escalated is False
+        assert q.escalation_reason is None
+
+    def test_escalation_survives_cooldown(self):
+        """Cooldown auto-release does NOT clear escalation."""
+        q = RecoveryQuarantine()
+        drift_result = MagicMock()
+        drift_result.is_drifting = True
+        drift_result.max_sigma = 4.0
+        q.auto_quarantine(drift_result=drift_result)
+        assert q.severity == "medium"
+        q.escalate("threat during quarantine")
+
+        with patch("aegis.recovery.quarantine.time") as mock_time:
+            mock_time.monotonic.return_value = q._quarantine_time + _COOLDOWN_SECONDS["medium"] + 1
+            # Quarantine itself auto-releases
+            assert q.is_quarantined() is False
+            # But escalation persists
+            assert q.is_escalated is True
+            assert q.escalation_reason == "threat during quarantine"
+
+
 class TestRecoveryQuarantineCooldown:
     def test_cooldown_hostile_nk_no_auto_release(self):
         """Hostile NK quarantine (high severity) does NOT auto-release."""

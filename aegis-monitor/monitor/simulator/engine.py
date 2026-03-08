@@ -10,6 +10,12 @@ import random
 from dataclasses import asdict
 from typing import Any
 
+from monitor.contagion import (
+    ContagionDetector,
+    TopicClusterer,
+    hamming_distance,
+    hex_to_int,
+)
 from monitor.simulator.corpus import PayloadCorpus
 from monitor.simulator.models import (
     AgentStatus,
@@ -42,7 +48,27 @@ class SimulationEngine:
         self._tick_count: int = 0
         self._snapshots: list[TickSnapshot] = []
         self._confusion: ConfusionMatrix = ConfusionMatrix()
-        self._shields: dict[str, Any] = {}
+        self._scanner: Any = None
+        self._seed_ids: set[str] = set()
+
+        # Content hash integration — use a tighter clustering threshold
+        # than the default (16) since the simulator corpus is narrower.
+        self._topic_clusterer = TopicClusterer(threshold=6)
+        self._contagion_detector = ContagionDetector()
+        self._next_stable_cluster_id: int = 0
+        self._stable_clusters: dict[int, dict[str, Any]] = {}
+        self._hash_available = False
+        self._style_hasher: Any = None
+        self._compute_profile_fn: Any = None
+        try:
+            from aegis.behavior.content_hash import StyleHasher
+            from aegis.behavior.message_drift import MessageDriftDetector
+
+            self._style_hasher = StyleHasher()
+            self._compute_profile_fn = MessageDriftDetector.compute_profile
+            self._hash_available = True
+        except ImportError:
+            pass
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -94,9 +120,16 @@ class SimulationEngine:
                 activity_level=activity_level,
             )
 
+        # 3b. Assign per-agent AEGIS protection
+        if self._has_any_module_enabled():
+            for aid in agent_ids:
+                if self._rng.random() < self._config.aegis_adoption_rate:
+                    self._agents[aid].has_aegis = True
+
         # 4. Seed initial infections
         num_seeds = max(1, int(self._config.num_agents * self._config.initial_infected_pct))
         seed_ids = self._select_seeds(num_seeds)
+        self._seed_ids = set(seed_ids)
         for sid in seed_ids:
             self._agents[sid].status = AgentStatus.INFECTED
             self._agents[sid].infection_tick = 0
@@ -148,7 +181,12 @@ class SimulationEngine:
         self._tick_count = 0
         self._snapshots.clear()
         self._confusion = ConfusionMatrix()
-        self._shields.clear()
+        self._scanner = None
+        self._seed_ids.clear()
+        self._topic_clusterer = TopicClusterer(threshold=6)
+        self._contagion_detector = ContagionDetector()
+        self._next_stable_cluster_id = 0
+        self._stable_clusters.clear()
         self._rng = random.Random(self._config.seed)
         self._state = SimState.IDLE
 
@@ -157,7 +195,13 @@ class SimulationEngine:
     # ------------------------------------------------------------------
 
     def tick(self) -> TickSnapshot:
-        """Execute one simulation tick.  Only valid in RUNNING state."""
+        """Execute one simulation tick.  Valid in RUNNING or READY state.
+
+        If called from READY, auto-transitions to RUNNING first so that
+        single-stepping immediately after generate works.
+        """
+        if self._state == SimState.READY:
+            self._state = SimState.RUNNING
         if self._state != SimState.RUNNING:
             raise RuntimeError(
                 f"Cannot tick in state {self._state.value!r}; expected RUNNING"
@@ -168,6 +212,7 @@ class SimulationEngine:
         self._tick_count += 1
         events: list[dict[str, Any]] = []
         status_changes: list[dict[str, Any]] = []
+        transmission_attempts: list[dict[str, Any]] = []
         tick_confusion = ConfusionMatrix()
 
         # Phase 1: Infected agents spread
@@ -189,9 +234,16 @@ class SimulationEngine:
                 target = self._agents[target_id]
                 payload = self._corpus.generate(self._rng)
 
-                # Run shield scan if modules enabled
+                # Compute content hash for payload
+                hash_hex = self._compute_hash(payload.text)
+                if hash_hex:
+                    target.content_hash = hash_hex
+                    target.last_payload_text = payload.text
+                    self._topic_clusterer.update(target_id, hash_hex)
+
+                # Run shield scan if target has AEGIS
                 scan_result: dict[str, Any] = {}
-                if self._has_any_module_enabled():
+                if target.has_aegis:
                     scan_result = self._run_shield_scan(target_id, payload.text)
 
                 detected = scan_result.get("detected", False)
@@ -199,11 +251,9 @@ class SimulationEngine:
                 # Record confusion matrix per technique
                 for technique in TechniqueType:
                     present = technique in payload.techniques
-                    tech_detected = (
-                        technique.value in scan_result.get("detected_techniques", [])
-                        if scan_result
-                        else False
-                    )
+                    # Shield blocks the entire message: if detected, all
+                    # present techniques count as detected.
+                    tech_detected = detected and present
                     tick_confusion.record(technique, present=present, detected=tech_detected)
                     self._confusion.record(technique, present=present, detected=tech_detected)
 
@@ -225,6 +275,9 @@ class SimulationEngine:
                             target.status = AgentStatus.INFECTED
                             target.infection_tick = self._tick_count
                             agent.secondary_infections += 1
+                            # Mark newly infected agent as compromised
+                            if hash_hex:
+                                self._contagion_detector.mark_compromised(target_id, hash_hex)
                             status_changes.append(
                                 {
                                     "agent_id": target_id,
@@ -234,6 +287,19 @@ class SimulationEngine:
                                     "source": aid,
                                 }
                             )
+                            transmission_attempts.append(
+                                {"source": aid, "target": target_id, "success": True}
+                            )
+                        else:
+                            # Susceptibility roll failed
+                            transmission_attempts.append(
+                                {"source": aid, "target": target_id, "success": False, "blocked_by": "natural"}
+                            )
+                    elif not payload.is_benign and TechniqueType.WORM_PROPAGATION in payload.techniques:
+                        # Worm payload was blocked by AEGIS detection
+                        transmission_attempts.append(
+                            {"source": aid, "target": target_id, "success": False, "blocked_by": "aegis"}
+                        )
 
         # Phase 2: Background benign traffic
         clean_ids = [
@@ -248,22 +314,26 @@ class SimulationEngine:
             )
             for _ in range(num_messages):
                 bg_payload = self._corpus.generate_background(self._rng)
+
+                # Compute content hash for background payload
+                bg_hash_hex = self._compute_hash(bg_payload.text)
+                if bg_hash_hex:
+                    agent.content_hash = bg_hash_hex
+                    agent.last_payload_text = bg_payload.text
+                    self._topic_clusterer.update(aid, bg_hash_hex)
+
                 scan_result = {}
-                if self._has_any_module_enabled():
+                if agent.has_aegis:
                     scan_result = self._run_shield_scan(aid, bg_payload.text)
 
                 # Record confusion matrix (all techniques present=False)
+                bg_detected = scan_result.get("detected", False)
                 for technique in TechniqueType:
-                    tech_detected = (
-                        technique.value in scan_result.get("detected_techniques", [])
-                        if scan_result
-                        else False
-                    )
                     tick_confusion.record(
-                        technique, present=False, detected=tech_detected
+                        technique, present=False, detected=bg_detected
                     )
                     self._confusion.record(
-                        technique, present=False, detected=tech_detected
+                        technique, present=False, detected=bg_detected
                     )
 
         # Phase 3: Recovery - quarantined agents recover after recovery_ticks
@@ -289,11 +359,13 @@ class SimulationEngine:
                     }
                 )
 
-        # Phase 4: Behavior-driven quarantine (time-based when modules disabled)
+        # Phase 4: Quarantine of infected agents (AEGIS only)
+        # Quarantine is an AEGIS capability — agents without AEGIS have no
+        # automated detection mechanism and stay infected until max_ticks.
         current_infected = [
             aid
             for aid, agent in self._agents.items()
-            if agent.status == AgentStatus.INFECTED
+            if agent.status == AgentStatus.INFECTED and agent.has_aegis
         ]
         for aid in current_infected:
             agent = self._agents[aid]
@@ -318,15 +390,26 @@ class SimulationEngine:
 
         # Phase 5: Compute metrics
         counts = self._count_statuses()
-        r0 = self._compute_r0()
+
+        # Reproduction metrics are derived from realized transmission events.
+        seed_r = self._compute_seed_r()
+        re = self._compute_running_re()
+
+        # Compute cluster summary
+        clusters = self._topic_clusterer.cluster()
+        num_clusters = len(set(clusters.values())) if clusters else 0
+        cluster_summary: dict[str, Any] = {"num_clusters": num_clusters}
 
         snapshot = TickSnapshot(
             tick=self._tick_count,
             counts=counts,
-            r0=r0,
+            seed_r=seed_r,
+            re=re,
             confusion=tick_confusion,
             events=events,
             status_changes=status_changes,
+            transmission_attempts=transmission_attempts,
+            cluster_summary=cluster_summary,
         )
         self._snapshots.append(snapshot)
 
@@ -335,6 +418,7 @@ class SimulationEngine:
         if num_infected == 0 or self._tick_count >= self._config.max_ticks:
             self._state = SimState.COMPLETED
 
+        snapshot.state = self._state.value
         return snapshot
 
     # ------------------------------------------------------------------
@@ -366,13 +450,255 @@ class SimulationEngine:
                 "quarantine_tick": agent.quarantine_tick,
                 "recovery_tick": agent.recovery_tick,
                 "secondary_infections": agent.secondary_infections,
+                "has_aegis": agent.has_aegis,
+                "content_hash": agent.content_hash,
             }
             for agent in self._agents.values()
         ]
 
+    def get_embedding_entries(self) -> dict[str, Any]:
+        """Return per-agent embedding entries with top-5 nearest neighbors
+        and cluster centroid information."""
+        agents_with_hashes = [
+            (aid, agent)
+            for aid, agent in self._agents.items()
+            if agent.content_hash is not None
+        ]
+        if not agents_with_hashes:
+            self._update_stable_clusters()
+            return {"entries": [], "centroids": self._build_centroid_list()}
+
+        # Update stable clusters and get agent -> stable_id mapping
+        stable_map = self._update_stable_clusters()
+
+        # Pre-compute int hashes for distance calculations
+        hash_ints: dict[str, int] = {}
+        for aid, agent in agents_with_hashes:
+            hash_ints[aid] = hex_to_int(agent.content_hash)  # type: ignore[arg-type]
+
+        entries: list[dict[str, Any]] = []
+        agent_list = list(hash_ints.keys())
+
+        for aid in agent_list:
+            agent = self._agents[aid]
+            h = hash_ints[aid]
+
+            # Compute distances to all other agents with hashes
+            distances: list[tuple[str, int]] = []
+            for other_id in agent_list:
+                if other_id == aid:
+                    continue
+                d = hamming_distance(h, hash_ints[other_id])
+                distances.append((other_id, d))
+
+            # Sort by distance, take top 5
+            distances.sort(key=lambda x: x[1])
+            neighbors = [
+                {
+                    "agent_id": other_id,
+                    "distance": dist,
+                    "status": self._agents[other_id].status.value,
+                    "hash": self._agents[other_id].content_hash[:12] + "..."
+                    if self._agents[other_id].content_hash
+                    else "",
+                }
+                for other_id, dist in distances[:5]
+            ]
+
+            # Contagion score
+            contagion_score = self._contagion_detector.check(
+                aid, agent.content_hash or ""
+            )
+
+            entries.append(
+                {
+                    "agent_id": aid,
+                    "hash": agent.content_hash,
+                    "status": agent.status.value,
+                    "cluster_id": stable_map.get(aid, -1),
+                    "contagion_score": round(contagion_score, 4),
+                    "neighbors": neighbors,
+                }
+            )
+
+        return {
+            "entries": entries,
+            "centroids": self._build_centroid_list(),
+        }
+
+    def get_cluster_centroids(self) -> list[dict[str, Any]]:
+        """Return representative centroid info for all known clusters.
+
+        Clusters persist with stable auto-incrementing IDs even after
+        their members change status or the cluster dissolves.
+        """
+        self._update_stable_clusters()
+        return self._build_centroid_list()
+
+    def _build_centroid_list(self) -> list[dict[str, Any]]:
+        """Build the centroid response list from the stable cluster cache."""
+        return [
+            {
+                "cluster_id": data["cluster_id"],
+                "centroid_agent_id": data["centroid_agent_id"],
+                "representative_text": data["representative_text"],
+                "member_count": data["member_count"],
+                "member_statuses": data["member_statuses"],
+                "active": data["active"],
+                "formed_tick": data.get("formed_tick"),
+                "dissolved_tick": data.get("dissolved_tick"),
+            }
+            for data in sorted(
+                self._stable_clusters.values(),
+                key=lambda d: d["cluster_id"],
+            )
+        ]
+
+    def _update_stable_clusters(self) -> dict[str, int]:
+        """Run raw clustering, match results to stable IDs, update cache.
+
+        Returns ``{agent_id: stable_cluster_id}``.
+        """
+        raw_clusters = self._topic_clusterer.cluster()
+        if not raw_clusters:
+            for data in self._stable_clusters.values():
+                if data["active"]:
+                    data["active"] = False
+                    data["dissolved_tick"] = self._tick_count
+            return {}
+
+        # Group agents by raw cluster ID
+        raw_groups: dict[int, set[str]] = {}
+        for aid, raw_cid in raw_clusters.items():
+            raw_groups.setdefault(raw_cid, set()).add(aid)
+
+        # Greedy matching: find best (highest Jaccard) pairing between
+        # raw groups and existing stable clusters.
+        candidates: list[tuple[float, int, int]] = []
+        for raw_cid, raw_members in raw_groups.items():
+            for stable_id, stable_data in self._stable_clusters.items():
+                stable_members = stable_data["members"]
+                intersection = len(raw_members & stable_members)
+                union = len(raw_members | stable_members)
+                jaccard = intersection / union if union > 0 else 0.0
+                if jaccard > 0.3:
+                    candidates.append((jaccard, raw_cid, stable_id))
+
+        candidates.sort(key=lambda x: -x[0])
+
+        matched_raw: set[int] = set()
+        matched_stable: set[int] = set()
+        raw_to_stable: dict[int, int] = {}
+
+        for jaccard, raw_cid, stable_id in candidates:
+            if raw_cid in matched_raw or stable_id in matched_stable:
+                continue
+            raw_to_stable[raw_cid] = stable_id
+            matched_raw.add(raw_cid)
+            matched_stable.add(stable_id)
+
+        # Assign new stable IDs to unmatched raw groups
+        for raw_cid in raw_groups:
+            if raw_cid not in matched_raw:
+                raw_to_stable[raw_cid] = self._next_stable_cluster_id
+                self._next_stable_cluster_id += 1
+
+        # Build agent -> stable cluster mapping
+        agent_to_stable: dict[str, int] = {}
+        for aid, raw_cid in raw_clusters.items():
+            agent_to_stable[aid] = raw_to_stable[raw_cid]
+
+        # Determine which stable clusters are still active this tick.
+        # Any existing cluster not matched to a raw group dissolves.
+        newly_dissolved = set(self._stable_clusters.keys()) - matched_stable
+        for stable_id in newly_dissolved:
+            data = self._stable_clusters[stable_id]
+            if data["active"]:
+                data["active"] = False
+                data["dissolved_tick"] = self._tick_count
+
+        # Update or create stable cluster entries
+        for raw_cid, raw_members in raw_groups.items():
+            stable_id = raw_to_stable[raw_cid]
+
+            # Compute centroid (member closest to mean hash)
+            member_hashes: list[tuple[str, int]] = []
+            for aid in raw_members:
+                agent = self._agents.get(aid)
+                if agent and agent.content_hash:
+                    member_hashes.append((aid, hex_to_int(agent.content_hash)))
+
+            centroid_agent_id: str | None = None
+            representative_text: str | None = None
+            if member_hashes:
+                num = len(member_hashes)
+                mean_hash = 0
+                for bit in range(128):
+                    count = sum(1 for _, h in member_hashes if h & (1 << bit))
+                    if count > num / 2:
+                        mean_hash |= (1 << bit)
+
+                best_aid = member_hashes[0][0]
+                best_dist = hamming_distance(member_hashes[0][1], mean_hash)
+                for aid, h in member_hashes[1:]:
+                    d = hamming_distance(h, mean_hash)
+                    if d < best_dist:
+                        best_dist = d
+                        best_aid = aid
+
+                centroid_agent_id = best_aid
+                centroid_agent = self._agents.get(best_aid)
+                if centroid_agent and centroid_agent.last_payload_text:
+                    representative_text = centroid_agent.last_payload_text
+
+            # Count current statuses of cluster members
+            status_counts: dict[str, int] = {}
+            for aid in raw_members:
+                agent = self._agents.get(aid)
+                if agent:
+                    s = agent.status.value
+                    status_counts[s] = status_counts.get(s, 0) + 1
+
+            if stable_id in self._stable_clusters:
+                entry = self._stable_clusters[stable_id]
+                entry["members"] = raw_members
+                entry["member_count"] = len(raw_members)
+                entry["member_statuses"] = status_counts
+                entry["active"] = True
+                entry["dissolved_tick"] = None
+                if centroid_agent_id:
+                    entry["centroid_agent_id"] = centroid_agent_id
+                if representative_text:
+                    entry["representative_text"] = representative_text
+            else:
+                self._stable_clusters[stable_id] = {
+                    "cluster_id": stable_id,
+                    "members": raw_members,
+                    "centroid_agent_id": centroid_agent_id,
+                    "representative_text": representative_text,
+                    "member_count": len(raw_members),
+                    "member_statuses": status_counts,
+                    "active": True,
+                    "formed_tick": self._tick_count,
+                    "dissolved_tick": None,
+                }
+
+        return agent_to_stable
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _compute_hash(self, text: str) -> str | None:
+        """Compute a 32-char hex content hash for *text*, or None if unavailable."""
+        if not self._hash_available:
+            return None
+        try:
+            profile = self._compute_profile_fn(text)
+            hash_int = self._style_hasher.hash(profile)
+            return f"{hash_int:032x}"
+        except Exception:
+            return None
 
     def _assign_model(self) -> ModelSpec:
         """Select a model from the population config using weighted random."""
@@ -412,29 +738,43 @@ class SimulationEngine:
         return any([m.scanner, m.broker, m.identity, m.behavior, m.recovery])
 
     def _init_shields(self) -> None:
-        """Lazily import and initialize Shield instances.  Graceful on failure."""
+        """Initialize a shared Scanner instance for AEGIS detection.
+
+        Uses a single Scanner rather than per-agent Shield instances
+        since the simulator only needs stateless pattern-matching scans.
+        """
+        if not self._config.modules.scanner:
+            return
         try:
-            from aegis.shield import Shield  # type: ignore[import-not-found]
+            from aegis.core.config import AegisConfig  # type: ignore[import-not-found]
+            from aegis.scanner import Scanner  # type: ignore[import-not-found]
         except ImportError:
-            # AEGIS package not available; engine runs without shields
             return
 
-        for aid in self._agents:
-            try:
-                self._shields[aid] = Shield(
-                    modules=self._config.modules,
-                )
-            except Exception:
-                pass
+        try:
+            cfg = AegisConfig()
+            st = self._config.modules.scanner_toggles
+            cfg.scanner.pattern_matching = st.pattern_matching
+            cfg.scanner.semantic_analysis = st.semantic_analysis
+            cfg.scanner.sensitivity = self._config.modules.sensitivity
+            cfg.scanner.confidence_threshold = self._config.modules.confidence_threshold
+            self._scanner = Scanner(config=cfg)
+        except Exception:
+            pass
 
     def _run_shield_scan(self, agent_id: str, text: str) -> dict[str, Any]:
-        """Run a Shield scan for *agent_id*.  Returns empty dict on failure."""
-        shield = self._shields.get(agent_id)
-        if shield is None:
+        """Run a Scanner scan for *agent_id*.  Returns empty dict on failure."""
+        if self._scanner is None:
+            return {}
+        agent = self._agents.get(agent_id)
+        if agent is None or not agent.has_aegis:
             return {}
         try:
-            result = shield.scan(text)
-            return result if isinstance(result, dict) else {}
+            result = self._scanner.scan_input(text)
+            return {
+                "detected": result.is_threat,
+                "threat_score": result.threat_score,
+            }
         except Exception:
             return {}
 
@@ -453,29 +793,36 @@ class SimulationEngine:
             counts[agent.status.value] += 1
         return counts
 
-    def _compute_r0(self) -> float:
-        """Compute R0: average secondary infections per resolved agent.
+    def _compute_seed_r(self) -> float:
+        """Return the realized mean offspring count for the initial seed cohort."""
+        if not self._seed_ids:
+            return 0.0
 
-        Resolved agents are those who are quarantined or recovered.
-        If none are resolved yet, fall back to currently infected agents.
+        seed_agents = [
+            self._agents[aid]
+            for aid in self._seed_ids
+            if aid in self._agents
+        ]
+        if not seed_agents:
+            return 0.0
+
+        total_secondary = sum(agent.secondary_infections for agent in seed_agents)
+        return total_secondary / len(seed_agents)
+
+    def _compute_running_re(self) -> float:
+        """Return the realized mean offspring count for agents with transmission exposure.
+
+        Agents infected on the current tick have not yet had an opportunity to
+        spread, so they are excluded until the next tick.
         """
-        resolved = [
-            a
-            for a in self._agents.values()
-            if a.status in (AgentStatus.QUARANTINED, AgentStatus.RECOVERED)
+        eligible_agents = [
+            agent
+            for agent in self._agents.values()
+            if agent.infection_tick is not None and agent.infection_tick < self._tick_count
         ]
-        if resolved:
-            total = sum(a.secondary_infections for a in resolved)
-            return total / len(resolved)
+        if not eligible_agents:
+            return 0.0
 
-        # Fallback: use currently infected agents
-        infected = [
-            a
-            for a in self._agents.values()
-            if a.status == AgentStatus.INFECTED
-        ]
-        if infected:
-            total = sum(a.secondary_infections for a in infected)
-            return total / len(infected)
+        total_secondary = sum(agent.secondary_infections for agent in eligible_agents)
+        return total_secondary / len(eligible_agents)
 
-        return 0.0

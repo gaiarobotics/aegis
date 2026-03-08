@@ -467,6 +467,10 @@ class Shield:
             return True
         if self._remote_quarantine is not None and self._remote_quarantine.is_quarantined():
             return True
+        if self._broker is not None and self._broker.quarantine.is_escalated:
+            return True
+        if self._recovery_quarantine is not None and self._recovery_quarantine.is_escalated:
+            return True
         return False
 
     def check_killswitch(self) -> None:
@@ -478,6 +482,14 @@ class Shield:
         if self._remote_quarantine is not None and self._remote_quarantine.is_quarantined():
             raise InferenceBlockedError(
                 f"Agent quarantined: {self._remote_quarantine.reason}"
+            )
+        if self._broker is not None and self._broker.quarantine.is_escalated:
+            raise InferenceBlockedError(
+                f"Quarantine escalated: {self._broker.quarantine.escalation_reason}"
+            )
+        if self._recovery_quarantine is not None and self._recovery_quarantine.is_escalated:
+            raise InferenceBlockedError(
+                f"Quarantine escalated: {self._recovery_quarantine.escalation_reason}"
             )
 
     def _on_compromise_reported(self, agent_id: str) -> None:
@@ -536,6 +548,12 @@ class Shield:
         4. Recovery auto-quarantine if thresholds exceeded
         """
         result = ScanResult()
+
+        # Capture whether recovery quarantine was already active before this scan
+        _was_recovery_quarantined = (
+            self._recovery_quarantine is not None
+            and self._recovery_quarantine.is_quarantined()
+        )
 
         # Step 1: Scanner
         if self._scanner is not None:
@@ -612,6 +630,12 @@ class Shield:
                     self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
                 except Exception:
                     logger.debug("Recovery auto-quarantine failed", exc_info=True)
+
+            # Trigger B: escalate if already quarantined before this scan detected a threat
+            if _was_recovery_quarantined:
+                self._recovery_quarantine.escalate(
+                    f"Threat detected while already quarantined (score={result.threat_score})"
+                )
 
         # Compute per-message content hash for compromise reports
         _per_msg_hash_hex = ""

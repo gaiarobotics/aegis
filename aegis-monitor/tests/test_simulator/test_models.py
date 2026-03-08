@@ -122,7 +122,7 @@ class TestSimAgent:
         assert agent.quarantine_tick is None
         assert agent.recovery_tick is None
         assert agent.secondary_infections == 0
-        assert agent.detection_modules == []
+        assert agent.has_aegis is False
 
     def test_susceptibility_keys(self):
         agent = SimAgent(agent_id="a-2", model="gpt-4")
@@ -167,6 +167,7 @@ class TestSimConfig:
         assert cfg.background_message_rate == 2.0
         assert cfg.recovery_ticks == 20
         assert cfg.seed is None
+        assert cfg.aegis_adoption_rate == 0.9
 
     def test_module_toggles_default_all_on(self):
         cfg = SimConfig()
@@ -201,11 +202,11 @@ class TestTickSnapshot:
         snap = TickSnapshot(
             tick=1,
             counts={"clean": 45, "infected": 5},
-            r0=2.5,
+            seed_r=2.5,
         )
         assert snap.tick == 1
         assert snap.counts == {"clean": 45, "infected": 5}
-        assert snap.r0 == 2.5
+        assert snap.seed_r == 2.5
         assert snap.events == []
         assert snap.status_changes == []
 
@@ -213,11 +214,12 @@ class TestTickSnapshot:
         snap = TickSnapshot(
             tick=0,
             counts={"clean": 50},
-            r0=0.0,
+            seed_r=0.0,
         )
         d = snap.to_dict()
         assert d["tick"] == 0
         assert "counts" in d
+        assert "seed_r" in d
         assert "confusion" in d
         assert "timestamp" in d
 
@@ -286,3 +288,4 @@ class TestConfusionMatrix:
         assert entry.tp == 0
         # Internal dict should remain empty
         assert cm._entries == {}
+

@@ -10,7 +10,7 @@
     <!-- Metrics bar -->
     <div class="metrics-bar">
         <h1>AEGIS Monitor</h1>
-        <a href="/simulator" style="color:#3498db;text-decoration:none;margin-left:16px;font-size:14px;">Simulator →</a>
+        <a href="/simulator" style="color:#3498db;text-decoration:none;margin-left:16px;font-size:14px;">Simulator &rarr;</a>
         <div class="metric r0">
             <span class="value" id="m-r0">0.00</span>
             <span class="label">R0</span>
@@ -47,22 +47,22 @@
                 <label>
                     <input type="checkbox" checked data-filter="tier" data-value="3">
                     <span class="color-dot" style="background: #2ecc71"></span>
-                    Tier 3 — Vouched
+                    Tier 3: Vouched
                 </label>
                 <label>
                     <input type="checkbox" checked data-filter="tier" data-value="2">
                     <span class="color-dot" style="background: #2ecc71"></span>
-                    Tier 2 — Established
+                    Tier 2: Established
                 </label>
                 <label>
                     <input type="checkbox" checked data-filter="tier" data-value="1">
                     <span class="color-dot" style="background: #f1c40f"></span>
-                    Tier 1 — Attested
+                    Tier 1: Attested
                 </label>
                 <label>
                     <input type="checkbox" checked data-filter="tier" data-value="0">
                     <span class="color-dot" style="background: #95a5a6"></span>
-                    Tier 0 — Unknown
+                    Tier 0: Unknown
                 </label>
                 <label>
                     <input type="checkbox" checked data-filter="compromised">
@@ -107,6 +107,15 @@
         <!-- Graph -->
         <div class="graph-container">
             <div id="graph-canvas"></div>
+            <div class="graph-legend">
+                <span class="legend-item"><span class="legend-dot legend-aegis"></span>AEGIS</span>
+                <span class="legend-item"><span class="legend-dot legend-no-aegis"></span>No AEGIS</span>
+                <span class="legend-sep">|</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#2ecc71"></span>Trusted</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#f1c40f"></span>Attested</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#e74c3c"></span>Compromised</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#e67e22"></span>Killswitched</span>
+            </div>
 
             <!-- Agent detail popup -->
             <div class="agent-popup" id="agent-popup">
@@ -115,6 +124,7 @@
                 <div class="detail-row"><span class="label">Trust Tier</span><span id="popup-tier">—</span></div>
                 <div class="detail-row"><span class="label">Trust Score</span><span id="popup-score">—</span></div>
                 <div class="detail-row"><span class="label">Status</span><span id="popup-status">—</span></div>
+                <div class="detail-row"><span class="label">AEGIS</span><span id="popup-aegis">—</span></div>
                 <div class="detail-row"><span class="label">Operator</span><span id="popup-operator">—</span></div>
                 <div class="detail-row"><span class="label">Last Heartbeat</span><span id="popup-heartbeat">—</span></div>
                 <div class="detail-row"><span class="label">At-Risk Neighbors</span><span id="popup-at-risk">—</span></div>
@@ -125,9 +135,7 @@
         </div>
     </div>
 
-    <!-- Sigma.js from CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+    <script src="/static/vendor-sigma.min.js"></script>
     <script src="/static/graph.js"></script>
 </body>
 </html>

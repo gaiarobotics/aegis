@@ -102,6 +102,14 @@ class TestSimulationControl:
         assert data["tick"] == 1
         assert "counts" in data
 
+    def test_tick_from_ready(self, client):
+        """Step should work immediately after generate without calling start."""
+        client.post("/api/v1/simulator/generate", json=_DISABLED_MODULES_CONFIG)
+        resp = client.post("/api/v1/simulator/tick")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tick"] == 1
+
     def test_pause_resume(self, client):
         client.post("/api/v1/simulator/generate", json=_DISABLED_MODULES_CONFIG)
         client.post("/api/v1/simulator/start")

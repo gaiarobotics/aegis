@@ -75,8 +75,8 @@ class SemanticHasher:
         self._model = None
         self._available: bool | None = None
 
-    def hash(self, text: str) -> int:
-        """Return a 128-bit SimHash integer for *text*.
+    def _ensure_model(self) -> None:
+        """Lazy-load the sentence-transformer model.
 
         Raises:
             ImportError: If ``sentence-transformers`` is not installed.
@@ -97,9 +97,29 @@ class SemanticHasher:
                     "SemanticHasher requires sentence-transformers. "
                     "Install with: pip install 'aegis-shield[embeddings]'"
                 )
+
+    def embed(self, text: str) -> list[float]:
+        """Return raw 384-dim embedding vector for *text*.
+
+        Raises:
+            ImportError: If ``sentence-transformers`` is not installed.
+        """
+        self._ensure_model()
         embedding = self._model.encode(text, convert_to_numpy=True)
-        vec = embedding.tolist()
+        return embedding.tolist()
+
+    def hash_from_embedding(self, vec: list[float]) -> int:
+        """Compute 128-bit SimHash from a pre-computed embedding vector."""
         return _simhash(self._matrix, vec)
+
+    def hash(self, text: str) -> int:
+        """Return a 128-bit SimHash integer for *text*.
+
+        Raises:
+            ImportError: If ``sentence-transformers`` is not installed.
+        """
+        vec = self.embed(text)
+        return self.hash_from_embedding(vec)
 
 
 def _hamming(a: int, b: int) -> int:

@@ -535,7 +535,12 @@ class Shield:
         """Access the broker module (may be None)."""
         return self._broker
 
-    def scan_input(self, text: str, source_agent_id: str | None = None) -> ScanResult:
+    def scan_input(
+        self,
+        text: str,
+        source_agent_id: str | None = None,
+        context: list[str] | None = None,
+    ) -> ScanResult:
         """Scan input text through the pipeline.
 
         Pipeline:
@@ -543,6 +548,12 @@ class Shield:
         2. Identity (NK cell) assesses context if available
         3. Behavior tracker records event
         4. Recovery auto-quarantine if thresholds exceeded
+
+        Args:
+            text: The input text to scan.
+            source_agent_id: Optional source agent identifier.
+            context: Optional external context texts (tool outputs, retrieved docs)
+                for intent-divergence detection.
         """
         result = ScanResult()
 
@@ -552,9 +563,21 @@ class Shield:
             and self._recovery_quarantine.is_quarantined()
         )
 
+        # Gather compromised hashes for intent-divergence detector
+        compromised_hashes: set[int] | None = None
+        if self._remote_threat_intel is not None and context:
+            try:
+                compromised_hashes = self._remote_threat_intel.get_compromised_hashes()
+                if not compromised_hashes:
+                    compromised_hashes = None
+            except Exception:
+                logger.debug("Failed to get compromised hashes", exc_info=True)
+
         # Step 1: Scanner
         if self._scanner is not None:
-            scan_result = self._scanner.scan_input(text)
+            scan_result = self._scanner.scan_input(
+                text, context=context, compromised_hashes=compromised_hashes,
+            )
             result.threat_score = scan_result.threat_score
             result.is_threat = scan_result.is_threat
             result.details["scanner"] = {

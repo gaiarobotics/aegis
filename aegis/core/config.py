@@ -92,6 +92,14 @@ class LLMScreenConfig(BaseModel):
     skip_if_pattern_hit: bool = True
 
 
+class IntentDivergenceConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    divergence_threshold: float = 0.65
+    contagion_amplification: float = 1.5
+    contagion_floor: float = 0.3
+
+
 class ScannerConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     pattern_matching: bool = True
@@ -107,6 +115,7 @@ class ScannerConfig(BaseModel):
     pii: PiiConfig = Field(default_factory=PiiConfig)
     yara: YaraConfig = Field(default_factory=YaraConfig)
     content_gate: ContentGateConfig = Field(default_factory=ContentGateConfig)
+    intent_divergence: IntentDivergenceConfig = Field(default_factory=IntentDivergenceConfig)
 
 
 # ---------------------------------------------------------------------------

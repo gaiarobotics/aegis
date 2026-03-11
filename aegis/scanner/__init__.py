@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from aegis.core.config import AegisConfig
 from aegis.scanner.envelope import PromptEnvelope
+from aegis.scanner.intent_divergence import IntentDivergenceDetector, IntentDivergenceResult
 from aegis.scanner.llm_guard import LLMGuardAdapter, LLMGuardResult
 from aegis.scanner.llm_screen import LLMScreenAdapter, LLMScreenResult
 from aegis.scanner.pattern_matcher import PatternMatcher, ThreatMatch
@@ -25,6 +26,7 @@ class ScanResult:
     llm_guard_result: Optional[LLMGuardResult] = None
     llm_screen_result: Optional[LLMScreenResult] = None
     pii_result: Optional[PiiResult] = None
+    intent_divergence_result: Optional[IntentDivergenceResult] = None
     threat_score: float = 0.0
     is_threat: bool = False
 
@@ -82,14 +84,30 @@ class Scanner:
         if scanner_cfg.pii.enabled:
             self._pii_detector = PiiDetector(config=scanner_cfg.pii)
 
+        # Init intent divergence detector (optional indirect injection detection)
+        self._intent_divergence: Optional[IntentDivergenceDetector] = None
+        if scanner_cfg.intent_divergence.enabled:
+            self._intent_divergence = IntentDivergenceDetector(
+                config=scanner_cfg.intent_divergence,
+            )
+
         # Threat threshold from config
         self._confidence_threshold = scanner_cfg.confidence_threshold
 
-    def scan_input(self, text: str) -> ScanResult:
+    def scan_input(
+        self,
+        text: str,
+        context: list[str] | None = None,
+        compromised_hashes: set[int] | None = None,
+    ) -> ScanResult:
         """Scan input text for threats using pattern matching and semantic analysis.
 
         Args:
             text: The input text to scan.
+            context: Optional external context texts (tool outputs, retrieved docs)
+                for intent-divergence detection.
+            compromised_hashes: Optional set of known-compromised SimHash integers
+                from threat intelligence.
 
         Returns:
             ScanResult with combined findings.
@@ -126,9 +144,17 @@ class Scanner:
         if self._pii_detector is not None:
             pii_result = self._pii_detector.detect(text)
 
+        # Intent divergence detection (indirect injection)
+        intent_divergence_result: Optional[IntentDivergenceResult] = None
+        if self._intent_divergence is not None and context:
+            intent_divergence_result = self._intent_divergence.check(
+                text, context, compromised_hashes,
+            )
+
         # Compute combined threat score
         threat_score = self._compute_threat_score(
             matches, semantic_result, llm_guard_result, llm_screen_result,
+            intent_divergence_result,
         )
         is_threat = threat_score >= self._confidence_threshold
 
@@ -138,6 +164,7 @@ class Scanner:
             llm_guard_result=llm_guard_result,
             llm_screen_result=llm_screen_result,
             pii_result=pii_result,
+            intent_divergence_result=intent_divergence_result,
             threat_score=round(threat_score, 4),
             is_threat=is_threat,
         )
@@ -183,13 +210,14 @@ class Scanner:
         semantic_result: Optional[SemanticResult],
         llm_guard_result: Optional[LLMGuardResult] = None,
         llm_screen_result: Optional[LLMScreenResult] = None,
+        intent_divergence_result: Optional[IntentDivergenceResult] = None,
     ) -> float:
         """Compute a combined threat score from all detection tiers.
 
         Tiers:
             1. Pattern matching (regex signatures)
             2. Semantic analysis (heuristics)
-            3. LLM Guard / LLM Screen (ML classifiers, optional)
+            3. LLM Guard / LLM Screen / Intent Divergence (ML classifiers, optional)
 
         ML scores are weighted higher when present because transformer-based
         classifiers are more accurate than pattern/heuristic approaches.
@@ -197,6 +225,9 @@ class Scanner:
         LLM screen contributes 0.95 as an ML-tier score when it flags a
         threat (same tier as LLM Guard, gets 60% weight).  A "safe" result
         contributes 0.0 — it never lowers an existing threat score.
+
+        Intent divergence contributes its max_composite as an ML-tier score
+        when it flags a threat.  A safe or skipped result contributes 0.0.
         """
         heuristic_scores: list[float] = []
         ml_score: float | None = None
@@ -222,6 +253,18 @@ class Scanner:
                 ml_score = max(ml_score, screen_score)
             else:
                 ml_score = screen_score
+
+        # Intent divergence: inject max_composite when threat flagged
+        if (
+            intent_divergence_result is not None
+            and not intent_divergence_result.skipped
+            and intent_divergence_result.is_threat
+        ):
+            div_score = intent_divergence_result.max_composite
+            if ml_score is not None:
+                ml_score = max(ml_score, div_score)
+            else:
+                ml_score = div_score
 
         # No signals at all
         if not heuristic_scores and ml_score is None:

@@ -78,6 +78,20 @@ class ContentGateConfig(BaseModel):
     max_summary_tokens: int = 150
 
 
+class LLMScreenConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    provider: str = "openai"        # "openai" | "anthropic"
+    model: str = "gpt-5-mini"
+    api_key: str = ""
+    base_url: str = ""              # e.g. "http://localhost:11434/v1" for Ollama
+    timeout_seconds: float = 5.0
+    temperature: float = 0.0
+    max_tokens: int = 2             # clamped in adapter, never exceeds 2
+    system_prompt: str = ""         # override built-in prompt (advanced)
+    skip_if_pattern_hit: bool = True
+
+
 class ScannerConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     pattern_matching: bool = True
@@ -89,6 +103,7 @@ class ScannerConfig(BaseModel):
     confidence_threshold: float = 0.8
     signatures: ScannerSignaturesConfig = Field(default_factory=ScannerSignaturesConfig)
     llm_guard: LLMGuardConfig = Field(default_factory=LLMGuardConfig)
+    llm_screen: LLMScreenConfig = Field(default_factory=LLMScreenConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
     yara: YaraConfig = Field(default_factory=YaraConfig)
     content_gate: ContentGateConfig = Field(default_factory=ContentGateConfig)

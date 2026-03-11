@@ -8,6 +8,7 @@ from typing import Any, Optional
 from aegis.core.config import AegisConfig
 from aegis.scanner.envelope import PromptEnvelope
 from aegis.scanner.llm_guard import LLMGuardAdapter, LLMGuardResult
+from aegis.scanner.llm_screen import LLMScreenAdapter, LLMScreenResult
 from aegis.scanner.pattern_matcher import PatternMatcher, ThreatMatch
 from aegis.scanner.pii import PiiDetector, PiiResult
 from aegis.scanner.sanitizer import OutboundSanitizer, SanitizeResult
@@ -22,6 +23,7 @@ class ScanResult:
     matches: list[ThreatMatch] = field(default_factory=list)
     semantic_result: Optional[SemanticResult] = None
     llm_guard_result: Optional[LLMGuardResult] = None
+    llm_screen_result: Optional[LLMScreenResult] = None
     pii_result: Optional[PiiResult] = None
     threat_score: float = 0.0
     is_threat: bool = False
@@ -70,6 +72,11 @@ class Scanner:
         if scanner_cfg.llm_guard.enabled:
             self._llm_guard = LLMGuardAdapter(config=scanner_cfg.llm_guard)
 
+        # Init LLM screen adapter (optional secondary LLM classifier)
+        self._llm_screen: Optional[LLMScreenAdapter] = None
+        if scanner_cfg.llm_screen.enabled:
+            self._llm_screen = LLMScreenAdapter(config=scanner_cfg.llm_screen)
+
         # Init PII detector (optional Presidio-based)
         self._pii_detector: Optional[PiiDetector] = None
         if scanner_cfg.pii.enabled:
@@ -103,19 +110,33 @@ class Scanner:
         if self._llm_guard is not None:
             llm_guard_result = self._llm_guard.scan(text)
 
+        # LLM screen (optional secondary LLM classifier)
+        llm_screen_result: Optional[LLMScreenResult] = None
+        if self._llm_screen is not None:
+            # Determine if pattern matching already flagged a threat
+            pattern_hit = bool(matches) and max(
+                (m.confidence for m in matches), default=0.0,
+            ) >= self._confidence_threshold
+            llm_screen_result = self._llm_screen.screen(
+                text, pattern_hit=pattern_hit,
+            )
+
         # PII detection (input awareness)
         pii_result: Optional[PiiResult] = None
         if self._pii_detector is not None:
             pii_result = self._pii_detector.detect(text)
 
         # Compute combined threat score
-        threat_score = self._compute_threat_score(matches, semantic_result, llm_guard_result)
+        threat_score = self._compute_threat_score(
+            matches, semantic_result, llm_guard_result, llm_screen_result,
+        )
         is_threat = threat_score >= self._confidence_threshold
 
         return ScanResult(
             matches=matches,
             semantic_result=semantic_result,
             llm_guard_result=llm_guard_result,
+            llm_screen_result=llm_screen_result,
             pii_result=pii_result,
             threat_score=round(threat_score, 4),
             is_threat=is_threat,
@@ -161,16 +182,21 @@ class Scanner:
         matches: list[ThreatMatch],
         semantic_result: Optional[SemanticResult],
         llm_guard_result: Optional[LLMGuardResult] = None,
+        llm_screen_result: Optional[LLMScreenResult] = None,
     ) -> float:
         """Compute a combined threat score from all detection tiers.
 
         Tiers:
             1. Pattern matching (regex signatures)
             2. Semantic analysis (heuristics)
-            3. LLM Guard (ML classifiers, optional)
+            3. LLM Guard / LLM Screen (ML classifiers, optional)
 
         ML scores are weighted higher when present because transformer-based
         classifiers are more accurate than pattern/heuristic approaches.
+
+        LLM screen contributes 0.95 as an ML-tier score when it flags a
+        threat (same tier as LLM Guard, gets 60% weight).  A "safe" result
+        contributes 0.0 — it never lowers an existing threat score.
         """
         heuristic_scores: list[float] = []
         ml_score: float | None = None
@@ -184,6 +210,18 @@ class Scanner:
 
         if llm_guard_result and llm_guard_result.aggregate_score > 0:
             ml_score = llm_guard_result.aggregate_score
+
+        # LLM screen: inject 0.95 when threat flagged, 0.0 (no-op) when safe
+        if (
+            llm_screen_result is not None
+            and not llm_screen_result.skipped
+            and llm_screen_result.is_threat
+        ):
+            screen_score = 0.95
+            if ml_score is not None:
+                ml_score = max(ml_score, screen_score)
+            else:
+                ml_score = screen_score
 
         # No signals at all
         if not heuristic_scores and ml_score is None:

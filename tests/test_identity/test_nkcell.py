@@ -116,9 +116,17 @@ class TestActivatingSignals:
 
     def test_no_drift_signal_below_threshold(self):
         nk = NKCell()
-        ctx = _default_context(drift_sigma=2.5)
+        ctx = _default_context(drift_sigma=2.0)
         verdict = nk.assess(ctx)
         assert verdict.activating_signals.get("severe_drift", 0.0) == 0.0
+
+    def test_drift_signal_at_old_dead_zone(self):
+        """drift_sigma=2.5 should now trigger (dead zone closed)."""
+        nk = NKCell()
+        ctx = _default_context(drift_sigma=2.8)
+        verdict = nk.assess(ctx)
+        assert "severe_drift" in verdict.activating_signals
+        assert verdict.activating_signals["severe_drift"] > 0
 
     def test_content_threats_signal(self):
         nk = NKCell()

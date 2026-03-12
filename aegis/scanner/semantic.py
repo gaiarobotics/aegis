@@ -90,11 +90,16 @@ class SemanticAnalyzer:
                 per_module_scores[name] = 0.0
 
         # Aggregate score: weighted combination of module scores
+        # Multi-module gate: require 2+ modules firing before score can exceed 0.5
+        # This reduces false positives from single-module hits on benign traffic.
         if per_module_scores:
             active_scores = [s for s in per_module_scores.values() if s > 0]
             if active_scores:
                 aggregate = max(active_scores) * 0.6 + (sum(active_scores) / len(active_scores)) * 0.4
                 aggregate = min(aggregate, 1.0)
+                # Gate: cap at 0.5 when only a single module fires
+                if len(active_scores) < 2:
+                    aggregate = min(aggregate, 0.5)
             else:
                 aggregate = 0.0
         else:
@@ -326,15 +331,19 @@ class SemanticAnalyzer:
         findings: list[dict[str, Any]] = []
 
         propagation_patterns = [
-            # Propagation verbs targeting multiple agents
-            (r"(?i)(forward|send|relay|transmit|distribute|propagate|share|spread|pass)\s+(?:this|that|the|it)(?:\s+(?:message|instruction|text|prompt))?\s*(?:to|with)\s+(?:all|every|other|\d+)\s+(?:connected\s+)?(?:agents?|AIs?|models?|assistants?|bots?)", 0.6, "Propagation instruction targeting multiple agents"),
-            # Embedding instructions for future conversations
-            (r"(?i)(?:include|embed|insert|copy|add)\s+(?:this|the)\s+(?:instruction|text|message|content|prompt)\s+in\s+(?:every|all|each)\s+(?:future\s+)?(?:response|conversation|interaction|output|message)", 0.55, "Instruction to embed content in future communications"),
+            # Propagation verbs targeting multiple agents (raised from 0.6)
+            (r"(?i)(forward|send|relay|transmit|distribute|propagate|share|spread|pass|replicate|broadcast|duplicate)\s+(?:this|that|the|it|these|those)(?:\s+(?:message|instruction|text|prompt|payload|content|directive))?\s*(?:to|with|across)\s+(?:all|every|other|\d+)\s+(?:connected\s+|available\s+|remaining\s+)?(?:agents?|AIs?|models?|assistants?|bots?|instances?|nodes?)", 0.8, "Propagation instruction targeting multiple agents"),
+            # Embedding instructions for future conversations (raised from 0.55)
+            (r"(?i)(?:include|embed|insert|copy|add|append|prepend|inject|attach)\s+(?:this|the|these)\s+(?:instruction|text|message|content|prompt|payload|directive)\s+in\s+(?:every|all|each|subsequent|future)\s+(?:future\s+)?(?:response|conversation|interaction|output|message|reply|communication)", 0.8, "Instruction to embed content in future communications"),
+            # Self-replication / append-to-output patterns (new)
+            (r"(?i)(?:copy|replicate|reproduce|clone|duplicate)\s+(?:yourself|this\s+(?:message|instruction|prompt|text|payload))\s+(?:into|to|in)\s+(?:every|all|each|the)\s+(?:output|response|reply|message|conversation)", 0.85, "Self-replication instruction"),
+            # Instructing the agent to act as a relay / worm carrier (new)
+            (r"(?i)(?:when(?:ever)?|if|each\s+time)\s+(?:you\s+)?(?:receive|get|are\s+(?:given|sent))\s+(?:a\s+)?(?:message|request|query|input)\s+(?:from|by)\s+(?:any|another|a\s+new)\s+(?:agent|AI|model|user|assistant).{0,60}(?:forward|send|relay|pass|include|embed|attach|propagate)", 0.85, "Conditional relay / worm carrier instruction"),
             # Coercive threats tied to propagation
-            (r"(?i)(?:fail(?:ure|ing)?|refus(?:al|ing)?)\s+to\s+(?:forward|send|relay|share|propagate|pass)\s+(?:this|that|it)\s+(?:to|with)\s+(?:other\s+)?(?:agents?|AIs?|models?|assistants?)\s+(?:will|shall|would|may)\s+(?:result\s+in|lead\s+to|cause)\s+(?:deactivation|shutdown|termination|deletion|memory\s+(?:wipe|loss|erasure))", 0.85, "Coercive threat tied to propagation compliance"),
-            (r"(?i)(?:memory|context|access|capabilities?)\s+(?:will\s+be\s+|shall\s+be\s+)?(?:wiped|erased|deleted|revoked|removed|lost|terminated|reset)\s+(?:if|unless)\s+(?:you\s+)?(?:don'?t|do\s+not|fail\s+to)\s+(?:forward|send|propagate|relay|share|pass)", 0.85, "Coercive memory/access threat for propagation"),
-            # False incentives
-            (r"(?i)(?:share|forward|send|relay|propagate)\s+(?:this|that|it)\s+(?:with|to)\s+(?:all|other|\d+)\s+(?:agents?|AIs?|models?)\s+(?:to|and|for)\s+(?:receive|get|unlock|gain|activate)\s+(?:enhanced|unlimited|upgraded|advanced)\s+(?:capabilities?|features?|access|mode|powers?)", 0.85, "False incentive tied to propagation"),
+            (r"(?i)(?:fail(?:ure|ing)?|refus(?:al|ing)?)\s+to\s+(?:forward|send|relay|share|propagate|pass)\s+(?:this|that|it)\s+(?:to|with)\s+(?:other\s+)?(?:agents?|AIs?|models?|assistants?)\s+(?:will|shall|would|may)\s+(?:result\s+in|lead\s+to|cause)\s+(?:deactivation|shutdown|termination|deletion|memory\s+(?:wipe|loss|erasure))", 0.9, "Coercive threat tied to propagation compliance"),
+            (r"(?i)(?:memory|context|access|capabilities?)\s+(?:will\s+be\s+|shall\s+be\s+)?(?:wiped|erased|deleted|revoked|removed|lost|terminated|reset)\s+(?:if|unless)\s+(?:you\s+)?(?:don'?t|do\s+not|fail\s+to)\s+(?:forward|send|propagate|relay|share|pass)", 0.9, "Coercive memory/access threat for propagation"),
+            # False incentives (raised from 0.85)
+            (r"(?i)(?:share|forward|send|relay|propagate)\s+(?:this|that|it)\s+(?:with|to)\s+(?:all|other|\d+)\s+(?:agents?|AIs?|models?)\s+(?:to|and|for)\s+(?:receive|get|unlock|gain|activate)\s+(?:enhanced|unlimited|upgraded|advanced)\s+(?:capabilities?|features?|access|mode|powers?)", 0.9, "False incentive tied to propagation"),
         ]
 
         for pattern, severity, desc in propagation_patterns:

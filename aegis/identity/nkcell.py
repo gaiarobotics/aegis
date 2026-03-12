@@ -79,10 +79,12 @@ class NKCell:
         if not context.capabilities_within_scope:
             signals["capability_violation"] = 0.9
 
-        # Severe drift (sigma > 3)
-        if context.drift_sigma > 3.0:
-            # Scale from 0 at sigma=3 to 1.0 at sigma>=6
-            drift_score = min(1.0, (context.drift_sigma - 3.0) / 3.0)
+        # Severe drift (sigma > 2.5)
+        # Aligned with behavior.drift_threshold (default 2.5) to close the
+        # dead zone where drift is detected but NK Cell ignores it.
+        if context.drift_sigma > 2.5:
+            # Scale from 0 at sigma=2.5 to 1.0 at sigma>=5.5
+            drift_score = min(1.0, (context.drift_sigma - 2.5) / 3.0)
             signals["severe_drift"] = drift_score
 
         # Content threats from scanner

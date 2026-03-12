@@ -191,6 +191,7 @@ class ModuleToggles:
     scanner_toggles: ScannerToggles = field(default_factory=ScannerToggles)
     sensitivity: float = 0.5
     confidence_threshold: float = 0.8
+    drift_threshold: float = 2.5
 
 
 @dataclass

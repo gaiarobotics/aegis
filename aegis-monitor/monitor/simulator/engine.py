@@ -361,6 +361,18 @@ class SimulationEngine:
         # Phase 4: Quarantine of infected agents (AEGIS only)
         # Quarantine is an AEGIS capability — agents without AEGIS have no
         # automated detection mechanism and stay infected until max_ticks.
+        #
+        # Detection probability scales with configured parameters:
+        #   - sensitivity: higher → higher ceiling on detection probability
+        #   - drift_threshold: lower → faster ramp (quicker MTTQ)
+        sensitivity = self._config.modules.sensitivity
+        drift_threshold = self._config.modules.drift_threshold
+        # Ramp rate: inversely proportional to drift_threshold.
+        # At default 2.5σ → 0.028/tick; at 3.0σ → 0.023/tick.
+        ramp_rate = 0.07 / max(drift_threshold, 0.5)
+        # Ceiling: sensitivity directly controls max detection probability.
+        # Default sensitivity 0.5 → ceiling 0.5.
+        detection_ceiling = max(0.05, min(0.95, sensitivity))
         current_infected = [
             aid
             for aid, agent in self._agents.items()
@@ -373,7 +385,7 @@ class SimulationEngine:
                 if agent.infection_tick is not None
                 else 0
             )
-            detection_prob = min(0.5, ticks_infected * 0.02)
+            detection_prob = min(detection_ceiling, ticks_infected * ramp_rate)
             if self._rng.random() < detection_prob:
                 agent.status = AgentStatus.QUARANTINED
                 agent.quarantine_tick = self._tick_count

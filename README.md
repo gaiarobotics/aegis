@@ -82,6 +82,7 @@ You can get started with a single line of code, but there's a lot more you can d
 - **[API Reference](docs/api-reference.md)** - Complete class/method/config reference
 - **[Monitor Quickstart](docs/quickstart-monitor.md)** - Set up the monitoring dashboard and connect agents
 - **[Security Rationale](docs/rationale.md)** - Why AEGIS exists, attack anatomy, defense-in-depth analysis
+- **[Whitepaper](https://github.com/gaiarobotics/papers/blob/main/Semantic%20Immunity%20Paper.pdf)** - outlining the risk of prompt worms in agentic networks and detailing the concept of Semantic Immunity
 - **[Comparison](docs/comparison.md)** - AEGIS vs Guardrails AI vs LLM Guard
 - **[Examples](examples/)** - Runnable code for every feature
 

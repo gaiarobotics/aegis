@@ -205,7 +205,6 @@ class AgentHeartbeat(ReportBase):
     trust_score: float = 0.0
     is_quarantined: bool = False
     edges: list[dict[str, Any]] = field(default_factory=list)
-    style_hash: str = ""      # 32-char hex, always present when behavior enabled
     content_hash: str = ""    # 32-char hex, present when embeddings installed
     topic_velocity: float = 0.0  # [0.0, 1.0] — rate of topic change between messages
 
@@ -220,7 +219,6 @@ class AgentHeartbeat(ReportBase):
             str(self.trust_score),
             str(self.is_quarantined),
             edge_repr,
-            self.style_hash,
             self.content_hash,
             str(self.topic_velocity),
         ]

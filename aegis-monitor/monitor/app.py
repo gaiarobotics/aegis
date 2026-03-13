@@ -167,7 +167,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
     elif not comp_hash:
         # Fallback path: no hash provided, use graph node hash (unchanged behaviour)
         node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
-        fallback_hash = node_attrs.get("content_hash") or node_attrs.get("style_hash", "")
+        fallback_hash = node_attrs.get("content_hash", "")
         if fallback_hash:
             contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash)
         validation_status = "confirmed"
@@ -258,12 +258,9 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         edges=edges,
     )
 
-    # Extract content hashes
-    style_hash = data.get("style_hash", "")
+    # Extract content hash
     content_hash = data.get("content_hash", "")
     metadata: dict[str, Any] = {}
-    if style_hash:
-        metadata["style_hash"] = style_hash
     if content_hash:
         metadata["content_hash"] = content_hash
 
@@ -287,22 +284,40 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
             message_count=edge.get("message_count", 0),
         ))
 
-    # Store hashes in graph node attributes
-    if style_hash or content_hash:
+    # Store hash in graph node attributes
+    if content_hash:
         node_data = graph.graph.nodes.get(agent_id)
         if node_data is not None:
-            if style_hash:
-                node_data["style_hash"] = style_hash
-            if content_hash:
-                node_data["content_hash"] = content_hash
+            node_data["content_hash"] = content_hash
 
     # Topic clustering and contagion detection
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     contagion_detector: ContagionDetector = app.state.contagion_detector
-    hash_for_analysis = content_hash or style_hash
+    hash_for_analysis = content_hash
     topic_velocity = data.get("topic_velocity", 0.0)
     if hash_for_analysis:
         topic_clusterer.update(agent_id, hash_for_analysis)
+
+        # Update stable clusters with current agent statuses
+        graph_state = graph.get_graph_state()
+        agent_statuses: dict[str, str] = {}
+        for n in graph_state["nodes"]:
+            if n["is_compromised"]:
+                agent_statuses[n["id"]] = "compromised"
+            elif n["is_quarantined"]:
+                agent_statuses[n["id"]] = "quarantined"
+            else:
+                agent_statuses[n["id"]] = "active"
+        topic_clusterer.update_stable_clusters(agent_statuses)
+
+        # Broadcast topic cluster update
+        centroids = topic_clusterer.get_cluster_centroids()
+        active_count = sum(1 for c in centroids if c["active"])
+        await _broadcast(app.state, {
+            "type": "topic_clusters_updated",
+            "active_cluster_count": active_count,
+        })
+
         score = contagion_detector.check_with_velocity(
             agent_id, hash_for_analysis, topic_velocity=topic_velocity,
         )
@@ -364,7 +379,9 @@ async def get_graph(_key: str = Depends(verify_api_key)):
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     graph_data = graph.get_graph_state()
 
-    cluster_colors = topic_clusterer.get_cluster_colors()
+    cluster_colors = topic_clusterer.get_cluster_colors_stable()
+    if not cluster_colors:
+        cluster_colors = topic_clusterer.get_cluster_colors()
     for node in graph_data["nodes"]:
         node["topic_color"] = cluster_colors.get(node["id"], "")
 
@@ -390,6 +407,10 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     # Filter out noise cluster
     real_clusters = [c for c in cluster_info if c["cluster_id"] >= 0]
 
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    topic_centroids = topic_clusterer.get_cluster_centroids()
+    topic_cluster_count = sum(1 for c in topic_centroids if c["active"])
+
     return {
         "r0": r0.estimate_r0(cfg.r0_window_hours),
         "r0_trend": r0.get_r0_trend(cfg.r0_window_hours),
@@ -401,6 +422,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
         "killswitched_agents": killswitched,
         "cluster_count": len(real_clusters),
         "clusters": cluster_info,
+        "topic_cluster_count": topic_cluster_count,
     }
 
 
@@ -430,6 +452,41 @@ async def get_threat_intel(_key: str = Depends(verify_api_key)):
         "quarantined_agents": quarantined_agents,
         "generated_at": time.time(),
     }
+
+
+@app.get("/api/v1/topic-clusters")
+async def get_topic_clusters(_key: str = Depends(verify_api_key)):
+    """Return cluster centroid data for the dashboard."""
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    return topic_clusterer.get_cluster_centroids()
+
+
+@app.get("/api/v1/embeddings")
+async def get_embeddings(_key: str = Depends(verify_api_key)):
+    """Return nearest-neighbor embedding data."""
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    return topic_clusterer.get_nearest_neighbors()
+
+
+@app.get("/api/v1/dendrogram")
+async def get_dendrogram(_key: str = Depends(verify_api_key)):
+    """Return linkage data for dendrogram rendering."""
+    topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
+    graph: AgentGraph = app.state.graph
+    graph_state = graph.get_graph_state()
+
+    agent_statuses: dict[str, str] = {}
+    compromised_agents: set[str] = set()
+    for n in graph_state["nodes"]:
+        if n["is_compromised"]:
+            agent_statuses[n["id"]] = "compromised"
+            compromised_agents.add(n["id"])
+        elif n["is_quarantined"]:
+            agent_statuses[n["id"]] = "quarantined"
+        else:
+            agent_statuses[n["id"]] = "active"
+
+    return topic_clusterer.get_dendrogram_data(agent_statuses, compromised_agents)
 
 
 @app.get("/api/v1/trust/{agent_id}")

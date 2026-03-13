@@ -133,7 +133,6 @@ class Shield:
         self._prompt_monitor = None
         self._isolation_forest = None
         self._content_hash_tracker = None
-        self._style_hasher = None
         self._integrity_monitor = None
         self._killswitch = None
         self._remote_quarantine = None
@@ -220,14 +219,12 @@ class Shield:
                     logger.debug("IsolationForest init failed", exc_info=True)
                 # Content hash tracker (LSH fingerprinting)
                 try:
-                    from aegis.behavior.content_hash import ContentHashTracker, StyleHasher
+                    from aegis.behavior.content_hash import ContentHashTracker
                     ch_cfg = self._config.behavior.content_hash
                     if ch_cfg.enabled:
                         self._content_hash_tracker = ContentHashTracker(
                             window_size=ch_cfg.window_size,
-                            semantic_enabled=ch_cfg.semantic_enabled,
                         )
-                    self._style_hasher = StyleHasher()
                 except Exception:
                     logger.debug("Content hash tracker init failed", exc_info=True)
             except Exception:
@@ -538,7 +535,12 @@ class Shield:
         """Access the broker module (may be None)."""
         return self._broker
 
-    def scan_input(self, text: str, source_agent_id: str | None = None) -> ScanResult:
+    def scan_input(
+        self,
+        text: str,
+        source_agent_id: str | None = None,
+        context: list[str] | None = None,
+    ) -> ScanResult:
         """Scan input text through the pipeline.
 
         Pipeline:
@@ -546,6 +548,12 @@ class Shield:
         2. Identity (NK cell) assesses context if available
         3. Behavior tracker records event
         4. Recovery auto-quarantine if thresholds exceeded
+
+        Args:
+            text: The input text to scan.
+            source_agent_id: Optional source agent identifier.
+            context: Optional external context texts (tool outputs, retrieved docs)
+                for intent-divergence detection.
         """
         result = ScanResult()
 
@@ -555,9 +563,21 @@ class Shield:
             and self._recovery_quarantine.is_quarantined()
         )
 
+        # Gather compromised hashes for intent-divergence detector
+        compromised_hashes: set[int] | None = None
+        if self._remote_threat_intel is not None and context:
+            try:
+                compromised_hashes = self._remote_threat_intel.get_compromised_hashes()
+                if not compromised_hashes:
+                    compromised_hashes = None
+            except Exception:
+                logger.debug("Failed to get compromised hashes", exc_info=True)
+
         # Step 1: Scanner
         if self._scanner is not None:
-            scan_result = self._scanner.scan_input(text)
+            scan_result = self._scanner.scan_input(
+                text, context=context, compromised_hashes=compromised_hashes,
+            )
             result.threat_score = scan_result.threat_score
             result.is_threat = scan_result.is_threat
             result.details["scanner"] = {
@@ -639,11 +659,11 @@ class Shield:
 
         # Compute per-message content hash for compromise reports
         _per_msg_hash_hex = ""
-        if self._style_hasher is not None:
+        if self._content_hash_tracker is not None:
             try:
-                from aegis.behavior.message_drift import MessageDriftDetector
-                profile = MessageDriftDetector.compute_profile(text)
-                _per_msg_hash_hex = f"{self._style_hasher.hash(profile):032x}"
+                from aegis.behavior.content_hash import SemanticHasher
+                _hasher = SemanticHasher()
+                _per_msg_hash_hex = f"{_hasher.hash(text):032x}"
             except Exception:
                 logger.debug("Per-message hash computation failed", exc_info=True)
 
@@ -676,11 +696,7 @@ class Shield:
         # Content hash update
         if self._content_hash_tracker is not None:
             try:
-                profile = None
-                if self._message_drift_detector is not None:
-                    from aegis.behavior.message_drift import MessageDriftDetector
-                    profile = MessageDriftDetector.compute_profile(text)
-                self._content_hash_tracker.update(text, profile=profile)
+                self._content_hash_tracker.update(text)
             except Exception:
                 logger.debug("Content hash update failed", exc_info=True)
 
@@ -705,7 +721,7 @@ class Shield:
                 # Lever 2: content hash similarity
                 if not contagion_hit and self._content_hash_tracker is not None:
                     hashes = self._content_hash_tracker.get_hashes()
-                    check_hash = hashes.get("style_hash") or hashes.get("content_hash", "")
+                    check_hash = hashes.get("content_hash", "")
                     if check_hash:
                         threshold = self._config.monitoring.contagion_similarity_threshold
                         suspicious, sim_score = self._remote_threat_intel.check_hash(

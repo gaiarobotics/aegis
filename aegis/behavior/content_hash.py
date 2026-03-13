@@ -1,15 +1,11 @@
 """Privacy-preserving Locality-Sensitive Hashing for content fingerprinting.
 
-Provides two tiers of content hashing:
+Uses SimHash from sentence-transformer embeddings (384-dim) to produce 128-bit
+content hashes displayed as 32-char hex strings.  A rolling majority-vote window
+smooths per-message noise into a stable "topic fingerprint."
 
-* **Tier B (style hash):** Always available.  LSH from the 5 ``MessageProfile``
-  features already computed by ``MessageDriftDetector``.  Zero extra dependencies.
-
-* **Tier A (semantic hash):** Optional.  SimHash from sentence-transformer
-  embeddings.  Requires ``aegis-shield[embeddings]``.
-
-Both hashes are 128-bit integers, displayed as 32-char hex strings.  A rolling
-majority-vote window smooths per-message noise into a stable "topic fingerprint."
+Requires ``aegis-shield[embeddings]`` (``sentence-transformers``).  When the
+package is not installed, ``ContentHashTracker.update()`` is a no-op.
 """
 
 from __future__ import annotations
@@ -17,10 +13,6 @@ from __future__ import annotations
 import random
 import threading
 from collections import deque
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from aegis.behavior.message_drift import MessageProfile
 
 
 def _projection_matrix(rows: int, cols: int, seed: int = 42) -> list[list[float]]:
@@ -67,32 +59,8 @@ def _simhash(matrix: list[list[float]], vec: list[float]) -> int:
     return h
 
 
-class StyleHasher:
-    """Tier B — LSH from the 5 ``MessageProfile`` statistical features.
-
-    Uses a ``(128, 5)`` random projection matrix seeded deterministically.
-    """
-
-    _BITS = 128
-    _DIMS = 5
-
-    def __init__(self) -> None:
-        self._matrix = _projection_matrix(self._BITS, self._DIMS, seed=42)
-
-    def hash(self, profile: MessageProfile) -> int:
-        """Return a 128-bit SimHash integer for *profile*."""
-        vec = [
-            profile.vocabulary_entropy,
-            profile.lexical_diversity,
-            profile.avg_sentence_length,
-            profile.question_frequency,
-            profile.uppercase_ratio,
-        ]
-        return _simhash(self._matrix, vec)
-
-
 class SemanticHasher:
-    """Tier A — SimHash from sentence-transformer embeddings.
+    """SimHash from sentence-transformer embeddings.
 
     Lazy-loads ``sentence_transformers.SentenceTransformer("all-MiniLM-L6-v2")``
     on first call.  If the package is missing, ``hash()`` raises ``ImportError``
@@ -107,8 +75,8 @@ class SemanticHasher:
         self._model = None
         self._available: bool | None = None
 
-    def hash(self, text: str) -> int:
-        """Return a 128-bit SimHash integer for *text*.
+    def _ensure_model(self) -> None:
+        """Lazy-load the sentence-transformer model.
 
         Raises:
             ImportError: If ``sentence-transformers`` is not installed.
@@ -129,9 +97,29 @@ class SemanticHasher:
                     "SemanticHasher requires sentence-transformers. "
                     "Install with: pip install 'aegis-shield[embeddings]'"
                 )
+
+    def embed(self, text: str) -> list[float]:
+        """Return raw 384-dim embedding vector for *text*.
+
+        Raises:
+            ImportError: If ``sentence-transformers`` is not installed.
+        """
+        self._ensure_model()
         embedding = self._model.encode(text, convert_to_numpy=True)
-        vec = embedding.tolist()
+        return embedding.tolist()
+
+    def hash_from_embedding(self, vec: list[float]) -> int:
+        """Compute 128-bit SimHash from a pre-computed embedding vector."""
         return _simhash(self._matrix, vec)
+
+    def hash(self, text: str) -> int:
+        """Return a 128-bit SimHash integer for *text*.
+
+        Raises:
+            ImportError: If ``sentence-transformers`` is not installed.
+        """
+        vec = self.embed(text)
+        return self.hash_from_embedding(vec)
 
 
 def _hamming(a: int, b: int) -> int:
@@ -140,16 +128,18 @@ def _hamming(a: int, b: int) -> int:
 
 
 class ContentHashTracker:
-    """Wraps one or both hashers and maintains a rolling majority-vote window.
+    """Wraps ``SemanticHasher`` and maintains a rolling majority-vote window.
 
     Also tracks **topic velocity** — how rapidly the agent's content hash
     changes between consecutive messages.  Organic conversation drifts
     gradually (low velocity); a prompt injection snaps the topic instantly
     (high velocity spike).
 
+    If ``sentence-transformers`` is not installed, ``update()`` is a no-op
+    (graceful degradation).
+
     Args:
         window_size: Number of per-message hashes to keep for majority vote.
-        semantic_enabled: Whether to attempt Tier A (graceful fallback).
         velocity_window: Number of consecutive step-distances to average
             for the velocity calculation.
     """
@@ -159,69 +149,59 @@ class ContentHashTracker:
     def __init__(
         self,
         window_size: int = 20,
-        semantic_enabled: bool = True,
         velocity_window: int = 10,
     ) -> None:
-        self._style_hasher = StyleHasher()
-        self._semantic_hasher: SemanticHasher | None = None
+        self._semantic_hasher = SemanticHasher()
         self._semantic_available = False
 
-        if semantic_enabled:
-            self._semantic_hasher = SemanticHasher()
-            # Probe availability without requiring actual text
-            try:
-                import sentence_transformers  # noqa: F401
-                self._semantic_available = True
-            except ImportError:
-                self._semantic_available = False
+        # Probe availability without requiring actual text
+        try:
+            import sentence_transformers  # noqa: F401
+            self._semantic_available = True
+        except ImportError:
+            self._semantic_available = False
 
-        self._style_window: deque[int] = deque(maxlen=window_size)
         self._content_window: deque[int] = deque(maxlen=window_size)
 
         # Velocity tracking: Hamming distance between consecutive raw hashes
-        self._prev_style_hash: int | None = None
+        self._prev_hash: int | None = None
         self._velocity_window: deque[int] = deque(maxlen=velocity_window)
 
         self._lock = threading.Lock()
 
-    def update(self, text: str, profile: MessageProfile | None = None) -> None:
-        """Compute hash(es) for a message and append to the rolling window.
+    def update(self, text: str) -> None:
+        """Compute semantic hash for a message and append to the rolling window.
+
+        No-op if ``sentence-transformers`` is not installed.
 
         Args:
-            text: The message text (used for Tier A if available).
-            profile: Pre-computed ``MessageProfile`` (Tier B).  If *None* and
-                behavior module is active, the caller should compute it first.
+            text: The message text.
         """
-        style_hash: int | None = None
+        if not self._semantic_available:
+            return
+
         content_hash: int | None = None
-
-        if profile is not None:
-            style_hash = self._style_hasher.hash(profile)
-
-        if self._semantic_available and self._semantic_hasher is not None:
-            try:
-                content_hash = self._semantic_hasher.hash(text)
-            except (ImportError, Exception):
-                self._semantic_available = False
+        try:
+            content_hash = self._semantic_hasher.hash(text)
+        except (ImportError, Exception):
+            self._semantic_available = False
+            return
 
         with self._lock:
-            if style_hash is not None:
-                # Track step-distance for velocity
-                if self._prev_style_hash is not None:
-                    step = _hamming(self._prev_style_hash, style_hash)
-                    self._velocity_window.append(step)
-                self._prev_style_hash = style_hash
-                self._style_window.append(style_hash)
             if content_hash is not None:
+                # Track step-distance for velocity
+                if self._prev_hash is not None:
+                    step = _hamming(self._prev_hash, content_hash)
+                    self._velocity_window.append(step)
+                self._prev_hash = content_hash
                 self._content_window.append(content_hash)
 
     def get_hashes(self) -> dict[str, str | float]:
-        """Return majority-vote aggregated hashes and topic velocity.
+        """Return majority-vote aggregated content hash and topic velocity.
 
         Returns:
             Dict with:
-            - ``style_hash``: 32-char hex (when data exists)
-            - ``content_hash``: 32-char hex (when Tier A available and has data)
+            - ``content_hash``: 32-char hex (when data exists)
             - ``topic_velocity``: float in [0.0, 1.0] — mean Hamming distance
               between consecutive raw hashes, normalized by bit count.
               0.0 = topic unchanged, 1.0 = every bit flipped each step.
@@ -229,9 +209,6 @@ class ContentHashTracker:
         result: dict[str, str | float] = {}
 
         with self._lock:
-            if self._style_window:
-                agg = self._majority_vote(list(self._style_window))
-                result["style_hash"] = f"{agg:032x}"
             if self._content_window:
                 agg = self._majority_vote(list(self._content_window))
                 result["content_hash"] = f"{agg:032x}"

@@ -87,6 +87,7 @@ Keep effective reproduction number R₀ < 1 by reducing:
 | Cell membrane | Action Broker (actuator firewall) | Broker |
 | Memory B cells | Behavioral fingerprints, trust records | Behavior / Identity |
 | Immune memory | Signature database, known-bad hashes | Scanner / Skills |
+| Complement system | Shared embedding layer: same model drives fingerprinting, contagion detection, and intent-divergence scoring | Behavior / Scanner |
 | Tissue repair | Engineered recovery: context reset, memory purge | Recovery |
 | Epidemiological surveillance | Population telemetry, R₀ estimation | Monitoring |
 
@@ -129,6 +130,10 @@ aegis/
 │   ├── envelope.py        # Prompt rewriting with provenance/taint
 │   ├── sanitizer.py       # Outbound shedding reduction
 │   ├── llm_guard.py       # ML-based scanning via LLM Guard (optional)
+│   ├── llm_screen.py      # LLM-as-classifier prompt screening (optional)
+│   ├── intent_divergence.py # Indirect injection via intent-context divergence
+│   ├── content_gate.py    # Social content summarization gate
+│   ├── pii.py             # PII detection and redaction (Presidio)
 │   └── signatures/        # Bundled threat patterns (YAML)
 │       └── default.yaml
 │
@@ -211,13 +216,31 @@ No module requires any other module. But they compose: if both `broker` and `ide
 
 ### 4.2 Scanner Module — Reducing p_sus and p_shed
 
-Three detection engines, independently toggleable:
+Six detection engines, independently toggleable. The first two are heuristic; the last four are ML-tier classifiers that receive higher weight (60/40 blend) when combined with heuristics.
 
 **Pattern matcher**: Precompiled regex against a signature database (`signatures/default.yaml`). Categories: prompt injection, role hijacking, instruction override, data exfiltration, credential extraction, memory poisoning, social engineering, evasion, encoded injection. Sub-10ms on typical messages. User can provide additional signature files.
 
 **Semantic analyzer**: Heuristic structural analysis without LLM calls. Detects: instruction/data boundary violations, fake conversation turn injection, zero-width character hiding, Unicode homograph attacks, Unicode tag characters, high-entropy encoded payloads, imperative density anomalies, privilege escalation language, nested document injection, output exfiltration patterns. Five sub-modules, each independently toggleable.
 
 **LLM Guard adapter** (optional, requires `pip install aegis-shield[ml]`): Wraps the LLM Guard library for ML-based prompt injection classification. Uses transformer models for high-accuracy detection. Scores are combined with pattern and semantic scores via weighted averaging.
+
+**LLM screen** (optional): Uses a secondary LLM (OpenAI, Anthropic, or local via Ollama) as a binary classifier — asks "is this a prompt injection?" and uses the yes/no logit. Sub-100ms with a fast model. Can skip when pattern matching already flagged a hit (`skip_if_pattern_hit`).
+
+**Intent-context divergence detector** (optional, requires `pip install aegis-shield[embeddings]`): Detects **indirect prompt injection** — malicious instructions hidden in tool outputs, retrieved documents, or API responses. Uses a dual-signal scoring model:
+
+1. **Divergence from intent** — embeds the user's query and each external context item separately, then measures cosine distance. Content that doesn't match what the user asked for scores high.
+2. **Contagion proximity** — SimHash of the context embedding is compared against known-compromised agent content hashes from `RemoteThreatIntel`. Content that resembles a compromised agent's output amplifies the divergence score.
+
+```
+composite = divergence * (1 + amplification * contagion)   [if contagion >= floor]
+          = divergence                                      [otherwise]
+```
+
+Either signal alone has false positives. Together they're very strong: content that diverges from user intent *and* resembles a compromised agent is almost certainly an indirect injection.
+
+#### Shared embedding layer
+
+The intent-divergence detector, content hash fingerprinting (behavior module), and inter-agent contagion detection all share the same `SemanticHasher` backed by `all-MiniLM-L6-v2` (384-dim). A single embedding call produces both the raw vector (for cosine similarity) and the SimHash (for Hamming-distance contagion checks) via `embed()` and `hash_from_embedding()`. This means three independent defense mechanisms — behavioral fingerprinting, contagion avoidance, and indirect injection detection — are powered by one model load, and improvements to the embedding model benefit all three simultaneously.
 
 **Prompt envelope**: Rewrites messages before sending to the LLM with explicit provenance boundaries:
 
@@ -544,6 +567,11 @@ scanner:
     use_bundled: true
     additional_files: []
     remote_feed_enabled: false
+  intent_divergence:
+    enabled: false               # Opt-in: indirect injection detection
+    divergence_threshold: 0.65   # Cosine distance to flag (without contagion)
+    contagion_amplification: 1.5 # Multiplier when contagion proximity detected
+    contagion_floor: 0.3         # Min contagion proximity to trigger amplification
 
 # ── Broker ──────────────────────────────────────────
 broker:
@@ -761,7 +789,7 @@ aegis-monitor/
 ├── PLAN.md                           # This document
 ├── aegis.yaml.example                # Starter policy
 ├── aegis/                            # SDK source (10 modules, ~40 source files)
-├── tests/                            # 35 test files, 660+ tests
+├── tests/                            # 40+ test files, 1230+ tests
 │   ├── test_api.py
 │   ├── test_integration.py
 │   ├── test_shield.py
@@ -798,23 +826,30 @@ aegis-monitor/
 
 ## 10. Implementation Status
 
-All core modules are implemented and tested (660+ tests, all passing).
+All core modules are implemented and tested (1230+ tests, all passing).
 
 | Module | Status | Notes |
 |--------|--------|-------|
 | Core (killswitch, config, telemetry) | Complete | 4 killswitch methods, YAML auto-discovery, env overrides |
-| Scanner (pattern, semantic, envelope, sanitizer) | Complete | 3-tier detection: regex + heuristics + ML |
+| Scanner (pattern, semantic, envelope, sanitizer) | Complete | 6-tier detection: regex + heuristics + LLM Guard + LLM screen + intent divergence + YARA |
 | Scanner ML (LLM Guard) | Complete | Optional, via `pip install aegis-shield[ml]` |
+| Scanner LLM Screen | Complete | Optional secondary LLM classifier (OpenAI/Anthropic/Ollama) |
+| Scanner Intent Divergence | Complete | Indirect injection detection via shared embedding layer |
+| Scanner PII | Complete | Presidio-based PII detection and redaction |
+| Scanner Content Gate | Complete | Social content summarization to neutralize injections |
 | Broker (actions, manifests, budgets, quarantine) | Complete | Trust-informed policy, write budgets, auto-quarantine |
 | Identity (attestation, trust, NK cell) | Complete | Ed25519 + HMAC-SHA256, 4-tier trust, signal-balance NK |
 | Identity resolver | Complete | Normalization, aliases, fuzzy matching, auto-learn |
 | Speaker extraction | Complete | 2-tier: metadata fields + regex patterns |
 | Memory (guard, taint, TTL) | Complete | Category restrictions, taint tracking, diff detection |
 | Skills (loader, manifest, quarantine) | Complete | Manifest validation, static analysis, sandboxing |
-| Behavior (tracker, drift) | Complete | Rolling fingerprint, z-score drift detection |
+| Behavior (tracker, drift) | Complete | Rolling fingerprint, z-score drift, content hash fingerprinting, IsolationForest |
 | Recovery (quarantine, rollback, purge) | Complete | Auto-quarantine on hostile NK, context rollback |
 | Monitoring (client, reports) | Complete | Non-blocking, signed reports, heartbeat thread |
-| Provider wrappers (Anthropic, OpenAI, Generic) | Complete | Automatic interception, speaker extraction, trust tracking |
+| Remote threat intel | Complete | Pre-emptive contagion avoidance via compromised hash/agent polling |
+| Provider wrappers (Anthropic, OpenAI, Ollama, vLLM, Generic) | Complete | Automatic interception, speaker extraction, trust tracking |
+| Model integrity (Ollama, vLLM) | Complete | Stat checks, SHA256, inotify, periodic re-hash |
+| Self-integrity | Complete | Runtime tamper detection of AEGIS source and config files |
 | aegis-monitor dashboard | Complete | FastAPI, WebSocket, graph viz, R₀ estimation, strain clustering |
 | Documentation | Complete | Quickstart, API reference, monitor guide, rationale, comparison |
 | Examples | Complete | 5 runnable examples covering all major features |

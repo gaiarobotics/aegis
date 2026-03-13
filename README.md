@@ -31,7 +31,7 @@ AEGIS layers eight independent defense mechanisms so that bypassing any single o
 
 | Module | Purpose |
 |--------|---------|
-| **Scanner** | Detects prompt injections via regex, heuristics, and optional ML classifiers |
+| **Scanner** | Detects direct and indirect prompt injections via regex, heuristics, ML classifiers, and embedding-based intent-context divergence |
 | **Broker** | Controls tool access with capability manifests and write budgets |
 | **Identity** | Tracks agent trust tiers, verifies cryptographic attestations |
 | **Behavior** | Fingerprints agent behavior and detects drift from baseline |

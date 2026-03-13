@@ -165,7 +165,6 @@ class MonitoringClient:
         trust_score: float = 0.0,
         is_quarantined: bool = False,
         edges: list[dict[str, Any]] | None = None,
-        style_hash: str = "",
         content_hash: str = "",
         topic_velocity: float = 0.0,
     ) -> None:
@@ -180,7 +179,6 @@ class MonitoringClient:
                 trust_score=trust_score,
                 is_quarantined=is_quarantined,
                 edges=edges or [],
-                style_hash=style_hash,
                 content_hash=content_hash,
                 topic_velocity=topic_velocity,
             )
@@ -224,7 +222,6 @@ class MonitoringClient:
                     except Exception:
                         logger.debug("Content hash provider failed", exc_info=True)
                 self.send_heartbeat(
-                    style_hash=hashes.get("style_hash", ""),
                     content_hash=hashes.get("content_hash", ""),
                     topic_velocity=float(hashes.get("topic_velocity", 0.0)),
                 )

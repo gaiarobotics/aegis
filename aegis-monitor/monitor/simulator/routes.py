@@ -251,6 +251,16 @@ def register_routes(app: FastAPI) -> None:
         engine = _require_engine(app)
         return engine.get_embedding_entries()
 
+    @app.get("/api/v1/simulator/scatter")
+    async def scatter():
+        engine = _require_engine(app)
+        return engine.get_scatter_data()
+
+    @app.get("/api/v1/simulator/dendrogram")
+    async def dendrogram():
+        engine = _require_engine(app)
+        return engine.get_dendrogram_data()
+
     @app.get("/api/v1/simulator/export")
     async def export():
         engine = _require_engine(app)

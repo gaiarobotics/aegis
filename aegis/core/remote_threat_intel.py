@@ -71,6 +71,11 @@ class RemoteThreatIntel:
         with self._lock:
             return agent_id in self._quarantined_agents
 
+    def get_compromised_hashes(self) -> set[int]:
+        """Return a snapshot of cached compromised content hashes."""
+        with self._lock:
+            return set(self._compromised_hashes)
+
     def check_hash(
         self, hash_hex: str, threshold: float = 0.85,
     ) -> tuple[bool, float]:

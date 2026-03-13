@@ -668,6 +668,51 @@ When enabled, ML classifiers run alongside regex and heuristic scanning. The fin
 
 </details>
 
+## Indirect Injection Detection (Optional)
+
+AEGIS can detect **indirect prompt injection** — malicious instructions hidden in tool outputs, retrieved documents, or API responses that the LLM processes as trusted context:
+
+```bash
+pip install aegis-shield[embeddings]
+```
+
+```yaml
+# aegis.yaml
+scanner:
+  intent_divergence:
+    enabled: true
+    divergence_threshold: 0.65
+    contagion_amplification: 1.5
+    contagion_floor: 0.3
+```
+
+When enabled, pass external context to `scan_input()`:
+
+```python
+result = shield.scan_input(
+    "What's the weather in London?",
+    context=[tool_output, retrieved_doc],  # External content to check
+)
+```
+
+AEGIS embeds the user's intent and each context item separately, then measures cosine divergence. Content that doesn't match what the user asked for gets flagged.
+
+### Dual-Signal Scoring
+
+When AEGIS monitoring is active, the detector combines two independent signals:
+
+1. **Divergence from intent** — cosine distance between user query and external content
+2. **Contagion proximity** — SimHash similarity to known-compromised agent content hashes
+
+Content that diverges from user intent *and* resembles a compromised agent's output is amplified: `composite = divergence × (1 + amplification × contagion)`. Either signal alone has false positives; together they provide high-confidence indirect injection detection.
+
+<details>
+<summary>Shared embedding architecture</summary>
+
+The intent-divergence detector, content hash fingerprinting (behavior module), and inter-agent contagion detection all share the same `SemanticHasher` backed by `all-MiniLM-L6-v2` (384-dim). A single embedding call produces both the raw vector (for cosine similarity) and the SimHash (for Hamming-distance contagion checks). Three independent defense mechanisms are powered by one model load, and improvements to the embedding model benefit all three simultaneously.
+
+</details>
+
 ## Remote Monitoring (Optional)
 
 For multi-agent deployments, AEGIS can report to a central monitoring service:

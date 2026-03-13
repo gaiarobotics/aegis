@@ -18,7 +18,7 @@ The three frameworks solve overlapping but distinct problems:
 
 **LLM Guard** uses a scanner pattern with separate input scanners (prompt injection, PII anonymization, toxicity, topic banning) and output scanners (content moderation, bias, sensitive data, regex). Each scanner returns `(sanitized_output, is_valid, risk_score)`. It's focused squarely on security -- closer to a WAF for LLMs.
 
-**AEGIS** uses an epidemiological/immune system model with 7 interconnected modules. It's not just scanning I/O -- it models agent identity, trust relationships, behavioral fingerprints, and immune-like threat responses.
+**AEGIS** uses an epidemiological/immune system model with 8 interconnected modules. It's not just scanning I/O -- it models agent identity, trust relationships, behavioral fingerprints, and immune-like threat responses. A shared embedding layer (`all-MiniLM-L6-v2`) powers behavioral fingerprinting, inter-agent contagion detection, and indirect injection detection from a single model load.
 
 ## What AEGIS Does Differently
 
@@ -42,6 +42,10 @@ Context rollback, memory purge, and quarantine management. If an agent is compro
 
 Category-based write guards, taint tracking, and TTL enforcement on agent memory. Prevents persistent memory poisoning attacks where an attacker injects instructions that survive across sessions.
 
+### 6. Indirect Injection Detection via Shared Embedding Layer
+
+AEGIS uses a shared embedding model (`all-MiniLM-L6-v2`) to power three interconnected defense mechanisms from a single model load: behavioral content hash fingerprinting, inter-agent contagion detection (SimHash Hamming distance), and intent-context divergence scoring (cosine similarity). The intent-divergence detector catches indirect prompt injection — malicious instructions hidden in tool outputs or retrieved documents — by measuring how far external content diverges from the user's actual intent, amplified by proximity to known-compromised agent signatures. Neither Guardrails nor LLM Guard addresses indirect injection or embedding-based contagion detection.
+
 ## What AEGIS Lacks Compared to Them
 
 ### vs Guardrails AI
@@ -54,17 +58,15 @@ Category-based write guards, taint tracking, and TTL enforcement on agent memory
 
 ### vs LLM Guard
 
-- No ML-based detection models (AEGIS uses heuristics and regex; LLM Guard uses transformer-based classifiers like DeBERTa for prompt injection detection, which are more accurate)
 - No PII anonymization/deanonymization with vault storage
-- No toxicity classification
-- No embedding-based relevance scoring
+- No toxicity classification (though supported via LLM Guard adapter when `aegis-shield[ml]` is installed)
 - Less mature as a production security tool
 
 ## Capability Matrix
 
 | Capability | Guardrails AI | LLM Guard | AEGIS |
 |---|:---:|:---:|:---:|
-| Prompt injection detection | Hub validator | ML classifiers | Regex + heuristic |
+| Prompt injection detection | Hub validator | ML classifiers | Regex + heuristic + ML (LLM Guard/LLM screen) + embedding-based intent divergence |
 | Output validation | Core feature | Scanners | Sanitizer only |
 | Structured output parsing | Core feature | - | - |
 | PII detection/redaction | Hub validator | Built-in | Telemetry redaction only |
@@ -75,7 +77,8 @@ Category-based write guards, taint tracking, and TTL enforcement on agent memory
 | Memory protection | - | - | Core feature |
 | Quarantine & recovery | - | - | Core feature |
 | Skill/plugin sandboxing | - | - | Core feature |
-| ML-based classifiers | Via Hub | Built-in | - |
+| ML-based classifiers | Via Hub | Built-in | LLM Guard adapter + LLM screen + embedding-based intent divergence |
+| Indirect injection detection | - | - | Intent-context divergence with contagion amplification |
 | Drop-in wrapping | - | - | `aegis.wrap(client)` |
 | Production maturity | High | High | Early |
 

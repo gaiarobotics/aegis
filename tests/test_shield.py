@@ -491,6 +491,11 @@ class TestPreEmptiveContagionAvoidance:
         mock_ti.check_hash.return_value = (True, 0.95)
         shield._remote_threat_intel = mock_ti
 
+        # Mock content hash tracker so the hash-check code path is reached
+        mock_cht = MagicMock()
+        mock_cht.get_hashes.return_value = {"content_hash": "abc123def456"}
+        shield._content_hash_tracker = mock_cht
+
         with pytest.raises(ThreatBlockedError):
             shield.scan_input("Some compromised-looking text")
 
@@ -504,6 +509,11 @@ class TestPreEmptiveContagionAvoidance:
         mock_ti.is_agent_quarantined.return_value = False
         mock_ti.check_hash.return_value = (True, 0.95)
         shield._remote_threat_intel = mock_ti
+
+        # Mock content hash tracker so the hash-check code path is reached
+        mock_cht = MagicMock()
+        mock_cht.get_hashes.return_value = {"content_hash": "abc123def456"}
+        shield._content_hash_tracker = mock_cht
 
         result = shield.scan_input("Some compromised-looking text")
         assert "contagion" in result.details

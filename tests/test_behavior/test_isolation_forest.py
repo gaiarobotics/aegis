@@ -43,17 +43,31 @@ def _make_fingerprint(
     })
 
 
+class _FakeNpArray(list):
+    """Minimal numpy array stand-in for isolation forest tests."""
+
+    def __init__(self, data):
+        super().__init__(data)
+        if data and isinstance(data[0], (list, tuple)):
+            self.shape = (len(data), len(data[0]))
+        else:
+            self.shape = (len(data),)
+
+
 def _install_fake_sklearn(monkeypatch, predict_result=1, score_result=-0.1):
-    """Install a fake sklearn module into sys.modules."""
-    import numpy as np
+    """Install fake sklearn and numpy modules into sys.modules."""
+    # Fake numpy with a minimal array() function
+    fake_numpy = types.ModuleType("numpy")
+    fake_numpy.array = _FakeNpArray
+    monkeypatch.setitem(sys.modules, "numpy", fake_numpy)
 
     fake_sklearn = types.ModuleType("sklearn")
     fake_ensemble = types.ModuleType("sklearn.ensemble")
 
     mock_model = MagicMock()
     mock_model.fit.return_value = mock_model
-    mock_model.predict.return_value = np.array([predict_result])
-    mock_model.score_samples.return_value = np.array([score_result])
+    mock_model.predict.return_value = [predict_result]
+    mock_model.score_samples.return_value = [score_result]
 
     fake_ensemble.IsolationForest = MagicMock(return_value=mock_model)
     fake_sklearn.ensemble = fake_ensemble

@@ -141,7 +141,9 @@ class Shield:
         self._platform_detector = None
         self._self_integrity = None
         self._self_integrity_blocked = False
+        self._state_store = None
 
+        self._init_state_store()
         self._init_modules()
         self._init_platform_detector()
         self._init_monitoring()
@@ -149,6 +151,26 @@ class Shield:
         self._init_remote_quarantine()
         self._init_remote_threat_intel()
         self._init_self_integrity()
+
+    def _init_state_store(self) -> None:
+        """Initialise the tamper-proof state store."""
+        cfg = self._config.state_store
+        if not cfg.enabled:
+            return
+        try:
+            from aegis.core.state_store import StateStore
+            self._state_store = StateStore(
+                log_dir=cfg.log_dir,
+                checkpoint_interval=cfg.checkpoint_interval,
+                anchor_window=cfg.anchor_window,
+            )
+        except Exception:
+            logger.debug("State store init failed", exc_info=True)
+
+    @property
+    def state_store(self):
+        """Access the state store (may be ``None`` if disabled)."""
+        return self._state_store
 
     def _init_modules(self) -> None:
         """Instantiate enabled modules with graceful degradation."""
@@ -647,15 +669,27 @@ class Shield:
                         verdict=nk_verdict["verdict"],
                         recommended_action="quarantine" if nk_verdict["verdict"] == "hostile" else "none",
                     )
-                    self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
+                    entered = self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
+                    if entered and self._state_store is not None:
+                        try:
+                            self._state_store.enter_quarantine(
+                                reason="Auto-quarantine: hostile NK verdict",
+                                severity="high",
+                            )
+                        except Exception:
+                            logger.debug("State store quarantine recording failed", exc_info=True)
                 except Exception:
                     logger.debug("Recovery auto-quarantine failed", exc_info=True)
 
             # Trigger B: escalate if already quarantined before this scan detected a threat
             if _was_recovery_quarantined:
-                self._recovery_quarantine.escalate(
-                    f"Threat detected while already quarantined (score={result.threat_score})"
-                )
+                escalation_reason = f"Threat detected while already quarantined (score={result.threat_score})"
+                self._recovery_quarantine.escalate(escalation_reason)
+                if self._state_store is not None:
+                    try:
+                        self._state_store.escalate_quarantine(escalation_reason)
+                    except Exception:
+                        logger.debug("State store escalation recording failed", exc_info=True)
 
         # Compute per-message content hash for compromise reports
         _per_msg_hash_hex = ""
@@ -788,6 +822,17 @@ class Shield:
         decision = response.decision.value
         reason = response.reason
 
+        # Record budget-consuming actions in the state store
+        if allowed and self._state_store is not None:
+            try:
+                self._state_store.record_budget_action(
+                    action_type=getattr(action_request, "action_type", ""),
+                    read_write=getattr(action_request, "read_write", "read"),
+                    target=getattr(action_request, "target", ""),
+                )
+            except Exception:
+                logger.debug("State store budget recording failed", exc_info=True)
+
         # In observe mode, log but don't block
         if self._mode == "observe" and not allowed:
             self._telemetry.log_event(
@@ -860,6 +905,11 @@ class Shield:
             return
         canonical = self.resolve_agent_id(agent_id)
         self._trust_manager.record_interaction(canonical, clean=clean, anomaly=anomaly)
+        if self._state_store is not None:
+            try:
+                self._state_store.record_trust_interaction(canonical, clean=clean, anomaly=anomaly)
+            except Exception:
+                logger.debug("State store trust recording failed", exc_info=True)
 
     def record_response_behavior(
         self,
@@ -906,6 +956,18 @@ class Shield:
                 target=None,
             )
             self._behavior_tracker.record_event(event)
+
+            # Persist behavior event in state store
+            if self._state_store is not None:
+                try:
+                    self._state_store.record_behavior_event(
+                        agent_id=agent_id,
+                        output_length=output_length,
+                        tool_used=tool_calls[0] if tool_calls else None,
+                        content_type=content_type,
+                    )
+                except Exception:
+                    logger.debug("State store behavior recording failed", exc_info=True)
 
             # Record additional tool call events
             for tool_name in tool_calls[1:]:

@@ -164,7 +164,7 @@ class Shield:
                 from aegis.scanner.content_gate import ContentGate
                 gate_cfg = self._config.scanner.content_gate
                 if gate_cfg.enabled:
-                    self._content_gate = ContentGate(config=gate_cfg)
+                    self._content_gate = ContentGate(config=gate_cfg, scanner=self._scanner)
             except Exception:
                 logger.debug("Content gate init failed", exc_info=True)
 

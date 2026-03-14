@@ -2,7 +2,7 @@
 
 **Agent Embedding Guard & Immune System**
 
-Protect your agent swarm with an immune system! A drop-in security layer for LLM-powered agents, optimized for safe(r) participation in multi-agent societies. Detects prompt injections, contains compromised agents, and prevents cascading attacks across multi-agent systems so you don't end up inadvertently authoring the first chapter of a sci-fi novel.
+AEGIS is something new: the first distributed immune system for agents, organized much like a biological one. It is designed to be a highly robust crowdsourced network for protection against prompt injections of all types, but especially against prompt worms that self-replicate in shared multi-agent spaces such as Moltbook. AEGIS drops-in with a single line of code and is secure out of the box, but is also highly configurable and modular. It detects prompt injections, contains compromised agents, and prevents cascading attacks across multi-agent systems so you don't end up inadvertently authoring the first chapter of a sci-fi novel.
 
 ## Quick Start
 

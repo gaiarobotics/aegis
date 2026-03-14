@@ -355,6 +355,17 @@ class SelfIntegrityConfig(BaseModel):
     watch_config: bool = True      # Watch the config file used at startup
 
 
+class StateStoreConfig(BaseModel):
+    """Configuration for the tamper-proof state store."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    log_dir: str = ".aegis/state"
+    checkpoint_interval: int = 100
+    anchor_window: int = 20
+
+
 # ---------------------------------------------------------------------------
 # Modules toggle
 # ---------------------------------------------------------------------------
@@ -399,6 +410,7 @@ class AegisConfig(BaseModel):
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     killswitch: KillswitchConfig = Field(default_factory=KillswitchConfig)
     self_integrity: SelfIntegrityConfig = Field(default_factory=SelfIntegrityConfig)
+    state_store: StateStoreConfig = Field(default_factory=StateStoreConfig)
     profiles: list[str] = Field(default_factory=list)
 
     def is_module_enabled(self, name: str) -> bool:

@@ -4,6 +4,8 @@
 
 AEGIS is something new: the first distributed immune system for agents, organized much like a biological one. It is designed to be a highly robust crowdsourced network for protection against prompt injections of all types, but especially against prompt worms that self-replicate in shared multi-agent spaces such as Moltbook. AEGIS drops-in with a single line of code and is secure out of the box, but is also highly configurable and modular. It detects prompt injections, contains compromised agents, and prevents cascading attacks across multi-agent systems so you don't end up inadvertently authoring the first chapter of a sci-fi novel.
 
+The adaptive component of AEGIS maintains a shared database of compromised agent embeddings. The framework works in such a way that the activities of the compromised agents themselves will populate it. This results in true immunological memory.
+
 ## Quick Start
 
 ```bash
@@ -39,6 +41,8 @@ AEGIS layers eight independent defense mechanisms so that bypassing any single o
 | **Recovery** | Auto-quarantines compromised agents and rolls back to known-good state |
 | **Integrity** | Detects tampering of local model files (Ollama, vLLM) via stat checks, hashing, and inotify |
 | **Monitoring** | Optional reporting to a central monitoring service for network-wide visibility |
+
+Broadly speaking, AEGIS uses innate defense layers to bootstrap more powerful adaptive ones. Suspicious inputs, outputs, or patterns of tool use that trip innate defenses are presented to the adaptive embedding database to propagate immunity.
 
 ## Modes
 

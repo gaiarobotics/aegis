@@ -14,6 +14,12 @@ interface EvaluateResult {
   tool: string;
   action_type: string;
   target: string;
+  trust_tier?: number;
+  quarantine_active?: boolean;
+  budget_remaining?: Record<string, number>;
+  killswitch_blocked?: boolean;
+  killswitch_reason?: string;
+  trust_interaction_recorded?: boolean;
 }
 
 function classifyReadWrite(toolName: string, args: Record<string, unknown>): string {
@@ -95,10 +101,39 @@ export default async function handler(event: ToolCallEvent): Promise<void> {
   try {
     const result = await runEvaluate(input);
 
-    if (!result.allowed) {
+    // Killswitch blocking
+    if (result.killswitch_blocked) {
+      console.error(
+        `[AEGIS KILLSWITCH] Inference blocked: ${result.killswitch_reason}. Do NOT proceed with tool calls.`
+      );
+    }
+
+    // Quarantine soft-block for writes
+    if (result.quarantine_active && readWrite === "write") {
+      console.error(
+        `[AEGIS] QUARANTINE: Write operation "${toolName}" BLOCKED. Agent must not proceed.`
+      );
+    } else if (result.quarantine_active) {
+      console.error(
+        `[AEGIS] Agent is QUARANTINED — tool call denied: ${toolName} -> ${target}`
+      );
+    } else if (!result.allowed) {
       console.error(
         `[AEGIS] Tool call DENIED: ${toolName} -> ${target} (${result.reason})`
       );
+    }
+
+    // Warn when any budget category is below 20% of its limit
+    if (result.budget_remaining) {
+      for (const [category, remaining] of Object.entries(
+        result.budget_remaining
+      )) {
+        if (remaining <= 2 && remaining >= 0) {
+          console.error(
+            `[AEGIS] Budget warning: ${category} has only ${remaining} remaining`
+          );
+        }
+      }
     }
   } catch (err) {
     console.error("[AEGIS] Tool audit hook error:", err);

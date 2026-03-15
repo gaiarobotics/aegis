@@ -56,6 +56,24 @@ def main(argv: list[str] | None = None) -> None:
         "behavior_event_recorded": behavior_recorded,
     }
 
+    # Behavioral drift check against frozen baseline
+    if store is not None:
+        try:
+            agent_id = shield.config.agent_id or "self"
+            baseline = store.get_baseline(agent_id)
+            if baseline is not None and baseline.frozen:
+                avg = baseline.avg_output_length
+                sigma = abs(len(text) - avg) / max(avg * 0.5, 1.0)
+                if sigma > shield.config.behavior.drift_threshold:
+                    output["drift_warning"] = {
+                        "sigma": round(sigma, 2),
+                        "threshold": shield.config.behavior.drift_threshold,
+                        "avg_output_length": round(avg, 0),
+                        "current_length": len(text),
+                    }
+        except Exception:  # noqa: BLE001
+            pass
+
     if args.json_output:
         json.dump(output, sys.stdout)
         sys.stdout.write("\n")

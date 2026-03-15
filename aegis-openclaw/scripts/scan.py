@@ -34,10 +34,26 @@ def main(argv: list[str] | None = None) -> None:
 
     result = shield.scan_input(text)
 
+    # Record trust interaction in persistent state
+    trust_recorded = False
+    store = shield.state_store
+    if store is not None:
+        try:
+            agent_id = shield.config.agent_id or "self"
+            store.record_trust_interaction(
+                agent_id=agent_id,
+                clean=not result.is_threat,
+                anomaly=result.is_threat,
+            )
+            trust_recorded = True
+        except Exception:  # noqa: BLE001
+            pass
+
     output = {
         "threat_score": result.threat_score,
         "is_threat": result.is_threat,
         "details": result.details,
+        "trust_interaction_recorded": trust_recorded,
     }
 
     if args.json_output:

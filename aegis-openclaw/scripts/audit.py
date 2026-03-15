@@ -59,12 +59,35 @@ def main(argv: list[str] | None = None) -> None:
     threats = [e for e in events if e.get("is_threat")]
     blocked = [e for e in events if e.get("event") == "action_decision" and e.get("decision") == "deny"]
 
-    report = {
+    report: dict = {
         "total_events": len(events),
         "event_types": dict(event_types),
         "threats_detected": len(threats),
         "actions_blocked": len(blocked),
     }
+
+    # Append state log summary when available
+    if config.state_store.enabled:
+        try:
+            from aegis.core.state_store import StateStore
+
+            store = StateStore(
+                log_dir=config.state_store.log_dir,
+                checkpoint_interval=config.state_store.checkpoint_interval,
+                anchor_window=config.state_store.anchor_window,
+            )
+            snap = store.snapshot()
+            trust_records = snap.get("trust", {})
+            baselines = snap.get("baselines", {})
+            report["state_summary"] = {
+                "trust_records": len(trust_records),
+                "budget_consumed": snap.get("budgets", {}),
+                "quarantine_active": snap.get("quarantine", {}).get("active", False),
+                "baseline_agents": len(baselines),
+                "baselines_frozen": sum(1 for b in baselines.values() if b.get("frozen")),
+            }
+        except Exception:  # noqa: BLE001
+            report["state_summary"] = None
 
     if args.json_output:
         json.dump(report, sys.stdout)
@@ -78,6 +101,12 @@ def main(argv: list[str] | None = None) -> None:
         print(f"\nEvent breakdown:")
         for event_type, count in sorted(event_types.items()):
             print(f"  {event_type}: {count}")
+        if report.get("state_summary"):
+            ss = report["state_summary"]
+            print(f"\nState log summary:")
+            print(f"  Tracked agents:     {ss['trust_records']}")
+            print(f"  Quarantine active:  {ss['quarantine_active']}")
+            print(f"  Baseline agents:    {ss['baseline_agents']} ({ss['baselines_frozen']} frozen)")
 
 
 if __name__ == "__main__":

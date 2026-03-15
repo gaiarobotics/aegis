@@ -13,6 +13,12 @@ interface StatusResult {
   scanner_sensitivity: number;
   scanner_confidence_threshold: number;
   broker_posture: string;
+  state_store_enabled?: boolean;
+  trust_tier?: number;
+  quarantine_active?: boolean;
+  quarantine_reason?: string | null;
+  budget_remaining?: Record<string, number>;
+  state_error?: string;
 }
 
 function getStatus(): Promise<StatusResult> {
@@ -59,6 +65,44 @@ export default async function handler(event: BootstrapEvent): Promise<void> {
 
     // Write status.md
     const timestamp = new Date().toISOString();
+    const tierNames: Record<number, string> = {
+      0: "untrusted",
+      1: "provisional",
+      2: "established",
+      3: "vouched",
+    };
+    const tierNum = status.trust_tier ?? 0;
+    const tierLabel = tierNames[tierNum] || "unknown";
+
+    const br = status.budget_remaining;
+    const budgetSection = br
+      ? `
+## Budget Remaining
+
+- Write tool calls: ${br.write_tool_calls}
+- Post messages: ${br.posts_messages}
+- External HTTP writes: ${br.external_http_writes}
+- New domains: ${br.new_domains}
+`
+      : "";
+
+    const quarantineLabel = status.quarantine_active
+      ? `ACTIVE — ${status.quarantine_reason}`
+      : "none";
+
+    const stateSection = status.state_store_enabled
+      ? `
+## Security State
+
+- **Trust Tier:** ${tierLabel} (${tierNum})
+- **Quarantine:** ${quarantineLabel}
+${budgetSection}`
+      : `
+## Security State
+
+- State store: disabled
+`;
+
     const content = `# AEGIS Security Status
 
 > Auto-generated at ${timestamp}
@@ -77,7 +121,7 @@ export default async function handler(event: BootstrapEvent): Promise<void> {
 ## Broker Settings
 
 - Default posture: ${status.broker_posture}
-
+${stateSection}
 ## Security Commands
 
 - \`aegis-scan\` — Scan text for threats
@@ -85,6 +129,10 @@ export default async function handler(event: BootstrapEvent): Promise<void> {
 - \`aegis-evaluate\` — Check action permissions
 - \`aegis-audit\` — Review security log
 - \`aegis-status\` — Check current status
+- \`aegis-trust\` — Check trust tier
+- \`aegis-budget\` — Check remaining budget
+- \`aegis-quarantine\` — Check quarantine status
+- \`aegis-drift\` — Check behavioral drift
 `;
 
     writeFileSync(join(aegisDir, "status.md"), content);

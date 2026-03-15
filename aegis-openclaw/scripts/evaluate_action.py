@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> None:
 
     result = shield.evaluate_action(action)
 
-    output = {
+    output: dict = {
         "allowed": result.allowed,
         "decision": result.decision,
         "reason": result.reason,
@@ -72,6 +72,23 @@ def main(argv: list[str] | None = None) -> None:
         "action_type": action_type,
         "target": target,
     }
+
+    # Append state context when available
+    store = shield.state_store
+    if store is not None:
+        try:
+            agent_id = shield.config.agent_id or "self"
+            output["trust_tier"] = store.get_trust_tier(agent_id)
+            output["quarantine_active"] = store.is_quarantined()
+            limits = {
+                "max_write_tool_calls": shield.config.broker.budgets.max_write_tool_calls,
+                "max_posts_messages": shield.config.broker.budgets.max_posts_messages,
+                "max_external_http_writes": shield.config.broker.budgets.max_external_http_writes,
+                "max_new_domains": shield.config.broker.budgets.max_new_domains,
+            }
+            output["budget_remaining"] = store.get_budget_remaining(limits)
+        except Exception:  # noqa: BLE001
+            pass
 
     if args.json_output:
         json.dump(output, sys.stdout)

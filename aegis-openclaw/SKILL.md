@@ -7,6 +7,7 @@ env:
   - AEGIS_PROXY_URL
   - AEGIS_MODE
   - AEGIS_CONFIG
+  - AEGIS_STATE_KEY
 ---
 
 # AEGIS Security Skill
@@ -37,13 +38,48 @@ Use this to check recent security events — how many threats detected, actions 
 ```bash
 python3 aegis-openclaw/scripts/status.py --json
 ```
-Shows current AEGIS mode, enabled modules, and configuration.
+Shows current AEGIS mode, enabled modules, trust tier, quarantine status, and remaining budget.
 
 ### `aegis-evaluate` — Check if an action is allowed
 ```bash
 echo '{"tool":"bash","action_type":"tool_call","target":"/bin/rm","read_write":"write"}' | python3 aegis-openclaw/scripts/evaluate_action.py --json
 ```
-Evaluates a planned tool action against AEGIS broker policies before executing it.
+Evaluates a planned tool action against AEGIS broker policies before executing it. Returns trust tier, quarantine status, and remaining budget alongside the decision.
+
+### `aegis-trust` — Check trust tier
+```bash
+python3 aegis-openclaw/scripts/trust.py --agent-id "agent-name" --json
+```
+Shows trust tier (0-3), trust score, clean/anomaly interaction counts, and compromise status for an agent.
+
+### `aegis-budget` — Check remaining budget
+```bash
+python3 aegis-openclaw/scripts/budget.py --json
+```
+Shows remaining budget for write tool calls, message posts, HTTP mutations, and new domains against configured limits.
+
+### `aegis-quarantine` — Check quarantine status
+```bash
+python3 aegis-openclaw/scripts/quarantine_check.py --json
+```
+Shows whether the agent is currently quarantined, the reason, severity, and escalation status.
+
+### `aegis-drift` — Check behavioral drift
+```bash
+python3 aegis-openclaw/scripts/drift.py --agent-id "agent-name" --json
+```
+Shows behavioral baseline for an agent: average output length, tool usage distribution, content types, and whether the baseline is frozen.
+
+## Stateful Security
+
+AEGIS maintains persistent security state across sessions using a tamper-proof HMAC-chained event log. This enables:
+
+- **Trust accumulation** — Agents build persistent trust scores over days/weeks. Compromise history is permanent.
+- **Budget enforcement** — Write budgets persist across restarts. Agents cannot reset counters by restarting.
+- **Persistent quarantine** — Quarantined agents stay quarantined even after daemon restarts.
+- **Behavioral anchoring** — Baselines freeze after initial interactions, detecting drift against a stable reference.
+
+Set `AEGIS_STATE_KEY` to a secret hex string for durable state. Without it, an ephemeral key is generated per session.
 
 ## Threat Categories
 

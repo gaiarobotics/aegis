@@ -33,10 +33,27 @@ def main(argv: list[str] | None = None) -> None:
 
     result = shield.sanitize_output(text)
 
+    # Record behavior event in persistent state
+    behavior_recorded = False
+    store = shield.state_store
+    if store is not None:
+        try:
+            agent_id = shield.config.agent_id or "self"
+            store.record_behavior_event(
+                agent_id=agent_id,
+                output_length=len(text),
+                tool_used=None,
+                content_type="message",
+            )
+            behavior_recorded = True
+        except Exception:  # noqa: BLE001
+            pass
+
     output = {
         "cleaned_text": result.cleaned_text,
         "modifications": result.modifications,
         "was_modified": len(result.modifications) > 0,
+        "behavior_event_recorded": behavior_recorded,
     }
 
     if args.json_output:

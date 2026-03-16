@@ -51,7 +51,7 @@ No single defense layer is sufficient on its own:
 - Behavioral drift detection requires a baseline and can miss subtle changes.
 - ML classifiers have false negatives.
 
-AEGIS does not assume any single layer is reliable. Instead, it layers seven independent friction points that an attack must bypass simultaneously:
+AEGIS does not assume any single layer is reliable. Instead, it layers eight independent friction points that an attack must bypass simultaneously:
 
 1. Scanner must miss the injection across all active detection tiers.
 2. Provenance tagging must fail to reduce the injection's authority.
@@ -60,6 +60,7 @@ AEGIS does not assume any single layer is reliable. Instead, it layers seven ind
 5. NK cell assessment must not reach a "hostile" verdict from the combined signals.
 6. The broker must not block the unauthorized actions via budgets or manifests.
 7. Memory guards must not block persistent poisoning attempts.
+8. Model integrity checks must not detect tampering with local model files.
 
 The compound probability of bypassing all layers is substantially lower than bypassing any individual one. This is the core value proposition: **partial failure of any layer does not mean total compromise**.
 

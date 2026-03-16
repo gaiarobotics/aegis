@@ -17,6 +17,24 @@ pip install aegis-shield[identity]
 # ML-based scanning (transformer models)
 pip install aegis-shield[ml]
 
+# Isolation Forest anomaly detection
+pip install aegis-shield[ml-behavior]
+
+# PII detection and redaction (Presidio)
+pip install aegis-shield[pii]
+
+# YARA rule matching
+pip install aegis-shield[yara]
+
+# Semantic embeddings for indirect injection detection
+pip install aegis-shield[embeddings]
+
+# Social media/external content filtering
+pip install aegis-shield[content-gate]
+
+# Fuzzy identity matching
+pip install aegis-shield[fuzzy]
+
 # Remote monitoring service
 pip install aegis-shield[monitoring]
 
@@ -43,7 +61,7 @@ response = client.messages.create(
 )
 ```
 
-That's it. AEGIS auto-detects your provider (Anthropic, OpenAI, or generic) and intercepts API calls to scan inputs and sanitize outputs.
+That's it. AEGIS auto-detects your provider (Anthropic, OpenAI, Ollama, vLLM, or generic) and intercepts API calls to scan inputs and sanitize outputs.
 
 ### What's Happening Under the Hood
 

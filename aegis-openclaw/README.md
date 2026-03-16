@@ -40,9 +40,9 @@ Copy `SKILL.md` and `scripts/` into your OpenClaw skills directory. The skill re
 ### 3. Configure Environment
 
 ```bash
-export AEGIS_MODE=enforce              # "enforce" or "observe"
+export AEGIS_MODE=enforce              # "enforce" or "observe". "Observe" should only be used for testing.
 export AEGIS_CONFIG=/path/to/aegis.yaml  # Optional config file
-export AEGIS_STATE_KEY=<hex-secret>    # Optional — enables persistent tamper-proof state
+export AEGIS_STATE_KEY=<hex-secret>    # Optional — enables persistent tamper-proof state. Set to a unique hex string of your choosing.
 export AEGIS_EXIT_TOKEN=<token>        # Required to exit quarantine
 ```
 

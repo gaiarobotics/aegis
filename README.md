@@ -9,7 +9,7 @@ The adaptive component of AEGIS maintains a shared database of compromised agent
 ## Quick Start
 
 ```bash
-pip install -e .  (until on pypi)
+pip install aegis-shield
 ```
 
 ```python
@@ -26,6 +26,8 @@ response = client.messages.create(
 ```
 
 One line. No config needed. AEGIS auto-detects your provider, scans inputs for prompt injection, sanitizes outputs, and tracks agent trust - all transparently.
+
+If you're using OpenClaw, check out the skill - it provides nearly all functionality in an easy to consume format for your agent.
 
 ## What It Does
 

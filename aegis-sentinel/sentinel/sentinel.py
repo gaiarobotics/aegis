@@ -29,7 +29,7 @@ class Sentinel:
     for compromise indicators.
     """
 
-    declared_capabilities = ["like", "subscribe", "read"]
+    declared_capabilities: tuple[str, ...] = ("like", "subscribe", "read")
 
     def __init__(self, config: SentinelConfig) -> None:
         self._config = config

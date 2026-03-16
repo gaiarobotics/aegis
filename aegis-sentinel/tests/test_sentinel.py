@@ -30,7 +30,7 @@ class TestSentinel:
     def test_declared_capabilities_are_read_only(self, MockShield):
         cfg = self._make_config()
         sentinel = Sentinel(config=cfg)
-        assert sentinel.declared_capabilities == ["like", "subscribe", "read"]
+        assert sentinel.declared_capabilities == ("like", "subscribe", "read")
 
     @patch("sentinel.sentinel.Shield")
     def test_process_posts_delegates_to_observer(self, MockShield):

@@ -57,3 +57,15 @@ class TestSentinelReporter:
         )
         call_kwargs = mock_client.send_compromise_report.call_args.kwargs
         assert call_kwargs["source"] == "sentinel"
+
+    def test_none_client_is_noop(self):
+        reporter = SentinelReporter(monitoring_client=None)
+        reporter.report_compromised_agent(compromised_agent_id="moltbook:x")
+        reporter.report_threat_event(threat_score=0.9)
+        reporter.send_heartbeat()
+
+    def test_client_exception_is_swallowed(self):
+        mock_client = MagicMock()
+        mock_client.send_compromise_report.side_effect = RuntimeError("boom")
+        reporter = SentinelReporter(monitoring_client=mock_client)
+        reporter.report_compromised_agent(compromised_agent_id="moltbook:x")

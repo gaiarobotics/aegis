@@ -46,8 +46,9 @@ class ContentGate:
         config: ContentGateConfig controlling activation and behavior.
     """
 
-    def __init__(self, config: Optional[ContentGateConfig] = None) -> None:
+    def __init__(self, config: Optional[ContentGateConfig] = None, scanner: Any = None) -> None:
         self._config = config or ContentGateConfig()
+        self._scanner = scanner
         self._ml_summarizer = None
 
         if _TRANSFORMERS_AVAILABLE and self._config.enabled:
@@ -74,6 +75,20 @@ class ContentGate:
         """
         if not self._should_gate(platform):
             return None
+
+        original_length = len(text)
+
+        # Pre-filter sentences through scanner to remove injection payloads
+        text = self._filter_sentences(text)
+        if not text:
+            from aegis.scanner.envelope import GATED_SUMMARY
+            return GatedResult(
+                summary="",
+                tagged_summary=f"{GATED_SUMMARY} ",
+                metadata={},
+                original_length=original_length,
+                method="filtered",
+            )
 
         # Summarize
         if self._ml_summarizer is not None and len(text) > 100:
@@ -109,9 +124,25 @@ class ContentGate:
             summary=summary,
             tagged_summary=tagged,
             metadata=metadata,
-            original_length=len(text),
+            original_length=original_length,
             method=method,
         )
+
+    def _filter_sentences(self, text: str) -> str:
+        """Remove sentences that match injection patterns before summarization."""
+        if self._scanner is None:
+            return text
+        sentences = _split_sentences(text)
+        if not sentences:
+            return text
+        clean = []
+        for sentence in sentences:
+            result = self._scanner.scan_input(sentence)
+            if not result.is_threat:
+                clean.append(sentence)
+        if not clean:
+            return ""
+        return " ".join(clean)
 
     def _should_gate(self, platform: Optional[str]) -> bool:
         """Check if content should be gated for this platform."""

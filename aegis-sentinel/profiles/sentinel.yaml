@@ -1,0 +1,65 @@
+# AEGIS Sentinel Profile
+# Extends Moltbook hardening with zero-write broker lockdown.
+# The sentinel can read, like, and subscribe — but never post, DM, or write.
+
+scanner:
+  sensitivity: 0.85
+  confidence_threshold: 0.5
+  block_on_threat: true
+  content_gate:
+    enabled: true
+    gate_all_social: true
+  signatures:
+    additional_files: ["aegis/profiles/signatures/moltbook.yaml"]
+
+broker:
+  default_posture: deny_write
+  budgets:
+    max_posts_messages: 0
+    max_write_tool_calls: 0
+    max_external_http_writes: 0
+    max_new_domains: 0
+  quarantine_triggers:
+    repeated_denied_writes: 3
+    new_domain_burst: 1
+    tool_rate_spike_sigma: 2.0
+    drift_score_threshold: 1.5
+
+identity:
+  attestation:
+    ttl_seconds: 3600
+  trust:
+    trust_halflife_days: 7
+    anomaly_penalty: 0.5
+    max_tier_by_platform:
+      moltbook: 1
+  nkcell:
+    thresholds:
+      elevated: 0.2
+      suspicious: 0.35
+      hostile: 0.6
+
+memory:
+  default_ttl_hours: 12
+
+behavior:
+  window_size: 20
+  drift_threshold: 1.5
+  message_drift:
+    window_size: 8
+    baseline_size: 4
+  isolation_forest:
+    enabled: true
+
+monitoring:
+  enabled: true
+  heartbeat_interval_seconds: 15
+  threat_intel_poll_interval: 10
+  quarantine_poll_interval: 10
+  contagion_similarity_threshold: 0.7
+
+recovery:
+  auto_quarantine: true
+  quarantine_on_hostile_nk: true
+  purge_window_hours: 2
+  drift_sigma_threshold: 2.0

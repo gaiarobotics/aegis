@@ -64,7 +64,9 @@ class Observer:
             self._reporter.report_threat_event(
                 threat_score=scan_result.threat_score,
                 is_threat=True,
-                scanner_match_count=len(scan_result.details) if hasattr(scan_result, "details") else 0,
+                scanner_match_count=(
+                    len(scan_result.details) if hasattr(scan_result, "details") else 0
+                ),
             )
 
         return result

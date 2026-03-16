@@ -13,7 +13,7 @@ from aegis.shield import Shield
 
 from sentinel.config import SentinelConfig
 from sentinel.coverage import CoverageManager
-from sentinel.observer import Observer, ObservationResult
+from sentinel.observer import ObservationResult, Observer
 from sentinel.reporter import SentinelReporter
 
 logger = logging.getLogger(__name__)

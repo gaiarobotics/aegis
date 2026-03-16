@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
-import sys
 import time
 
 from sentinel.config import SentinelConfig
@@ -70,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
         profile_path=args.config,
     )
 
-    sentinel = Sentinel(config=config)
+    _sentinel = Sentinel(config=config)
 
     shutdown = False
 

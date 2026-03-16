@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +19,34 @@ class ObservationResult:
     is_threat: bool
     threat_score: float
     details: dict[str, Any] = field(default_factory=dict)
+    dendritic_alert_sent: bool = False
 
 
 class Observer:
-    """Scans Moltbook posts through the AEGIS Shield and reports threats."""
+    """Scans Moltbook posts through the AEGIS Shield and reports threats.
 
-    def __init__(self, shield: Any, reporter: Any) -> None:
+    When a DendriticProcessor and AlertChannel are provided, detected
+    injections are stripped, tagged with danger signals, and retransmitted
+    as signed DendriticAlerts (dendritic cell antigen presentation).
+    """
+
+    def __init__(
+        self,
+        shield: Any,
+        reporter: Any,
+        dendritic_processor: Any = None,
+        alert_channel: Any = None,
+        sentinel_id: str = "",
+        signing_key: Optional[bytes] = None,
+        key_type: str = "hmac-sha256",
+    ) -> None:
         self._shield = shield
         self._reporter = reporter
+        self._dendritic_processor = dendritic_processor
+        self._alert_channel = alert_channel
+        self._sentinel_id = sentinel_id
+        self._signing_key = signing_key
+        self._key_type = key_type
         self._agent_observation_counts: dict[str, int] = defaultdict(int)
 
     def observe_post(self, post: dict[str, Any]) -> ObservationResult:
@@ -83,6 +103,29 @@ class Observer:
                 is_threat=True,
                 scanner_match_count=len(scan_result.details),
             )
+
+            # Dendritic processing: strip payload and send alert
+            if self._dendritic_processor is not None and self._alert_channel is not None:
+                try:
+                    dendritic_result = self._dendritic_processor.process(
+                        text=content,
+                        threat_score=scan_result.threat_score,
+                        source_agent_id=author,
+                    )
+                    if self._signing_key is not None:
+                        alert = self._dendritic_processor.build_signed_alert(
+                            result=dendritic_result,
+                            sentinel_id=self._sentinel_id,
+                            signing_key=self._signing_key,
+                            key_type=self._key_type,
+                        )
+                        sent = self._alert_channel.send(alert)
+                        result.dendritic_alert_sent = sent
+                except Exception:
+                    logger.warning(
+                        "Dendritic processing failed for post %s from %s",
+                        post_id, author, exc_info=True,
+                    )
 
         return result
 

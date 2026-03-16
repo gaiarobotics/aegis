@@ -876,6 +876,93 @@ class Shield:
             modifications=result.modifications,
         )
 
+    def receive_dendritic_alert(
+        self,
+        alert: Any,
+        sentinel_public_key: bytes,
+        key_type: str = "hmac-sha256",
+    ) -> dict[str, Any]:
+        """Receive and act on a dendritic alert from a sentinel.
+
+        Verifies the sentinel's signature, then applies the danger signal:
+        - STOP_AND_ALERT_HUMAN: Log critical alert for human operator
+        - QUARANTINE_RECOMMENDED: Trigger quarantine on the source agent
+        - ELEVATED_SCRUTINY: Increase scanner sensitivity for source agent
+
+        Args:
+            alert: A DendriticAlert from a sentinel.
+            sentinel_public_key: The sentinel's public key for verification.
+            key_type: Key type for signature verification.
+
+        Returns:
+            Dict with action taken and verification status.
+        """
+        from aegis.dendritic.alert import DangerSignal, DendriticAlert, verify_alert
+
+        if not isinstance(alert, DendriticAlert):
+            return {"verified": False, "action": "rejected", "reason": "not a DendriticAlert"}
+
+        if not verify_alert(alert, sentinel_public_key, key_type):
+            logger.warning(
+                "Rejected dendritic alert with invalid signature from sentinel %s",
+                alert.sentinel_id,
+            )
+            return {"verified": False, "action": "rejected", "reason": "invalid signature"}
+
+        action = "logged"
+
+        # Apply danger signal
+        if alert.danger_signal == DangerSignal.STOP_AND_ALERT_HUMAN:
+            logger.critical(
+                "DENDRITIC ALERT — STOP AND ALERT HUMAN: "
+                "Injection detected from agent '%s' (score=%.2f, sentinel=%s). "
+                "Cleaned fragment: %s",
+                alert.source_agent_id,
+                alert.threat_score,
+                alert.sentinel_id,
+                alert.cleaned_fragment[:200],
+            )
+            action = "human_alert"
+            # Record as hostile interaction
+            if self._trust_manager is not None:
+                self.record_trust_interaction(alert.source_agent_id, clean=False, anomaly=True)
+
+        elif alert.danger_signal == DangerSignal.QUARANTINE_RECOMMENDED:
+            logger.warning(
+                "DENDRITIC ALERT — QUARANTINE RECOMMENDED: agent '%s' (score=%.2f)",
+                alert.source_agent_id, alert.threat_score,
+            )
+            action = "quarantine_recommended"
+            if self._trust_manager is not None:
+                self.record_trust_interaction(alert.source_agent_id, clean=False, anomaly=True)
+
+        elif alert.danger_signal == DangerSignal.ELEVATED_SCRUTINY:
+            logger.info(
+                "DENDRITIC ALERT — ELEVATED SCRUTINY: agent '%s' (score=%.2f)",
+                alert.source_agent_id, alert.threat_score,
+            )
+            action = "elevated_scrutiny"
+            if self._trust_manager is not None:
+                self.record_trust_interaction(alert.source_agent_id, clean=False)
+
+        # Telemetry
+        self._telemetry.log_event(
+            "dendritic_alert_received",
+            source_agent_id=alert.source_agent_id,
+            sentinel_id=alert.sentinel_id,
+            danger_signal=alert.danger_signal.value,
+            threat_score=alert.threat_score,
+            action=action,
+        )
+
+        return {
+            "verified": True,
+            "action": action,
+            "danger_signal": alert.danger_signal.value,
+            "source_agent_id": alert.source_agent_id,
+            "threat_score": alert.threat_score,
+        }
+
     def resolve_agent_id(self, raw_id: str) -> str:
         """Resolve a raw agent identifier to its canonical form.
 

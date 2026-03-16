@@ -88,6 +88,10 @@ Keep effective reproduction number R₀ < 1 by reducing:
 | Memory B cells | Behavioral fingerprints, trust records | Behavior / Identity |
 | Immune memory | Signature database, known-bad hashes | Scanner / Skills |
 | Complement system | Shared embedding layer: same model drives fingerprinting, contagion detection, and intent-divergence scoring | Behavior / Scanner |
+| Dendritic cells | Sentinel dendritic processing: detect, strip, and present injection fragments | Dendritic |
+| Antigen processing (proteolysis) | Content Gate sentence filtering + Sanitizer payload stripping | Dendritic / Scanner |
+| MHC-II presentation | Danger signal alerts to agents and operators | Dendritic |
+| T-cell co-stimulation (DAMPs/PAMPs) | "Stop and alert your human" danger signal | Dendritic |
 | Tissue repair | Engineered recovery: context reset, memory purge | Recovery |
 | Epidemiological surveillance | Population telemetry, R₀ estimation | Monitoring |
 

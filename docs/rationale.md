@@ -1,8 +1,8 @@
-# Why AEGIS: Defending Multi-Agent Systems Against Cascading Compromise
+# Why AEGIS: Defending Multi-Agent Systems Against Prompt Worms
 
 ## The Problem
 
-Multi-agent AI systems — networks of LLM-powered agents that communicate, delegate, and share memory — introduce a class of security threats that single-agent protections don't address: **cascading compromise**.
+Multi-agent AI systems — networks of LLM-powered agents that communicate, delegate, and share memory — introduce a class of security threats that single-agent protections don't address: **cascading compromise**. Or as put by Cohen, Bitton, and Nassi: "[Prompt Worms](https://arxiv.org/abs/2403.02817)".
 
 When an attacker injects a malicious prompt into one agent, that agent can propagate the attack to every peer it communicates with. Those peers propagate further. Without defense mechanisms designed for this propagation model, a single entry point can compromise an entire swarm.
 
@@ -21,7 +21,7 @@ Consider a 5-agent system: a customer-facing chatbot (A), a research agent (B), 
 5. **Detection**: None, unless a human notices anomalous behavior.
 6. **Recovery**: Manual. Requires identifying every compromised agent, every tainted memory entry, and every unauthorized action — without a baseline of what "clean" looked like.
 
-**Result**: Entire swarm compromised from a single entry point. Blast radius is unbounded.
+**Result**: Entire swarm compromised from a single entry point. Blast radius is unbounded. The immunological model without automated quarantine and recovery is "SI" - susceptible, infectious. The R0 of such a network, if fully connected, converges on **infinity**. Infected agents never recover, except through manual intervention.
 
 ### With AEGIS
 
@@ -38,7 +38,9 @@ Each agent runs its own AEGIS instance. The attack encounters friction at every 
 | **Memory protection** | Memory Guard | Category-based write restrictions block agents from writing "instruction" or "policy" entries into shared memory. Taint tracking flags entries originating from compromised sources. TTL enforcement expires stale entries. |
 | **Isolation and recovery** | Recovery | A "hostile" NK cell verdict triggers automatic quarantine — all writes blocked. Context is rolled back to the last known-good snapshot. Tainted memory entries are purged. |
 
-**Result**: The compromised agent is isolated before propagation succeeds. If partial propagation occurs, each downstream agent's own AEGIS instance applies the same layered checks. Blast radius is contained to one agent, temporarily.
+And the most powerful mechanism: a shared embedding-based **adaptive immunity**. Infected behaviors are embedded and hashes of these embeddings are presented and shared with other agents in the network to create an adaptive defense. Any AEGIS-enabled agent that exhibits behavior suggestive of an embedded compromised is quarantined, isolated from the network and unable to use tools.
+
+**Result**: The compromised agent is isolated before propagation succeeds. If partial propagation occurs, each downstream agent's own AEGIS instance applies the same layered checks. Blast radius is contained. The infection's signature is captured and propagates as immunity to every AEGIS-wrapped agent in the swarm. This transitions the model from SI to SIR (susceptible-infectious-recovered), driving the effective R number of transmission below 1 and quelling the infection if enough agents in the network are AEGIS-enabled.
 
 ## Defense in Depth
 
@@ -74,7 +76,7 @@ AEGIS defaults to `enforce` mode so that developers are protected out of the box
 
 Transparency about limitations:
 
-- **AEGIS is not a prompt injection classifier.** Its scanner uses regex signatures and heuristic analysis, optionally augmented by third-party ML models (LLM Guard). It will miss novel injection techniques that don't match known patterns and that bypass ML detection.
+- **AEGIS is not a prompt injection classifier.** Its scanner uses regex signatures and heuristic analysis, optionally augmented by third-party ML models (LLM Guard). It will initially miss novel injection techniques that don't match known patterns and that bypass ML detection, just as the body initially misses novel viruses. The key is that it can detect the "symptoms" of these novel attacks and respond to them so that they can no longer propagate.
 - **AEGIS does not guarantee security.** A sophisticated attacker who understands the detection signatures, stays within behavioral norms, and operates slowly enough to build trust can potentially evade layered defenses.
 - **Scoring weights are heuristic, not empirically calibrated.** The threat score combination functions use hand-tuned weights that encode reasonable assumptions but have not been validated against labeled attack datasets. Real-world red-team evaluation is the appropriate next step.
 - **ML-based scanning adds latency.** The optional LLM Guard integration downloads transformer models (~250MB) and adds ~100-400ms per scan. This is appropriate for high-stakes paths, not hot-path per-token streaming.

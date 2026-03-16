@@ -172,12 +172,22 @@ class TestContentHashTracker:
 
     def test_per_message_hash_deterministic(self):
         """A standalone per-message hash via SemanticHasher is deterministic."""
+        import math
+        import random as _random
+
         hasher = SemanticHasher()
         hasher._available = True
-        # Mock the model to return a fixed embedding
-        import numpy as np
+        # Mock the model to return a fixed embedding (deterministic via seeded RNG)
+        rng = _random.Random(42)
+        fixed_embedding = [rng.gauss(0, 1) for _ in range(384)]
+
+        class FakeArray(list):
+            """List with a .tolist() method to mimic numpy array."""
+            def tolist(self):
+                return list(self)
+
         mock_model = MagicMock()
-        mock_model.encode.return_value = np.random.RandomState(42).randn(384)
+        mock_model.encode.return_value = FakeArray(fixed_embedding)
         hasher._model = mock_model
 
         h1 = f"{hasher.hash('test text'):032x}"

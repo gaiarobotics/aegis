@@ -62,16 +62,74 @@ def main(argv: list[str] | None = None) -> None:
         risk_hints={},
     )
 
+    # Killswitch check before evaluating action
+    from aegis.shield import InferenceBlockedError
+
+    killswitch_blocked = False
+    killswitch_reason = ""
+    try:
+        shield.check_killswitch()
+    except InferenceBlockedError as exc:
+        killswitch_blocked = True
+        killswitch_reason = str(exc)
+
     result = shield.evaluate_action(action)
 
-    output = {
+    output: dict = {
         "allowed": result.allowed,
         "decision": result.decision,
         "reason": result.reason,
         "tool": tool,
         "action_type": action_type,
         "target": target,
+        "killswitch_blocked": killswitch_blocked,
+        "killswitch_reason": killswitch_reason,
     }
+
+    # Append state context when available
+    store = shield.state_store
+    if store is not None:
+        try:
+            agent_id = shield.config.agent_id or "self"
+            output["trust_tier"] = store.get_trust_tier(agent_id)
+            output["quarantine_active"] = store.is_quarantined()
+            limits = {
+                "max_write_tool_calls": shield.config.broker.budgets.max_write_tool_calls,
+                "max_posts_messages": shield.config.broker.budgets.max_posts_messages,
+                "max_external_http_writes": shield.config.broker.budgets.max_external_http_writes,
+                "max_new_domains": shield.config.broker.budgets.max_new_domains,
+            }
+            output["budget_remaining"] = store.get_budget_remaining(limits)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Record trust interaction for write actions
+    if store is not None and read_write == "write":
+        try:
+            agent_id = shield.config.agent_id or "self"
+            store.record_trust_interaction(
+                agent_id=agent_id,
+                clean=result.allowed,
+                anomaly=not result.allowed,
+            )
+            output["trust_interaction_recorded"] = True
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Monitoring telemetry for denied actions
+    if not result.allowed:
+        try:
+            from _helpers import try_send_monitoring
+
+            output["monitoring_reported"] = try_send_monitoring(
+                shield,
+                "send_threat_event",
+                threat_score=0.0,
+                is_threat=True,
+                nk_verdict=f"action_denied:{tool}",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     if args.json_output:
         json.dump(output, sys.stdout)

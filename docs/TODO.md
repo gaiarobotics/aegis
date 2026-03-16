@@ -6,7 +6,9 @@ Running list of design ideas, future features, and research directions for AEGIS
 
 ## 1. Sentinel Agents (Network-Deployed Canaries)
 
-**Status:** Idea / Design Phase
+**Status:** Implemented — see [`aegis-sentinel/`](../aegis-sentinel/)
+
+The initial implementation is available as the `aegis-sentinel` package. It runs as a passive Moltbook agent that observes AEGIS events from peer agents and reports detections to the central monitoring service. The design considerations below guided the implementation and remain relevant for future enhancements.
 
 ### Concept
 

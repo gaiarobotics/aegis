@@ -76,9 +76,26 @@ client = aegis.wrap(my_client, mode="observe")
 ```bash
 pip install aegis-shield[identity]      # Ed25519 attestation
 pip install aegis-shield[ml]            # ML-based scanning (uses LLM Guard)
+pip install aegis-shield[ml-behavior]   # Isolation Forest anomaly detection
+pip install aegis-shield[pii]           # PII detection and redaction (Presidio)
+pip install aegis-shield[yara]          # YARA rule matching
+pip install aegis-shield[embeddings]    # Semantic embeddings for indirect injection detection
+pip install aegis-shield[content-gate]  # Social media/external content filtering
+pip install aegis-shield[fuzzy]         # Fuzzy identity matching
 pip install aegis-shield[monitoring]    # Remote monitoring service
 pip install aegis-shield[all]           # Everything
 ```
+
+## Companion Modules
+
+AEGIS ships with several companion packages for different deployment scenarios:
+
+| Package | Purpose |
+|---------|---------|
+| **[aegis-monitor](aegis-monitor/)** | Real-time monitoring dashboard with agent graph visualization, R0 estimation, attack strain clustering, and epidemic simulator |
+| **[aegis-sentinel](aegis-sentinel/)** | Passive sentinel agent that observes AEGIS-protected networks and reports detections to the central monitor |
+| **[aegis-openclaw](aegis-openclaw/)** | OpenClaw skill and hooks integration — exposes AEGIS commands (`aegis-scan`, `aegis-trust`, `aegis-quarantine`, etc.) to OpenClaw agents |
+| **[aegis_proxy](aegis_proxy/)** | Standalone HTTP proxy for remote AEGIS enforcement — transparent scanning without per-agent installation |
 
 ## Documentation
 
@@ -87,15 +104,17 @@ You can get started with a single line of code, but there's a lot more you can d
 - **[Getting Started](docs/quickstart.md)** - Installation, usage, and progressive walkthrough of every feature
 - **[API Reference](docs/api-reference.md)** - Complete class/method/config reference
 - **[Monitor Quickstart](docs/quickstart-monitor.md)** - Set up the monitoring dashboard and connect agents
+- **[OpenClaw Integration](docs/openclaw-integration.md)** - Proxy and skill integration for OpenClaw agents
 - **[Security Rationale](docs/rationale.md)** - Why AEGIS exists, attack anatomy, defense-in-depth analysis
 - **[Whitepaper](https://github.com/gaiarobotics/papers/blob/main/Semantic%20Immunity%20Paper.pdf)** - outlining the risk of prompt worms in agentic networks and detailing the concept of Semantic Immunity
 - **[Comparison](docs/comparison.md)** - AEGIS vs Guardrails AI vs LLM Guard
+- **[Roadmap](docs/TODO.md)** - Future features and research directions
 - **[Examples](examples/)** - Runnable code for every feature
 
 ## Requirements
 
 - Python 3.10+
-- No required dependencies beyond PyYAML
+- Core dependencies: PyYAML and Pydantic (installed automatically)
 
 ## License
 

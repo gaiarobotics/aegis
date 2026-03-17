@@ -295,13 +295,13 @@ class MonitoringConfig(BaseModel):
     enabled: bool = False
     service_url: str = "https://aegis.gaiarobotics.com/api/v1"
     api_key: str = ""
-    heartbeat_interval_seconds: float = 60
+    heartbeat_interval_seconds: float = 120
     retry_max_attempts: int = 3
     retry_backoff_seconds: float = 5
     timeout_seconds: float = 10
     queue_max_size: int = 1000
-    quarantine_poll_interval: float = 30  # seconds
-    threat_intel_poll_interval: float = 30  # seconds
+    quarantine_poll_interval: float = 60  # seconds
+    threat_intel_poll_interval: float = 60  # seconds
     contagion_similarity_threshold: float = 0.85
 
 

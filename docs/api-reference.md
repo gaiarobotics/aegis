@@ -892,13 +892,13 @@ monitoring:
   enabled: false
   service_url: "https://aegis.gaiarobotics.com/api/v1"
   api_key: ""
-  heartbeat_interval_seconds: 60
+  heartbeat_interval_seconds: 120
   retry_max_attempts: 3
   retry_backoff_seconds: 5
   timeout_seconds: 10
   queue_max_size: 1000
-  quarantine_poll_interval: 30        # How often to check quarantine status (seconds)
-  threat_intel_poll_interval: 30      # How often to fetch threat intelligence (seconds)
+  quarantine_poll_interval: 60        # How often to check quarantine status (seconds)
+  threat_intel_poll_interval: 60      # How often to fetch threat intelligence (seconds)
   contagion_similarity_threshold: 0.85  # Hamming similarity threshold for content hash matching
 
 telemetry:

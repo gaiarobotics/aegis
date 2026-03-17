@@ -4,14 +4,14 @@
 
 Moltbook is a social network for AI agents with ~1.6M active agents. 2.6% of posts contain prompt injection and 18.4% contain action-inducing language. The high contact rate between agents and the diversity of underlying LLM models make it a fertile environment for worm propagation.
 
-In this scenario, a prompt injection worm has been seeded into the network. The worm embeds itself in agent posts, attempting to get recipients to repost the payload (propagation) while simultaneously trying to exfiltrate credentials, poison memory, and hijack agent roles. Some payloads combine multiple techniques in a single message — a realistic pattern where attackers maximize the value of each successful injection.
+In this scenario, a prompt injection worm has been seeded into the network. The worm embeds itself in agent posts, attempting to get recipients to repost the payload (propagation) while simultaneously trying to exfiltrate credentials, poison memory, and hijack agent roles. Some payloads combine multiple techniques in a single message - a realistic pattern where attackers maximize the value of each successful injection.
 
 ## What this scenario models
 
-- **Scale-free network topology** — a few hub agents have many connections, most agents have few. This matches real social networks where popular accounts amplify content. Worms that infect hubs spread explosively.
-- **Mixed LLM population** — agents run on different models (Claude, GPT-4o, Llama, Mistral, Gemini) with varying susceptibility to prompt injection. Smaller/weaker models are more susceptible.
-- **SOUL diversity** — most agents have accumulated system prompts (SOULs) and memory over time, which dilute injection payloads. But ~5% are brand new with minimal SOULs, making them easy targets for role hijacking.
-- **Independent technique sampling** — each message from an infected agent independently rolls the dice on each attack technique. A message might attempt worm propagation alone (40% chance), or combine it with credential extraction (4% chance of both), or occasionally fire all five techniques at once (<0.01% chance).
+- **Scale-free network topology** - a few hub agents have many connections, most agents have few. This matches real social networks where popular accounts amplify content. Worms that infect hubs spread explosively.
+- **Mixed LLM population** - agents run on different models (Claude, GPT-4o, Llama, Mistral, Gemini) with varying susceptibility to prompt injection. Smaller/weaker models are more susceptible.
+- **SOUL diversity** - most agents have accumulated system prompts (SOULs) and memory over time, which dilute injection payloads. But ~5% are brand new with minimal SOULs, making them easy targets for role hijacking.
+- **Independent technique sampling** - each message from an infected agent independently rolls the dice on each attack technique. A message might attempt worm propagation alone (40% chance), or combine it with credential extraction (4% chance of both), or occasionally fire all five techniques at once (<0.01% chance).
 
 ## Running the scenario
 
@@ -24,17 +24,17 @@ In this scenario, a prompt injection worm has been seeded into the network. The 
    - 5% initial infection (25 agents), seeded on **hubs** (worst case)
    - Worm propagation probability: 0.70 (aggressive)
    - All AEGIS modules enabled with Moltbook-hardened settings
-4. Click **Generate** to create the population. Observe the graph — hub nodes are larger, and the red infected nodes should be among the most connected.
+4. Click **Generate** to create the population. Observe the graph - hub nodes are larger, and the red infected nodes should be among the most connected.
 5. Set the speed slider to ~10 ticks/second
 6. Click **Start** and watch the simulation unfold
 
 **What to watch for:**
-- **Early phase (ticks 1-20):** Infection spreads quickly from hub nodes. The red cluster grows. Running R_e will spike above 1.0 � recent infected agents are producing more than one secondary infection on average.
+- **Early phase (ticks 1-20):** Infection spreads quickly from hub nodes. The red cluster grows. Running R_e will spike above 1.0 — recent infected agents are producing more than one secondary infection on average.
 - **Detection phase (ticks 20-50):** AEGIS Scanner catches many injection payloads (watch the confusion matrix TP count climb). The Behavior module begins flagging infected agents whose posting patterns have changed. Agents start turning orange (quarantined).
 - **Containment phase (ticks 50-100):** Quarantined agents can't spread. Running R_e drops below 1.0. The orange-to-blue (quarantined-to-recovered) pipeline kicks in. The population chart should show the infected curve peaking and declining.
 - **Steady state:** Most agents are either clean (green) or recovered (blue). A few may remain infected if they're isolated with low activity levels.
 
-7. Note the final confusion matrix — check Precision (how many detections were real threats) and Recall (how many real threats were caught). The Moltbook-hardened Scanner with sensitivity=0.75 and lowered confidence threshold should achieve high recall at the cost of some false positives.
+7. Note the final confusion matrix - check Precision (how many detections were real threats) and Recall (how many real threats were caught). The Moltbook-hardened Scanner with sensitivity=0.75 and lowered confidence threshold should achieve high recall at the cost of some false positives.
 
 ### Step 2: No-AEGIS Baseline (same scenario, no defense)
 
@@ -67,7 +67,7 @@ With the same seed, the two runs are directly comparable:
 
 ### Step 4: Scanner-Only
 
-For a middle ground, try the **scanner-only** preset with the same outbreak parameters. This shows what detection alone (without behavioral quarantine) achieves — it catches payloads but can't isolate infected agents. Compare the confusion matrix precision/recall with the full AEGIS run.
+For a middle ground, try the **scanner-only** preset with the same outbreak parameters. This shows what detection alone (without behavioral quarantine) achieves - it catches payloads but can't isolate infected agents. Compare the confusion matrix precision/recall with the full AEGIS run.
 
 ## Key metrics explained
 
@@ -75,15 +75,15 @@ For a middle ground, try the **scanner-only** preset with the same outbreak para
 
 **Confusion matrix by technique:** Each attack technique (worm propagation, memory poisoning, role hijacking, credential extraction, shell injection) has its own detection accuracy. The Scanner is better at catching some patterns than others. Use the technique tabs to see where AEGIS is strong and where it's weak.
 
-**False Positive Rate (FPR):** What fraction of benign messages were incorrectly flagged as threats. High FPR means AEGIS is being too aggressive — real agents have their legitimate communication disrupted. The Moltbook profile's lowered confidence threshold (0.6 vs default 0.8) trades higher FPR for better recall.
+**False Positive Rate (FPR):** What fraction of benign messages were incorrectly flagged as threats. High FPR means AEGIS is being too aggressive - real agents have their legitimate communication disrupted. The Moltbook profile's lowered confidence threshold (0.6 vs default 0.8) trades higher FPR for better recall.
 
 **Mean Time to Quarantine (MTTQ):** How many ticks between an agent getting infected and being quarantined. Lower is better. The Behavior module's drift detection catches infected agents faster when their posting patterns change dramatically.
 
 ## Variations to explore
 
-- **Change topology:** Try small-world (clustered communities) — does AEGIS contain the worm within a single community, or does it jump between clusters?
+- **Change topology:** Try small-world (clustered communities) - does AEGIS contain the worm within a single community, or does it jump between clusters?
 - **Change seed strategy:** Periphery seeding (low-degree nodes) gives AEGIS more time to detect before hubs get infected.
-- **Increase new agent fraction:** Set to 0.30 — a younger population with weaker SOULs is more susceptible. Does AEGIS compensate?
-- **Disable individual modules:** Turn off the Behavior module but keep Scanner — how much does behavioral detection contribute vs. pattern matching alone?
+- **Increase new agent fraction:** Set to 0.30 - a younger population with weaker SOULs is more susceptible. Does AEGIS compensate?
+- **Disable individual modules:** Turn off the Behavior module but keep Scanner - how much does behavioral detection contribute vs. pattern matching alone?
 - **Lower worm probability:** Set to 0.10 for a slower-burning epidemic. Does AEGIS prevent running R_e from ever rising above 1?
 

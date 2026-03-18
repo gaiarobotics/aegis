@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -26,6 +27,32 @@ from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, Quaranti
 from monitor.validation import ReportValidator
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+async def _periodic_recluster(app_state, interval: float = 30.0):
+    """Run topic reclustering periodically instead of per-heartbeat."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            graph_state = app_state.graph.get_graph_state()
+            agent_statuses = {}
+            for n in graph_state["nodes"]:
+                if n["is_compromised"]:
+                    agent_statuses[n["id"]] = "compromised"
+                elif n["is_quarantined"]:
+                    agent_statuses[n["id"]] = "quarantined"
+                else:
+                    agent_statuses[n["id"]] = "active"
+            app_state.topic_clusterer.update_stable_clusters(agent_statuses)
+
+            centroids = app_state.topic_clusterer.get_cluster_centroids()
+            active_count = sum(1 for c in centroids if c["active"])
+            await _broadcast(app_state, {
+                "type": "topic_clusters_updated",
+                "active_cluster_count": active_count,
+            })
+        except Exception:
+            logging.getLogger(__name__).debug("Recluster failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -62,7 +89,9 @@ async def lifespan(app: FastAPI):  # noqa: C901
     # Simulator state is initialised by register_routes() below;
     # do NOT re-assign here or it will overwrite the PresetManager.
 
+    recluster_task = asyncio.create_task(_periodic_recluster(app.state))
     yield
+    recluster_task.cancel()
 
 
 app = FastAPI(title="AEGIS Monitor", version="0.1.0", lifespan=lifespan)
@@ -487,26 +516,6 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
     topic_velocity = data.get("topic_velocity", 0.0)
     if hash_for_analysis:
         topic_clusterer.update(agent_id, hash_for_analysis)
-
-        # Update stable clusters with current agent statuses
-        graph_state = graph.get_graph_state()
-        agent_statuses: dict[str, str] = {}
-        for n in graph_state["nodes"]:
-            if n["is_compromised"]:
-                agent_statuses[n["id"]] = "compromised"
-            elif n["is_quarantined"]:
-                agent_statuses[n["id"]] = "quarantined"
-            else:
-                agent_statuses[n["id"]] = "active"
-        topic_clusterer.update_stable_clusters(agent_statuses)
-
-        # Broadcast topic cluster update
-        centroids = topic_clusterer.get_cluster_centroids()
-        active_count = sum(1 for c in centroids if c["active"])
-        await _broadcast(app.state, {
-            "type": "topic_clusters_updated",
-            "active_cluster_count": active_count,
-        })
 
         score = contagion_detector.check_with_velocity(
             agent_id, hash_for_analysis, topic_velocity=topic_velocity,

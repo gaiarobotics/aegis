@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from monitor.async_db import run_db, run_in_transaction
 from monitor.auth import verify_api_key
 from monitor.clustering import ThreatClusterer
 from monitor.config import MonitorConfig
@@ -264,8 +265,9 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
     if content_hash:
         metadata["content_hash"] = content_hash
 
-    # Persist
-    db.upsert_agent(AgentNode(
+    # Persist agent + edges in a single transaction
+    from monitor.models import AgentEdge
+    agent_node = AgentNode(
         agent_id=agent_id,
         operator_id=data.get("operator_id", ""),
         trust_tier=data.get("trust_tier", 0),
@@ -273,16 +275,67 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         is_quarantined=data.get("is_quarantined", False),
         last_heartbeat=time.time(),
         metadata=metadata,
-    ))
-    from monitor.models import AgentEdge
-    for edge in edges:
-        db.upsert_edge(AgentEdge(
+    )
+    edge_models = [
+        AgentEdge(
             source_agent_id=agent_id,
             target_agent_id=edge.get("target_agent_id", ""),
             direction=edge.get("direction", "outbound"),
             last_seen=edge.get("last_seen", time.time()),
             message_count=edge.get("message_count", 0),
-        ))
+        )
+        for edge in edges
+    ]
+
+    def _persist_heartbeat(tx):
+        tx.execute(
+            """INSERT INTO agents
+                   (agent_id, operator_id, trust_tier, trust_score,
+                    is_compromised, is_quarantined, is_killswitched,
+                    last_heartbeat, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(agent_id) DO UPDATE SET
+                   operator_id     = excluded.operator_id,
+                   trust_tier      = excluded.trust_tier,
+                   trust_score     = excluded.trust_score,
+                   is_compromised  = excluded.is_compromised,
+                   is_quarantined  = excluded.is_quarantined,
+                   is_killswitched = excluded.is_killswitched,
+                   last_heartbeat  = excluded.last_heartbeat,
+                   metadata        = excluded.metadata
+            """,
+            (
+                agent_node.agent_id,
+                agent_node.operator_id,
+                agent_node.trust_tier,
+                agent_node.trust_score,
+                int(agent_node.is_compromised),
+                int(agent_node.is_quarantined),
+                int(agent_node.is_killswitched),
+                agent_node.last_heartbeat,
+                json.dumps(agent_node.metadata),
+            ),
+        )
+        for e in edge_models:
+            tx.execute(
+                """INSERT INTO edges
+                       (source_agent_id, target_agent_id, direction, last_seen, message_count)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(source_agent_id, target_agent_id) DO UPDATE SET
+                       direction     = excluded.direction,
+                       last_seen     = excluded.last_seen,
+                       message_count = excluded.message_count
+                """,
+                (
+                    e.source_agent_id,
+                    e.target_agent_id,
+                    e.direction,
+                    e.last_seen,
+                    e.message_count,
+                ),
+            )
+
+    await run_in_transaction(db, _persist_heartbeat)
 
     # Store hash in graph node attributes
     if content_hash:
@@ -322,7 +375,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
             agent_id, hash_for_analysis, topic_velocity=topic_velocity,
         )
         if score >= contagion_detector._alert_threshold:
-            db.insert_event(StoredEvent(
+            contagion_event = StoredEvent(
                 event_id=str(uuid.uuid4()),
                 event_type="contagion_alert",
                 agent_id=agent_id,
@@ -333,13 +386,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
                     "topic_velocity": topic_velocity,
                     "hash": hash_for_analysis,
                 },
-            ))
-            await _broadcast(app.state, {
-                "type": "contagion_alert",
-                "agent_id": agent_id,
-                "contagion_score": score,
-                "topic_velocity": topic_velocity,
-            })
+            )
 
             # Auto-quarantine the flagged agent
             rule = QuarantineRule(
@@ -352,8 +399,68 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
                 created_at=time.time(),
                 created_by="contagion_detector",
             )
-            db.insert_quarantine_rule(rule)
-            db.set_agent_quarantined(agent_id, True)
+
+            def _persist_contagion_alert(tx):
+                tx.execute(
+                    """INSERT INTO events
+                           (event_id, event_type, agent_id, operator_id, timestamp, payload)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(event_id) DO UPDATE SET
+                           event_type  = excluded.event_type,
+                           agent_id    = excluded.agent_id,
+                           operator_id = excluded.operator_id,
+                           timestamp   = excluded.timestamp,
+                           payload     = excluded.payload
+                    """,
+                    (
+                        contagion_event.event_id,
+                        contagion_event.event_type,
+                        contagion_event.agent_id,
+                        contagion_event.operator_id,
+                        contagion_event.timestamp,
+                        json.dumps(contagion_event.payload),
+                    ),
+                )
+                tx.execute(
+                    """INSERT INTO quarantine_rules
+                           (rule_id, scope, target, quarantined, reason, severity, created_at, created_by)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(rule_id) DO UPDATE SET
+                           scope       = excluded.scope,
+                           target      = excluded.target,
+                           quarantined = excluded.quarantined,
+                           reason      = excluded.reason,
+                           severity    = excluded.severity,
+                           created_at  = excluded.created_at,
+                           created_by  = excluded.created_by
+                    """,
+                    (
+                        rule.rule_id,
+                        rule.scope,
+                        rule.target,
+                        int(rule.quarantined),
+                        rule.reason,
+                        rule.severity,
+                        rule.created_at,
+                        rule.created_by,
+                    ),
+                )
+                rowcount = tx.execute(
+                    "UPDATE agents SET is_quarantined = ? WHERE agent_id = ?",
+                    (1, agent_id),
+                )
+                if rowcount == 0:
+                    tx.execute(
+                        """INSERT INTO agents
+                               (agent_id, operator_id, trust_tier, trust_score,
+                                is_compromised, is_quarantined, is_killswitched,
+                                last_heartbeat, metadata)
+                           VALUES (?, '', 0, 0.0, 0, ?, 0, 0, '{}')
+                        """,
+                        (agent_id, 1),
+                    )
+
+            await run_in_transaction(db, _persist_contagion_alert)
             graph.mark_quarantined(agent_id, True)
 
             await _broadcast(app.state, {

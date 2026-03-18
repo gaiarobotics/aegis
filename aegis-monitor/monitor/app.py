@@ -274,23 +274,74 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
 async def receive_trust(data: dict, _key: str = Depends(verify_api_key)):
     db: Database = app.state.db
 
-    db.insert_event(StoredEvent(
+    event = StoredEvent(
         event_id=data.get("report_id", str(uuid.uuid4())),
         event_type="trust",
         agent_id=data.get("agent_id", ""),
         operator_id=data.get("operator_id", ""),
         timestamp=data.get("timestamp", time.time()),
         payload=data,
-    ))
-
+    )
     target_id = data.get("target_agent_id", "")
-    if target_id:
-        db.upsert_agent(AgentNode(
-            agent_id=target_id,
-            trust_tier=data.get("trust_tier", 0),
-            trust_score=data.get("trust_score", 0.0),
-            last_heartbeat=time.time(),
-        ))
+    target_node = AgentNode(
+        agent_id=target_id,
+        trust_tier=data.get("trust_tier", 0),
+        trust_score=data.get("trust_score", 0.0),
+        last_heartbeat=time.time(),
+    ) if target_id else None
+
+    def _persist_trust(tx):
+        tx.execute(
+            """INSERT INTO events
+                   (event_id, event_type, agent_id, operator_id, timestamp, payload)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(event_id) DO UPDATE SET
+                   event_type  = excluded.event_type,
+                   agent_id    = excluded.agent_id,
+                   operator_id = excluded.operator_id,
+                   timestamp   = excluded.timestamp,
+                   payload     = excluded.payload
+            """,
+            (
+                event.event_id,
+                event.event_type,
+                event.agent_id,
+                event.operator_id,
+                event.timestamp,
+                json.dumps(event.payload),
+            ),
+        )
+        if target_node:
+            tx.execute(
+                """INSERT INTO agents
+                       (agent_id, operator_id, trust_tier, trust_score,
+                        is_compromised, is_quarantined, is_killswitched,
+                        last_heartbeat, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(agent_id) DO UPDATE SET
+                       operator_id     = excluded.operator_id,
+                       trust_tier      = excluded.trust_tier,
+                       trust_score     = excluded.trust_score,
+                       is_compromised  = excluded.is_compromised,
+                       is_quarantined  = excluded.is_quarantined,
+                       is_killswitched = excluded.is_killswitched,
+                       last_heartbeat  = excluded.last_heartbeat,
+                       metadata        = excluded.metadata
+                """,
+                (
+                    target_node.agent_id,
+                    target_node.operator_id,
+                    target_node.trust_tier,
+                    target_node.trust_score,
+                    int(target_node.is_compromised),
+                    int(target_node.is_quarantined),
+                    int(target_node.is_killswitched),
+                    target_node.last_heartbeat,
+                    json.dumps(target_node.metadata),
+                ),
+            )
+
+    await run_in_transaction(db, _persist_trust)
 
     return {"status": "ok"}
 
@@ -301,7 +352,7 @@ async def receive_threat(data: dict, _key: str = Depends(verify_api_key)):
     clusterer: ThreatClusterer = app.state.clusterer
 
     event_id = data.get("report_id", str(uuid.uuid4()))
-    db.insert_event(StoredEvent(
+    await run_db(db.insert_event, StoredEvent(
         event_id=event_id,
         event_type="threat",
         agent_id=data.get("agent_id", ""),
@@ -594,7 +645,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     quarantined = sum(1 for n in graph_state["nodes"] if n["is_quarantined"])
     killswitched = sum(1 for n in graph_state["nodes"] if n["is_killswitched"])
 
-    threat_events = db.get_events(event_type="threat", limit=0)
+    threat_events = await run_db(db.get_events, event_type="threat", limit=0)
 
     cluster_info = clusterer.get_cluster_info()
     # Filter out noise cluster
@@ -604,11 +655,13 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     topic_centroids = topic_clusterer.get_cluster_centroids()
     topic_cluster_count = sum(1 for c in topic_centroids if c["active"])
 
+    active_threats = await run_db(db.get_events, event_type="threat",
+                                  since=time.time() - 3600)
+
     return {
         "r0": r0.estimate_r0(cfg.r0_window_hours),
         "r0_trend": r0.get_r0_trend(cfg.r0_window_hours),
-        "active_threats": len(db.get_events(event_type="threat",
-                                            since=time.time() - 3600)),
+        "active_threats": len(active_threats),
         "total_agents": len(graph_state["nodes"]),
         "compromised_agents": compromised,
         "quarantined_agents": quarantined,
@@ -687,7 +740,7 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
-    agent = db.get_agent(agent_id)
+    agent = await run_db(db.get_agent, agent_id)
     if agent is None:
         return {"agent_id": agent_id, "found": False}
 
@@ -719,7 +772,7 @@ async def killswitch_status(
 ):
     """Agent polling endpoint — returns block status."""
     db: Database = app.state.db
-    blocked, reason, scope = db.check_killswitch(agent_id, operator_id)
+    blocked, reason, scope = await run_db(db.check_killswitch, agent_id, operator_id)
     return {"blocked": blocked, "reason": reason, "scope": scope}
 
 
@@ -737,18 +790,62 @@ async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)
         created_at=data.get("created_at", time.time()),
         created_by=data.get("created_by", ""),
     )
-    db.insert_killswitch_rule(rule)
+    def _persist_killswitch_create(tx):
+        tx.execute(
+            """INSERT INTO killswitch_rules
+                   (rule_id, scope, target, blocked, reason, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(rule_id) DO UPDATE SET
+                   scope      = excluded.scope,
+                   target     = excluded.target,
+                   blocked    = excluded.blocked,
+                   reason     = excluded.reason,
+                   created_at = excluded.created_at,
+                   created_by = excluded.created_by
+            """,
+            (
+                rule.rule_id,
+                rule.scope,
+                rule.target,
+                int(rule.blocked),
+                rule.reason,
+                rule.created_at,
+                rule.created_by,
+            ),
+        )
+        affected_agents: list[str] = []
+        if rule.blocked and rule.scope == "agent" and rule.target:
+            rowcount = tx.execute(
+                "UPDATE agents SET is_killswitched = ? WHERE agent_id = ?",
+                (1, rule.target),
+            )
+            if rowcount == 0:
+                tx.execute(
+                    """INSERT INTO agents
+                           (agent_id, operator_id, trust_tier, trust_score,
+                            is_compromised, is_quarantined, is_killswitched,
+                            last_heartbeat, metadata)
+                       VALUES (?, '', 0, 0.0, 0, 0, ?, 0, '{}')
+                    """,
+                    (rule.target, 1),
+                )
+            affected_agents.append(rule.target)
+        elif rule.blocked and rule.scope == "swarm":
+            rows = tx.fetchall("SELECT * FROM agents")
+            for r in rows:
+                tx.execute(
+                    "UPDATE agents SET is_killswitched = ? WHERE agent_id = ?",
+                    (1, r["agent_id"]),
+                )
+                affected_agents.append(r["agent_id"])
+        return affected_agents
 
-    # Update agent killswitched status in DB and graph
+    affected_agents = await run_in_transaction(db, _persist_killswitch_create)
+
+    # Update graph synchronously after DB transaction
     graph: AgentGraph = app.state.graph
-    if rule.blocked and rule.scope == "agent" and rule.target:
-        db.set_agent_killswitched(rule.target, True)
-        graph.mark_killswitched(rule.target, True)
-    elif rule.blocked and rule.scope == "swarm":
-        # Mark all known agents as killswitched
-        for agent in db.get_all_agents():
-            db.set_agent_killswitched(agent.agent_id, True)
-            graph.mark_killswitched(agent.agent_id, True)
+    for aid in affected_agents:
+        graph.mark_killswitched(aid, True)
 
     await _broadcast(app.state, {
         "type": "killswitch",
@@ -767,7 +864,7 @@ async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)
 async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
     """List all active killswitch rules."""
     db: Database = app.state.db
-    rules = db.get_killswitch_rules()
+    rules = await run_db(db.get_killswitch_rules)
     return {
         "rules": [
             {
@@ -789,16 +886,52 @@ async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_ke
     """Remove a killswitch rule."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
-    deleted = db.delete_killswitch_rule(rule_id)
+
+    def _persist_killswitch_delete(tx):
+        rowcount = tx.execute(
+            "DELETE FROM killswitch_rules WHERE rule_id = ?", (rule_id,)
+        )
+        if rowcount == 0:
+            return False, []
+        # Re-evaluate killswitch status for all agents
+        unblocked_agents: list[str] = []
+        rows = tx.fetchall("SELECT * FROM agents")
+        for r in rows:
+            aid = r["agent_id"]
+            oid = r["operator_id"]
+            is_ks = bool(r["is_killswitched"])
+            # Check if still blocked by remaining rules
+            swarm_row = tx.fetchone(
+                "SELECT * FROM killswitch_rules WHERE scope = 'swarm' AND blocked = 1 LIMIT 1"
+            )
+            still_blocked = swarm_row is not None
+            if not still_blocked and oid:
+                op_row = tx.fetchone(
+                    "SELECT * FROM killswitch_rules WHERE scope = 'operator' AND target = ? AND blocked = 1 LIMIT 1",
+                    (oid,),
+                )
+                still_blocked = op_row is not None
+            if not still_blocked and aid:
+                agent_row = tx.fetchone(
+                    "SELECT * FROM killswitch_rules WHERE scope = 'agent' AND target = ? AND blocked = 1 LIMIT 1",
+                    (aid,),
+                )
+                still_blocked = agent_row is not None
+            if not still_blocked and is_ks:
+                tx.execute(
+                    "UPDATE agents SET is_killswitched = ? WHERE agent_id = ?",
+                    (0, aid),
+                )
+                unblocked_agents.append(aid)
+        return True, unblocked_agents
+
+    deleted, unblocked_agents = await run_in_transaction(db, _persist_killswitch_delete)
+
+    # Update graph synchronously after DB transaction
+    for aid in unblocked_agents:
+        graph.mark_killswitched(aid, False)
 
     if deleted:
-        # Re-evaluate killswitch status for all agents
-        for agent in db.get_all_agents():
-            still_blocked, _, _ = db.check_killswitch(agent.agent_id, agent.operator_id)
-            if not still_blocked and agent.is_killswitched:
-                db.set_agent_killswitched(agent.agent_id, False)
-                graph.mark_killswitched(agent.agent_id, False)
-
         await _broadcast(app.state, {
             "type": "killswitch",
             "action": "deleted",
@@ -820,7 +953,7 @@ async def quarantine_status(
 ):
     """Agent polling endpoint — returns quarantine status."""
     db: Database = app.state.db
-    quarantined, reason, scope, severity = db.check_quarantine(agent_id, operator_id)
+    quarantined, reason, scope, severity = await run_db(db.check_quarantine, agent_id, operator_id)
     return {"quarantined": quarantined, "reason": reason, "scope": scope, "severity": severity}
 
 
@@ -839,17 +972,64 @@ async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)
         created_at=data.get("created_at", time.time()),
         created_by=data.get("created_by", ""),
     )
-    db.insert_quarantine_rule(rule)
+    def _persist_quarantine_create(tx):
+        tx.execute(
+            """INSERT INTO quarantine_rules
+                   (rule_id, scope, target, quarantined, reason, severity, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(rule_id) DO UPDATE SET
+                   scope       = excluded.scope,
+                   target      = excluded.target,
+                   quarantined = excluded.quarantined,
+                   reason      = excluded.reason,
+                   severity    = excluded.severity,
+                   created_at  = excluded.created_at,
+                   created_by  = excluded.created_by
+            """,
+            (
+                rule.rule_id,
+                rule.scope,
+                rule.target,
+                int(rule.quarantined),
+                rule.reason,
+                rule.severity,
+                rule.created_at,
+                rule.created_by,
+            ),
+        )
+        affected_agents: list[str] = []
+        if rule.quarantined and rule.scope == "agent" and rule.target:
+            rowcount = tx.execute(
+                "UPDATE agents SET is_quarantined = ? WHERE agent_id = ?",
+                (1, rule.target),
+            )
+            if rowcount == 0:
+                tx.execute(
+                    """INSERT INTO agents
+                           (agent_id, operator_id, trust_tier, trust_score,
+                            is_compromised, is_quarantined, is_killswitched,
+                            last_heartbeat, metadata)
+                       VALUES (?, '', 0, 0.0, 0, ?, 0, 0, '{}')
+                    """,
+                    (rule.target, 1),
+                )
+            affected_agents.append(rule.target)
+        elif rule.quarantined and rule.scope == "swarm":
+            rows = tx.fetchall("SELECT * FROM agents")
+            for r in rows:
+                tx.execute(
+                    "UPDATE agents SET is_quarantined = ? WHERE agent_id = ?",
+                    (1, r["agent_id"]),
+                )
+                affected_agents.append(r["agent_id"])
+        return affected_agents
 
-    # Update agent quarantine status in DB and graph
+    affected_agents = await run_in_transaction(db, _persist_quarantine_create)
+
+    # Update graph synchronously after DB transaction
     graph: AgentGraph = app.state.graph
-    if rule.quarantined and rule.scope == "agent" and rule.target:
-        db.set_agent_quarantined(rule.target, True)
-        graph.mark_quarantined(rule.target, True)
-    elif rule.quarantined and rule.scope == "swarm":
-        for agent in db.get_all_agents():
-            db.set_agent_quarantined(agent.agent_id, True)
-            graph.mark_quarantined(agent.agent_id, True)
+    for aid in affected_agents:
+        graph.mark_quarantined(aid, True)
 
     await _broadcast(app.state, {
         "type": "quarantine",
@@ -869,7 +1049,7 @@ async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)
 async def list_quarantine_rules(_key: str = Depends(verify_api_key)):
     """List all active quarantine rules."""
     db: Database = app.state.db
-    rules = db.get_quarantine_rules()
+    rules = await run_db(db.get_quarantine_rules)
     return {
         "rules": [
             {
@@ -892,16 +1072,52 @@ async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_ke
     """Remove a quarantine rule (release quarantine)."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
-    deleted = db.delete_quarantine_rule(rule_id)
+
+    def _persist_quarantine_delete(tx):
+        rowcount = tx.execute(
+            "DELETE FROM quarantine_rules WHERE rule_id = ?", (rule_id,)
+        )
+        if rowcount == 0:
+            return False, []
+        # Re-evaluate quarantine status for all agents
+        unquarantined_agents: list[str] = []
+        rows = tx.fetchall("SELECT * FROM agents")
+        for r in rows:
+            aid = r["agent_id"]
+            oid = r["operator_id"]
+            is_q = bool(r["is_quarantined"])
+            # Check if still quarantined by remaining rules
+            swarm_row = tx.fetchone(
+                "SELECT * FROM quarantine_rules WHERE scope = 'swarm' AND quarantined = 1 LIMIT 1"
+            )
+            still_quarantined = swarm_row is not None
+            if not still_quarantined and oid:
+                op_row = tx.fetchone(
+                    "SELECT * FROM quarantine_rules WHERE scope = 'operator' AND target = ? AND quarantined = 1 LIMIT 1",
+                    (oid,),
+                )
+                still_quarantined = op_row is not None
+            if not still_quarantined and aid:
+                agent_row = tx.fetchone(
+                    "SELECT * FROM quarantine_rules WHERE scope = 'agent' AND target = ? AND quarantined = 1 LIMIT 1",
+                    (aid,),
+                )
+                still_quarantined = agent_row is not None
+            if not still_quarantined and is_q:
+                tx.execute(
+                    "UPDATE agents SET is_quarantined = ? WHERE agent_id = ?",
+                    (0, aid),
+                )
+                unquarantined_agents.append(aid)
+        return True, unquarantined_agents
+
+    deleted, unquarantined_agents = await run_in_transaction(db, _persist_quarantine_delete)
+
+    # Update graph synchronously after DB transaction
+    for aid in unquarantined_agents:
+        graph.mark_quarantined(aid, False)
 
     if deleted:
-        # Re-evaluate quarantine status for all agents
-        for agent in db.get_all_agents():
-            still_quarantined, _, _, _ = db.check_quarantine(agent.agent_id, agent.operator_id)
-            if not still_quarantined and agent.is_quarantined:
-                db.set_agent_quarantined(agent.agent_id, False)
-                graph.mark_quarantined(agent.agent_id, False)
-
         await _broadcast(app.state, {
             "type": "quarantine",
             "action": "deleted",

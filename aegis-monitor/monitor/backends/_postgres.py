@@ -6,7 +6,8 @@ These are optional dependencies — install with ``pip install aegis-monitor[pos
 
 from __future__ import annotations
 
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 import psycopg
 from psycopg.rows import dict_row
@@ -92,6 +93,29 @@ _SCHEMA_STATEMENTS = [
 ]
 
 
+class _PgTransaction:
+    """Handle returned by ``PostgresBackend.transaction()``."""
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    @staticmethod
+    def _translate(sql: str) -> str:
+        return sql.replace("?", "%s")
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> int:
+        cur = self._conn.execute(self._translate(sql), params)
+        return cur.rowcount
+
+    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        cur = self._conn.execute(self._translate(sql), params)
+        return cur.fetchone()
+
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        cur = self._conn.execute(self._translate(sql), params)
+        return cur.fetchall()
+
+
 class PostgresBackend:
     """Postgres implementation of the database backend.
 
@@ -130,6 +154,22 @@ class PostgresBackend:
         with self._pool.connection() as conn:
             cur = conn.execute(sql, params)
             return cur.fetchall()
+
+    @contextmanager
+    def transaction(self) -> Iterator[_PgTransaction]:
+        """Yield a transaction handle that batches writes.
+
+        psycopg3 connections default to autocommit=False, so a transaction is
+        already active.  We just commit or rollback at the end.
+        """
+        with self._pool.connection() as conn:
+            txn = _PgTransaction(conn)
+            try:
+                yield txn
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
 
     def close(self) -> None:
         self._pool.close()

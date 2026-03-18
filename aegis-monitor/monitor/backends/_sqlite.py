@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -84,6 +85,27 @@ CREATE INDEX IF NOT EXISTS idx_qr_scope ON quarantine_rules(scope);
 """
 
 
+class _SqliteTransaction:
+    """Handle returned by ``SqliteBackend.transaction()``."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> int:
+        cur = self._conn.execute(sql, params)
+        return cur.rowcount
+
+    def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        row = self._conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+
 class SqliteBackend:
     """SQLite implementation of the database backend."""
 
@@ -130,6 +152,22 @@ class SqliteBackend:
         conn = self._get_conn()
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    @contextmanager
+    def transaction(self) -> Iterator[_SqliteTransaction]:
+        """Yield a transaction handle that batches writes.
+
+        Commits on clean exit, rolls back on exception.
+        """
+        conn = self._get_conn()
+        conn.execute("BEGIN")
+        txn = _SqliteTransaction(conn)
+        try:
+            yield txn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
     def close(self) -> None:
         if self._shared_conn:

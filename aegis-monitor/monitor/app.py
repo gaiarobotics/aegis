@@ -111,37 +111,123 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         content_hash_hex=data.get("content_hash_hex", ""),
         timestamp=data.get("timestamp", time.time()),
     )
-    db.insert_compromise(record)
+    # Synchronous in-memory mutations first
     r0.add_record(record)
     graph.mark_compromised(record.compromised_agent_id)
 
-    # Persist agent state
+    # Prepare models for DB persistence
     node = graph.graph.nodes.get(record.compromised_agent_id, {})
-    db.upsert_agent(AgentNode(
+    agent_node = AgentNode(
         agent_id=record.compromised_agent_id,
         is_compromised=True,
         trust_tier=0,
         trust_score=0.0,
         last_heartbeat=node.get("last_heartbeat", 0),
-    ))
-
-    # Store as event
-    db.insert_event(StoredEvent(
+    )
+    event = StoredEvent(
         event_id=record.record_id,
         event_type="compromise",
         agent_id=record.reporter_agent_id,
         operator_id=data.get("operator_id", ""),
         timestamp=record.timestamp,
         payload=data,
-    ))
+    )
+
+    def _persist_compromise(tx):
+        # Insert compromise record
+        tx.execute(
+            """INSERT INTO compromises
+                   (record_id, reporter_agent_id, compromised_agent_id,
+                    source, nk_score, nk_verdict, recommended_action,
+                    content_hash_hex, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(record_id) DO UPDATE SET
+                   reporter_agent_id    = excluded.reporter_agent_id,
+                   compromised_agent_id = excluded.compromised_agent_id,
+                   source               = excluded.source,
+                   nk_score             = excluded.nk_score,
+                   nk_verdict           = excluded.nk_verdict,
+                   recommended_action   = excluded.recommended_action,
+                   content_hash_hex     = excluded.content_hash_hex,
+                   timestamp            = excluded.timestamp
+            """,
+            (
+                record.record_id,
+                record.reporter_agent_id,
+                record.compromised_agent_id,
+                record.source,
+                record.nk_score,
+                record.nk_verdict,
+                record.recommended_action,
+                record.content_hash_hex,
+                record.timestamp,
+            ),
+        )
+        # Upsert agent state
+        tx.execute(
+            """INSERT INTO agents
+                   (agent_id, operator_id, trust_tier, trust_score,
+                    is_compromised, is_quarantined, is_killswitched,
+                    last_heartbeat, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(agent_id) DO UPDATE SET
+                   operator_id     = excluded.operator_id,
+                   trust_tier      = excluded.trust_tier,
+                   trust_score     = excluded.trust_score,
+                   is_compromised  = excluded.is_compromised,
+                   is_quarantined  = excluded.is_quarantined,
+                   is_killswitched = excluded.is_killswitched,
+                   last_heartbeat  = excluded.last_heartbeat,
+                   metadata        = excluded.metadata
+            """,
+            (
+                agent_node.agent_id,
+                agent_node.operator_id,
+                agent_node.trust_tier,
+                agent_node.trust_score,
+                int(agent_node.is_compromised),
+                int(agent_node.is_quarantined),
+                int(agent_node.is_killswitched),
+                agent_node.last_heartbeat,
+                json.dumps(agent_node.metadata),
+            ),
+        )
+        # Insert event
+        tx.execute(
+            """INSERT INTO events
+                   (event_id, event_type, agent_id, operator_id, timestamp, payload)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(event_id) DO UPDATE SET
+                   event_type  = excluded.event_type,
+                   agent_id    = excluded.agent_id,
+                   operator_id = excluded.operator_id,
+                   timestamp   = excluded.timestamp,
+                   payload     = excluded.payload
+            """,
+            (
+                event.event_id,
+                event.event_type,
+                event.agent_id,
+                event.operator_id,
+                event.timestamp,
+                json.dumps(event.payload),
+            ),
+        )
+        # Look up reporter info within same transaction
+        row = tx.fetchone(
+            "SELECT * FROM agents WHERE agent_id = ?",
+            (record.reporter_agent_id,),
+        )
+        return row
+
+    reporter_row = await run_in_transaction(db, _persist_compromise)
+    reporter_node = Database._row_to_agent(reporter_row) if reporter_row else None
 
     # Validate the compromise report hash before adding to contagion cloud
     contagion_detector: ContagionDetector = app.state.contagion_detector
     validator: ReportValidator = app.state.report_validator
     comp_hash = data.get("content_hash_hex", "")
 
-    # Look up reporter info
-    reporter_node = db.get_agent(record.reporter_agent_id)
     reporter_trust_tier = reporter_node.trust_tier if reporter_node else 0
     reporter_is_quarantined = reporter_node.is_quarantined if reporter_node else False
 

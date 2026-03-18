@@ -7,8 +7,7 @@ The public API is backend-agnostic — callers never touch SQL or connections.
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from monitor.backends import create_backend
 from monitor.models import AgentEdge, AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent

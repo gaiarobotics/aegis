@@ -654,7 +654,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     quarantined = sum(1 for n in graph_state["nodes"] if n["is_quarantined"])
     killswitched = sum(1 for n in graph_state["nodes"] if n["is_killswitched"])
 
-    threat_events = await run_db(db.get_events, event_type="threat", limit=0)
+    await run_db(db.get_events, event_type="threat", limit=0)
 
     cluster_info = clusterer.get_cluster_info()
     # Filter out noise cluster

@@ -113,6 +113,7 @@ class SqliteBackend:
         self._path = path
         self._is_memory = path == ":memory:"
         self._local = threading.local()
+        self._lock = threading.Lock()  # serialises access for :memory:
         self._shared_conn: sqlite3.Connection | None = None
         if self._is_memory:
             self._shared_conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -124,9 +125,10 @@ class SqliteBackend:
             return self._shared_conn
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(self._path, check_same_thread=False)
+            conn = sqlite3.connect(self._path, timeout=5, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             self._local.conn = conn
         return conn
 
@@ -137,37 +139,47 @@ class SqliteBackend:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> int:
         conn = self._get_conn()
-        cur = conn.execute(sql, params)
-        conn.commit()
-        return cur.rowcount
+        with self._lock:
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur.rowcount
 
     def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         conn = self._get_conn()
-        row = conn.execute(sql, params).fetchone()
+        with self._lock:
+            row = conn.execute(sql, params).fetchone()
         if row is None:
             return None
         return dict(row)
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         conn = self._get_conn()
-        rows = conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
     @contextmanager
     def transaction(self) -> Iterator[_SqliteTransaction]:
         """Yield a transaction handle that batches writes.
 
-        Commits on clean exit, rolls back on exception.
+        Commits on clean exit, rolls back on exception.  The lock is
+        held for the entire transaction to prevent interleaving on the
+        shared ``:memory:`` connection.  For file-backed databases
+        (per-thread connections) the lock is uncontended.
         """
         conn = self._get_conn()
-        conn.execute("BEGIN")
-        txn = _SqliteTransaction(conn)
+        self._lock.acquire()
         try:
-            yield txn
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+            conn.execute("BEGIN")
+            txn = _SqliteTransaction(conn)
+            try:
+                yield txn
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        finally:
+            self._lock.release()
 
     def close(self) -> None:
         if self._shared_conn:

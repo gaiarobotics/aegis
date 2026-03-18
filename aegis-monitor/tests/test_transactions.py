@@ -224,3 +224,87 @@ class TestDatabaseTransaction:
             from monitor.backends._sqlite import _SqliteTransaction
 
             assert isinstance(txn, _SqliteTransaction)
+
+
+# ---------------------------------------------------------------------------
+# Concurrency safety tests
+# ---------------------------------------------------------------------------
+
+
+class TestSqliteConcurrency:
+    """Verify that the lock prevents interleaving on :memory: backends."""
+
+    def test_concurrent_transactions_are_serialised(self):
+        """Two threads writing via transactions should not corrupt each other."""
+        import concurrent.futures
+
+        backend = SqliteBackend(":memory:")
+        backend.init_schema()
+
+        def insert_batch(prefix: str) -> list[str]:
+            ids = []
+            with backend.transaction() as txn:
+                for i in range(20):
+                    aid = f"{prefix}-{i}"
+                    txn.execute(
+                        "INSERT INTO agents (agent_id, operator_id, trust_tier, trust_score, "
+                        "is_compromised, is_quarantined, is_killswitched, last_heartbeat, metadata) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (aid, "op", 0, 0.0, 0, 0, 0, 0.0, "{}"),
+                    )
+                    ids.append(aid)
+            return ids
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(insert_batch, f"t{t}") for t in range(4)]
+            all_ids = []
+            for f in concurrent.futures.as_completed(futures):
+                all_ids.extend(f.result())
+
+        rows = backend.fetchall("SELECT agent_id FROM agents ORDER BY agent_id")
+        assert len(rows) == 80
+        assert {r["agent_id"] for r in rows} == set(all_ids)
+
+    def test_concurrent_mixed_reads_writes(self):
+        """Reads and writes from multiple threads should not raise."""
+        import concurrent.futures
+
+        backend = SqliteBackend(":memory:")
+        backend.init_schema()
+
+        # Seed some data
+        for i in range(10):
+            backend.execute(
+                "INSERT INTO agents (agent_id, operator_id, trust_tier, trust_score, "
+                "is_compromised, is_quarantined, is_killswitched, last_heartbeat, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"seed-{i}", "op", 0, 0.0, 0, 0, 0, 0.0, "{}"),
+            )
+
+        errors: list[Exception] = []
+
+        def reader():
+            for _ in range(50):
+                backend.fetchall("SELECT * FROM agents")
+
+        def writer(prefix: str):
+            for i in range(20):
+                backend.execute(
+                    "INSERT OR REPLACE INTO agents (agent_id, operator_id, trust_tier, "
+                    "trust_score, is_compromised, is_quarantined, is_killswitched, "
+                    "last_heartbeat, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (f"{prefix}-{i}", "op", 0, 0.0, 0, 0, 0, 0.0, "{}"),
+                )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            futs = []
+            futs.append(pool.submit(reader))
+            futs.append(pool.submit(reader))
+            futs.extend(pool.submit(writer, f"w{t}") for t in range(4))
+            for f in concurrent.futures.as_completed(futs):
+                try:
+                    f.result()
+                except Exception as e:
+                    errors.append(e)
+
+        assert errors == [], f"Concurrency errors: {errors}"

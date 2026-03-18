@@ -173,3 +173,54 @@ class TestPostgresTransaction:
             rows = txn.fetchall("SELECT * FROM agents ORDER BY agent_id")
             assert len(rows) == 3
             assert rows[0]["agent_id"] == "agent-0"
+
+
+# ---------------------------------------------------------------------------
+# Database facade transaction tests
+# ---------------------------------------------------------------------------
+
+
+class TestDatabaseTransaction:
+    """Tests for Database.transaction() (facade over SQLite backend)."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        from monitor.db import Database
+
+        self.db = Database(":memory:")
+
+    def test_commit_on_success(self):
+        with self.db.transaction() as txn:
+            txn.execute(
+                "INSERT INTO agents (agent_id, operator_id, trust_tier, trust_score, "
+                "is_compromised, is_quarantined, is_killswitched, last_heartbeat, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("a1", "op1", 1, 0.5, 0, 0, 0, 0.0, "{}"),
+            )
+        row = self.db._backend.fetchone(
+            "SELECT * FROM agents WHERE agent_id = ?", ("a1",)
+        )
+        assert row is not None
+        assert row["agent_id"] == "a1"
+
+    def test_rollback_on_exception(self):
+        with pytest.raises(RuntimeError):
+            with self.db.transaction() as txn:
+                txn.execute(
+                    "INSERT INTO agents (agent_id, operator_id, trust_tier, trust_score, "
+                    "is_compromised, is_quarantined, is_killswitched, last_heartbeat, metadata) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("a2", "op1", 1, 0.5, 0, 0, 0, 0.0, "{}"),
+                )
+                raise RuntimeError("boom")
+        row = self.db._backend.fetchone(
+            "SELECT * FROM agents WHERE agent_id = ?", ("a2",)
+        )
+        assert row is None
+
+    def test_delegates_to_backend(self):
+        """The facade transaction should produce same handle type as backend."""
+        with self.db.transaction() as txn:
+            from monitor.backends._sqlite import _SqliteTransaction
+
+            assert isinstance(txn, _SqliteTransaction)

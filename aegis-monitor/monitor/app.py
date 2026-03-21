@@ -108,15 +108,18 @@ _register_sim_routes(app)
 # ------------------------------------------------------------------
 
 async def _broadcast(app_state: Any, event: dict) -> None:
-    """Push an event to all connected WebSocket clients."""
-    dead: set[WebSocket] = set()
+    """Push an event to all connected WebSocket clients in parallel."""
+    clients = list(app_state.ws_clients)
+    if not clients:
+        return
     message = json.dumps(event)
-    for ws in app_state.ws_clients:
-        try:
-            await ws.send_text(message)
-        except Exception:
-            dead.add(ws)
-    app_state.ws_clients -= dead
+    results = await asyncio.gather(
+        *(ws.send_text(message) for ws in clients),
+        return_exceptions=True,
+    )
+    dead = {ws for ws, r in zip(clients, results) if isinstance(r, Exception)}
+    if dead:
+        app_state.ws_clients -= dead
 
 
 # ------------------------------------------------------------------

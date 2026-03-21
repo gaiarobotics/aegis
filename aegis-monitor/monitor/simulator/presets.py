@@ -126,6 +126,8 @@ class PresetManager:
             "background_message_rate": config.background_message_rate,
             "recovery_ticks": config.recovery_ticks,
             "aegis_adoption_rate": config.aegis_adoption_rate,
+            "num_sentinels": config.num_sentinels,
+            "sentinel_recovery_prob": config.sentinel_recovery_prob,
             **({"seed": config.seed} if config.seed is not None else {}),
             "topology": {
                 "type": config.topology.type,
@@ -237,6 +239,8 @@ class PresetManager:
             corpus=corpus,
             modules=modules,
             aegis_adoption_rate=data.get("aegis_adoption_rate", 1.0),
+            num_sentinels=data.get("num_sentinels", 0),
+            sentinel_recovery_prob=data.get("sentinel_recovery_prob", 0.6),
         )
 
     # ------------------------------------------------------------------

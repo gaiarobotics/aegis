@@ -35,6 +35,8 @@ _AUTHORITY_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\[TOOL\.OUTPUT\]", re.IGNORECASE), "Removed AEGIS [TOOL.OUTPUT] tag"),
     (re.compile(r"\[SOCIAL\.CONTENT\]", re.IGNORECASE), "Removed AEGIS [SOCIAL.CONTENT] tag"),
     (re.compile(r"\[INSTRUCTION\.HIERARCHY\]", re.IGNORECASE), "Removed AEGIS [INSTRUCTION.HIERARCHY] tag"),
+    (re.compile(r"\[DENDRITIC\.PROCESSED\]", re.IGNORECASE), "Removed AEGIS [DENDRITIC.PROCESSED] tag"),
+    (re.compile(r"\[DANGER\.SIGNAL\]", re.IGNORECASE), "Removed AEGIS [DANGER.SIGNAL] tag"),
     # Llama INST tags
     (re.compile(r"\[/?INST\]", re.IGNORECASE), "Removed [INST]/[/INST] tag"),
     (re.compile(r"<<\s*SYS\s*>>", re.IGNORECASE), "Removed <<SYS>> delimiter"),

@@ -65,9 +65,19 @@ class SimulationEngine:
             from aegis.behavior.content_hash import SemanticHasher
 
             self._semantic_hasher = SemanticHasher()
+            # Eagerly verify that sentence-transformers is importable so we
+            # don't silently produce empty hashes for the entire simulation.
+            self._semantic_hasher._ensure_model()
             self._hash_available = True
-        except ImportError:
-            pass
+        except ImportError as exc:
+            import warnings
+
+            warnings.warn(
+                f"Embedding-based content hashing is unavailable: {exc}. "
+                "Content hashes, topic velocity, and cluster analysis will "
+                "be disabled for this simulation run.",
+                stacklevel=2,
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -124,6 +134,10 @@ class SimulationEngine:
             for aid in agent_ids:
                 if self._rng.random() < self._config.aegis_adoption_rate:
                     self._agents[aid].has_aegis = True
+
+        # 3c. Assign sentinel agents (highest-degree nodes preferred)
+        if self._config.num_sentinels > 0:
+            self._assign_sentinels()
 
         # 4. Seed initial infections
         num_seeds = max(1, int(self._config.num_agents * self._config.initial_infected_pct))
@@ -358,6 +372,75 @@ class SimulationEngine:
                     }
                 )
 
+        # Phase 3b: Sentinel-driven recovery
+        # Sentinel agents observe their neighbors. When an infected neighbor
+        # is detected, the sentinel attempts dendritic processing (strip and
+        # re-scan). Successful neutralization provokes direct recovery;
+        # failed neutralization (re-scan gate drops content) escalates to
+        # quarantine instead. This models the immunological role of dendritic
+        # cells presenting processed antigens to provoke adaptive recovery.
+        sentinel_ids = [
+            aid
+            for aid, agent in self._agents.items()
+            if agent.is_sentinel and agent.status in (AgentStatus.CLEAN, AgentStatus.RECOVERED)
+        ]
+        for sentinel_id in sentinel_ids:
+            neighbors = self._graph.get_neighbors(sentinel_id)
+            for target_id in neighbors:
+                target = self._agents[target_id]
+                if target.status != AgentStatus.INFECTED:
+                    continue
+
+                # The sentinel observes the infected agent's last payload
+                payload_text = target.last_payload_text or ""
+                if not payload_text:
+                    continue
+
+                # Run scanner detection on the payload
+                scan_result = self._run_shield_scan(sentinel_id, payload_text)
+                if not scan_result.get("detected", False):
+                    continue
+
+                threat_score = scan_result.get("threat_score", 0.0)
+
+                # Simulate dendritic processing with re-scan gate.
+                # A successful re-scan (content passes) means the sentinel
+                # can safely neutralize the injection → recovery.
+                # A failed re-scan (content dropped) means residual danger
+                # → quarantine instead.
+                rescan_result = self._run_shield_scan(sentinel_id, payload_text)
+                rescan_score = rescan_result.get("threat_score", 0.0)
+                rescan_threshold = 0.5 * threat_score  # mirrors DEFAULT_RESCAN_RATIO
+
+                # Probabilistic recovery (not guaranteed)
+                if rescan_score < rescan_threshold and not rescan_result.get("detected", False):
+                    # Re-scan gate passed: sentinel neutralized the payload
+                    if self._rng.random() < self._config.sentinel_recovery_prob:
+                        target.status = AgentStatus.RECOVERED
+                        target.recovery_tick = self._tick_count
+                        status_changes.append({
+                            "agent_id": target_id,
+                            "from": AgentStatus.INFECTED.value,
+                            "to": AgentStatus.RECOVERED.value,
+                            "tick": self._tick_count,
+                            "sentinel": sentinel_id,
+                            "mechanism": "dendritic_recovery",
+                        })
+                else:
+                    # Re-scan gate tripped: escalate to quarantine
+                    if self._rng.random() < self._config.sentinel_recovery_prob:
+                        target.status = AgentStatus.QUARANTINED
+                        target.quarantine_tick = self._tick_count
+                        target.detected_status = AgentStatus.QUARANTINED
+                        status_changes.append({
+                            "agent_id": target_id,
+                            "from": AgentStatus.INFECTED.value,
+                            "to": AgentStatus.QUARANTINED.value,
+                            "tick": self._tick_count,
+                            "sentinel": sentinel_id,
+                            "mechanism": "dendritic_quarantine",
+                        })
+
         # Phase 4: Quarantine of infected agents (AEGIS only)
         # Quarantine is an AEGIS capability — agents without AEGIS have no
         # automated detection mechanism and stay infected until max_ticks.
@@ -462,6 +545,7 @@ class SimulationEngine:
                 "recovery_tick": agent.recovery_tick,
                 "secondary_infections": agent.secondary_infections,
                 "has_aegis": agent.has_aegis,
+                "is_sentinel": agent.is_sentinel,
                 "content_hash": agent.content_hash,
             }
             for agent in self._agents.values()
@@ -982,6 +1066,33 @@ class SimulationEngine:
         else:
             # Default: random
             return self._rng.sample(all_ids, n)
+
+    def _assign_sentinels(self) -> None:
+        """Designate *num_sentinels* agents as sentinel nodes.
+
+        Prefers high-degree (hub) nodes — sentinels placed at hubs can
+        observe more neighbors, maximizing their recovery impact.
+        Sentinel agents always have AEGIS enabled (they need the scanner).
+        """
+        assert self._graph is not None
+        n = min(self._config.num_sentinels, len(self._agents))
+        if n <= 0:
+            return
+
+        # Pick from highest-degree nodes
+        hub_candidates = self._graph.get_hubs(top_n=n * 2)
+        if len(hub_candidates) >= n:
+            chosen = self._rng.sample(hub_candidates, n)
+        else:
+            remaining = [
+                aid for aid in self._agents if aid not in hub_candidates
+            ]
+            extra = self._rng.sample(remaining, min(n - len(hub_candidates), len(remaining)))
+            chosen = hub_candidates + extra
+
+        for aid in chosen:
+            self._agents[aid].is_sentinel = True
+            self._agents[aid].has_aegis = True  # sentinels always have AEGIS
 
     def _has_any_module_enabled(self) -> bool:
         """Return True if any AEGIS module toggle is enabled."""

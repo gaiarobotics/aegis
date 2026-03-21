@@ -63,3 +63,12 @@ recovery:
   quarantine_on_hostile_nk: true
   purge_window_hours: 2
   drift_sigma_threshold: 2.0
+
+# Dendritic processing: strip injection payloads and retransmit with danger signals.
+# Analogous to dendritic cell antigen presentation activating adaptive immunity.
+# Warning: if improperly performed, this has the risk of amplifying the worm.
+# Off by default for the moment until further testing is done.
+dendritic:
+  enabled: false
+  danger_signal: stop_and_alert_human
+  preserve_summary: true

@@ -22,11 +22,16 @@ _PROFILE_DIR = Path(__file__).resolve().parent.parent / "profiles"
 
 
 class Sentinel:
-    """Passive Moltbook sentinel agent.
+    """Passive Moltbook sentinel agent with optional dendritic processing.
 
     Bootstraps an AEGIS Shield with the sentinel profile (zero-write broker),
     subscribes to submolts, likes posts for visibility, and scans all content
     for compromise indicators.
+
+    When dendritic processing is enabled (via profile config), detected
+    injections are stripped, tagged with danger signals, and retransmitted
+    as signed DendriticAlerts — analogous to dendritic cell antigen
+    presentation activating T-helper cells.
     """
 
     declared_capabilities: tuple[str, ...] = ("like", "subscribe", "read")
@@ -43,7 +48,53 @@ class Sentinel:
 
         monitoring_client = getattr(self._shield, "_monitoring_client", None)
         self._reporter = SentinelReporter(monitoring_client=monitoring_client)
-        self._observer = Observer(shield=self._shield, reporter=self._reporter)
+
+        # Initialize dendritic processing if enabled
+        dendritic_processor = None
+        alert_channel = None
+        signing_key = None
+        key_type = "hmac-sha256"
+        sentinel_id = getattr(self._shield.config, "agent_id", "sentinel")
+
+        dendritic_cfg = getattr(config, "dendritic", None)
+        dendritic_enabled = dendritic_cfg.get("enabled", False) if isinstance(dendritic_cfg, dict) else False
+
+        if dendritic_enabled:
+            try:
+                from aegis.dendritic import AlertChannel, DendriticProcessor
+                from aegis.identity.attestation import generate_keypair
+                from aegis.scanner.content_gate import ContentGate
+                from aegis.scanner.sanitizer import OutboundSanitizer
+
+                content_gate = getattr(self._shield, "_content_gate", None)
+                sanitizer = OutboundSanitizer()
+
+                dendritic_processor = DendriticProcessor(
+                    content_gate=content_gate,
+                    sanitizer=sanitizer,
+                )
+
+                keypair = generate_keypair(key_type)
+                signing_key = keypair.private_key
+
+                alert_channel = AlertChannel(
+                    monitoring_client=monitoring_client,
+                    sentinel_public_key=keypair.public_key,
+                    key_type=key_type,
+                )
+                logger.info("Dendritic processing enabled for sentinel")
+            except Exception:
+                logger.debug("Dendritic processing init failed", exc_info=True)
+
+        self._observer = Observer(
+            shield=self._shield,
+            reporter=self._reporter,
+            dendritic_processor=dendritic_processor,
+            alert_channel=alert_channel,
+            sentinel_id=sentinel_id,
+            signing_key=signing_key,
+            key_type=key_type,
+        )
         self._coverage = CoverageManager(config)
 
     def process_posts(self, posts: list[dict[str, Any]]) -> list[ObservationResult]:

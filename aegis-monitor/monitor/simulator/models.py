@@ -84,6 +84,7 @@ class SimAgent:
     recovery_tick: int | None = None
     secondary_infections: int = 0
     has_aegis: bool = False
+    is_sentinel: bool = False
     content_hash: str | None = None
     last_payload_text: str | None = None
 
@@ -210,6 +211,8 @@ class SimConfig:
     corpus: CorpusConfig = field(default_factory=CorpusConfig)
     modules: ModuleToggles = field(default_factory=ModuleToggles)
     aegis_adoption_rate: float = 0.9
+    num_sentinels: int = 0
+    sentinel_recovery_prob: float = 0.6
 
 
 # ---------------------------------------------------------------------------

@@ -66,7 +66,9 @@ recovery:
 
 # Dendritic processing: strip injection payloads and retransmit with danger signals.
 # Analogous to dendritic cell antigen presentation activating adaptive immunity.
+# Warning: if improperly performed, this has the risk of amplifying the worm.
+# Off by default for the moment until further testing is done.
 dendritic:
-  enabled: true
+  enabled: false
   danger_signal: stop_and_alert_human
   preserve_summary: true

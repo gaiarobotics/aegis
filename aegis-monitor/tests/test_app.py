@@ -6,7 +6,6 @@ import time
 import pytest
 
 from monitor.app import app
-from monitor.config import MonitorConfig
 
 
 @pytest.fixture

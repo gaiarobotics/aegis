@@ -171,6 +171,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
     # Synchronous in-memory mutations first
     r0.add_record(record)
     graph.mark_compromised(record.compromised_agent_id)
+    await app.state.cache.invalidate("graph")
 
     # Prepare models for DB persistence
     node = graph.graph.nodes.get(record.compromised_agent_id, {})
@@ -454,6 +455,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         is_quarantined=data.get("is_quarantined", False),
         edges=edges,
     )
+    await app.state.cache.invalidate("graph")
 
     # Extract content hash
     content_hash = data.get("content_hash", "")
@@ -659,6 +661,11 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
 
 @app.get("/api/v1/graph")
 async def get_graph(_key: str = Depends(verify_api_key)):
+    cache = app.state.cache
+    cached = await cache.get("graph")
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     graph: AgentGraph = app.state.graph
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     graph_data = graph.get_graph_state()
@@ -669,6 +676,7 @@ async def get_graph(_key: str = Depends(verify_api_key)):
     for node in graph_data["nodes"]:
         node["topic_color"] = cluster_colors.get(node["id"], "")
 
+    await cache.set("graph", json.dumps(graph_data).encode())
     return graph_data
 
 
@@ -887,6 +895,8 @@ async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)
     for aid in affected_agents:
         graph.mark_killswitched(aid, True)
 
+    await app.state.cache.invalidate("graph")
+
     await _broadcast(app.state, {
         "type": "killswitch",
         "action": "created",
@@ -970,6 +980,8 @@ async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_ke
     # Update graph synchronously after DB transaction
     for aid in unblocked_agents:
         graph.mark_killswitched(aid, False)
+
+    await app.state.cache.invalidate("graph")
 
     if deleted:
         await _broadcast(app.state, {
@@ -1071,6 +1083,7 @@ async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)
     for aid in affected_agents:
         graph.mark_quarantined(aid, True)
 
+    await app.state.cache.invalidate("graph")
     await app.state.cache.invalidate("threat-intel")
 
     await _broadcast(app.state, {
@@ -1159,6 +1172,7 @@ async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_ke
     for aid in unquarantined_agents:
         graph.mark_quarantined(aid, False)
 
+    await app.state.cache.invalidate("graph")
     await app.state.cache.invalidate("threat-intel")
 
     if deleted:

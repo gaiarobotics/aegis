@@ -171,7 +171,9 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
     # Synchronous in-memory mutations first
     r0.add_record(record)
     graph.mark_compromised(record.compromised_agent_id)
+    app.state.agent_counts["compromised"] += 1
     await app.state.cache.invalidate("graph")
+    await app.state.cache.invalidate("metrics")
 
     # Prepare models for DB persistence
     node = graph.graph.nodes.get(record.compromised_agent_id, {})
@@ -318,6 +320,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         validation_status = "confirmed"
 
     await app.state.cache.invalidate("threat-intel")
+    await app.state.cache.invalidate("metrics")
 
     at_risk = graph.get_at_risk_agents(record.compromised_agent_id)
 
@@ -429,6 +432,7 @@ async def receive_threat(data: dict, _key: str = Depends(verify_api_key)):
         f"agent:{data.get('agent_id', '')}",
     ]
     clusterer.add_event(event_id, " ".join(meta_parts))
+    await app.state.cache.invalidate("metrics")
 
     await _broadcast(app.state, {
         "type": "threat",
@@ -447,6 +451,9 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
     agent_id = data.get("agent_id", "")
     edges = data.get("edges", [])
 
+    if agent_id not in graph.graph:
+        app.state.agent_counts["total"] += 1
+
     graph.update_from_heartbeat(
         agent_id=agent_id,
         operator_id=data.get("operator_id", ""),
@@ -456,6 +463,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
         edges=edges,
     )
     await app.state.cache.invalidate("graph")
+    await app.state.cache.invalidate("metrics")
 
     # Extract content hash
     content_hash = data.get("content_hash", "")
@@ -682,21 +690,15 @@ async def get_graph(_key: str = Depends(verify_api_key)):
 
 @app.get("/api/v1/metrics")
 async def get_metrics(_key: str = Depends(verify_api_key)):
-    r0: R0Estimator = app.state.r0
-    graph: AgentGraph = app.state.graph
+    cache = app.state.cache
+    cached = await cache.get("metrics")
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     clusterer: ThreatClusterer = app.state.clusterer
     db: Database = app.state.db
-    cfg: MonitorConfig = app.state.config
-
-    graph_state = graph.get_graph_state()
-    compromised = sum(1 for n in graph_state["nodes"] if n["is_compromised"])
-    quarantined = sum(1 for n in graph_state["nodes"] if n["is_quarantined"])
-    killswitched = sum(1 for n in graph_state["nodes"] if n["is_killswitched"])
-
-    await run_db(db.get_events, event_type="threat", limit=0)
 
     cluster_info = clusterer.get_cluster_info()
-    # Filter out noise cluster
     real_clusters = [c for c in cluster_info if c["cluster_id"] >= 0]
 
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
@@ -706,18 +708,21 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
     active_threats = await run_db(db.get_events, event_type="threat",
                                   since=time.time() - 3600)
 
-    return {
-        "r0": r0.estimate_r0(cfg.r0_window_hours),
-        "r0_trend": r0.get_r0_trend(cfg.r0_window_hours),
+    counts = app.state.agent_counts
+    result = {
+        "r0": app.state.cached_r0,
+        "r0_trend": app.state.cached_r0_trend,
         "active_threats": len(active_threats),
-        "total_agents": len(graph_state["nodes"]),
-        "compromised_agents": compromised,
-        "quarantined_agents": quarantined,
-        "killswitched_agents": killswitched,
+        "total_agents": counts["total"],
+        "compromised_agents": counts["compromised"],
+        "quarantined_agents": counts["quarantined"],
+        "killswitched_agents": counts["killswitched"],
         "cluster_count": len(real_clusters),
         "clusters": cluster_info,
         "topic_cluster_count": topic_cluster_count,
     }
+    await cache.set("metrics", json.dumps(result).encode())
+    return result
 
 
 @app.get("/api/v1/threat-intel")
@@ -895,7 +900,13 @@ async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)
     for aid in affected_agents:
         graph.mark_killswitched(aid, True)
 
+    if rule.blocked and rule.scope == "agent":
+        app.state.agent_counts["killswitched"] += 1
+    elif rule.blocked and rule.scope == "swarm":
+        app.state.agent_counts["killswitched"] = app.state.agent_counts["total"]
+
     await app.state.cache.invalidate("graph")
+    await app.state.cache.invalidate("metrics")
 
     await _broadcast(app.state, {
         "type": "killswitch",
@@ -982,6 +993,7 @@ async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_ke
         graph.mark_killswitched(aid, False)
 
     await app.state.cache.invalidate("graph")
+    await app.state.cache.invalidate("metrics")
 
     if deleted:
         await _broadcast(app.state, {
@@ -1083,8 +1095,14 @@ async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)
     for aid in affected_agents:
         graph.mark_quarantined(aid, True)
 
+    if rule.quarantined and rule.scope == "agent":
+        app.state.agent_counts["quarantined"] += 1
+    elif rule.quarantined and rule.scope == "swarm":
+        app.state.agent_counts["quarantined"] = app.state.agent_counts["total"]
+
     await app.state.cache.invalidate("graph")
     await app.state.cache.invalidate("threat-intel")
+    await app.state.cache.invalidate("metrics")
 
     await _broadcast(app.state, {
         "type": "quarantine",
@@ -1174,6 +1192,7 @@ async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_ke
 
     await app.state.cache.invalidate("graph")
     await app.state.cache.invalidate("threat-intel")
+    await app.state.cache.invalidate("metrics")
 
     if deleted:
         await _broadcast(app.state, {

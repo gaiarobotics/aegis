@@ -45,10 +45,12 @@ class RemoteThreatIntel:
         service_url: str,
         api_key: str,
         poll_interval: float = 30,
+        http_pool: Any = None,
     ) -> None:
         self._url = f"{service_url.rstrip('/')}/threat-intel"
         self._api_key = api_key
         self._poll_interval = poll_interval
+        self._http_pool = http_pool
 
         self._compromised_agents: set[str] = set()
         self._quarantined_agents: set[str] = set()
@@ -131,12 +133,19 @@ class RemoteThreatIntel:
 
     def _poll(self) -> None:
         try:
-            req = urllib.request.Request(self._url, method="GET")
-            req.add_header("Accept", "application/json")
+            headers: dict[str, str] = {"Accept": "application/json"}
             if self._api_key:
-                req.add_header("Authorization", f"Bearer {self._api_key}")
-            with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
-                data: dict[str, Any] = json.loads(resp.read())
+                headers["Authorization"] = f"Bearer {self._api_key}"
+
+            if self._http_pool is not None:
+                resp = self._http_pool.get(self._url, headers=headers, timeout=_POLL_TIMEOUT)
+                data: dict[str, Any] = resp.json()
+            else:
+                req = urllib.request.Request(self._url, method="GET")
+                for k, v in headers.items():
+                    req.add_header(k, v)
+                with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
+                    data = json.loads(resp.read())
 
             compromised_agents = set(data.get("compromised_agents", []))
             quarantined_agents = set(data.get("quarantined_agents", []))

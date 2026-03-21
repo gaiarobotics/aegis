@@ -431,11 +431,11 @@ class TopicClusterer:
         leaves: list[dict[str, Any]] = []
         for i, aid in enumerate(ids):
             status = agent_statuses.get(aid, "active")
-            is_compromised = aid in compromised or status in ("compromised", "quarantined")
             leaf: dict[str, Any] = {
                 "agent_id": aid,
                 "status": status,
                 "cluster_id": stable_map.get(aid, -1),
+                "is_compromised": aid in compromised or status in ("compromised", "quarantined"),
             }
             leaves.append(leaf)
 

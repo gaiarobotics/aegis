@@ -84,6 +84,7 @@ def _forward_request(
     body: bytes,
     api_key: str,
     extra_headers: dict[str, str] | None = None,
+    http_pool: Any = None,
 ) -> tuple[int, dict]:
     """Forward a JSON request to the upstream provider and return (status, parsed_json)."""
     headers = {"Content-Type": "application/json"}
@@ -91,6 +92,13 @@ def _forward_request(
         headers["Authorization"] = f"Bearer {api_key}"
     if extra_headers:
         headers.update(extra_headers)
+
+    if http_pool is not None:
+        try:
+            resp = http_pool.post(url, body=body, headers=headers)
+            return resp.status_code, resp.json()
+        except Exception as exc:
+            return 502, {"error": {"message": f"Upstream connection failed: {exc}", "type": "upstream_error", "code": "connection_failed"}}
 
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
@@ -163,6 +171,7 @@ def handle_chat_completions(
     shield: Shield,
     upstream_url: str,
     upstream_key: str,
+    http_pool: Any = None,
 ) -> tuple[int, dict]:
     """Handle an OpenAI-format /v1/chat/completions request.
 
@@ -191,7 +200,7 @@ def handle_chat_completions(
     if is_streaming:
         return _handle_streaming_completions(endpoint, encoded, upstream_key, shield)
 
-    status, response = _forward_request(endpoint, encoded, upstream_key)
+    status, response = _forward_request(endpoint, encoded, upstream_key, http_pool=http_pool)
     if status >= 400:
         return status, response
 
@@ -248,6 +257,7 @@ def handle_messages(
     shield: Shield,
     upstream_url: str,
     upstream_key: str,
+    http_pool: Any = None,
 ) -> tuple[int, dict]:
     """Handle an Anthropic-format /v1/messages request.
 
@@ -279,25 +289,37 @@ def handle_messages(
         headers_extra["anthropic-version"] = "2023-06-01"
 
     encoded = json.dumps(body).encode()
-    req = urllib.request.Request(
-        endpoint,
-        data=encoded,
-        headers={"Content-Type": "application/json", **headers_extra},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req) as resp:
-            raw = resp.read()
-            status = resp.status
-            response = json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        raw = exc.read()
+
+    if http_pool is not None:
         try:
-            return exc.code, json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return exc.code, {"error": {"message": raw.decode(errors="replace"), "type": "upstream_error", "code": "upstream_error"}}
-    except urllib.error.URLError as exc:
-        return 502, {"error": {"message": f"Upstream connection failed: {exc.reason}", "type": "upstream_error", "code": "connection_failed"}}
+            pool_resp = http_pool.post(
+                endpoint, body=encoded,
+                headers={"Content-Type": "application/json", **headers_extra},
+            )
+            status = pool_resp.status_code
+            response = pool_resp.json()
+        except Exception as exc:
+            return 502, {"error": {"message": f"Upstream connection failed: {exc}", "type": "upstream_error", "code": "connection_failed"}}
+    else:
+        req = urllib.request.Request(
+            endpoint,
+            data=encoded,
+            headers={"Content-Type": "application/json", **headers_extra},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                raw = resp.read()
+                status = resp.status
+                response = json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            try:
+                return exc.code, json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                return exc.code, {"error": {"message": raw.decode(errors="replace"), "type": "upstream_error", "code": "upstream_error"}}
+        except urllib.error.URLError as exc:
+            return 502, {"error": {"message": f"Upstream connection failed: {exc.reason}", "type": "upstream_error", "code": "connection_failed"}}
 
     # 4. Sanitize output
     response = _sanitize_anthropic_dict(shield, response)

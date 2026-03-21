@@ -43,6 +43,7 @@ class MonitoringClient:
         operator_id: str = "",
         keypair: Any = None,
         content_hash_provider: Any = None,
+        http_pool: Any = None,
     ) -> None:
         self._config = config
         self._enabled = config.enabled
@@ -64,6 +65,7 @@ class MonitoringClient:
         self._operator_id = operator_id
         self._keypair = keypair
         self._content_hash_provider = content_hash_provider
+        self._http_pool = http_pool
 
         self._queue: deque[dict[str, Any]] = deque(maxlen=self._queue_max)
         self._queue_lock = threading.Lock()
@@ -262,14 +264,15 @@ class MonitoringClient:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
-        body = json.dumps(payload).encode("utf-8")
-
-        # Try httpx first (optional), fall back to stdlib urllib
         for attempt in range(self._retry_max):
             try:
-                if self._try_httpx(url, body, headers):
-                    return True
-                if self._try_urllib(url, body, headers):
+                if self._http_pool is not None:
+                    resp = self._http_pool.post(
+                        url, json_body=payload, headers=headers, timeout=self._timeout,
+                    )
+                    if resp.is_success:
+                        return True
+                elif self._try_legacy_post(url, payload, headers):
                     return True
             except Exception:
                 logger.debug(
@@ -283,24 +286,20 @@ class MonitoringClient:
         return False
 
     @staticmethod
-    def _try_httpx(url: str, body: bytes, headers: dict) -> bool:
-        """Attempt to POST using httpx. Returns True on 2xx."""
+    def _try_legacy_post(url: str, payload: dict, headers: dict) -> bool:
+        """Attempt to POST using httpx or urllib fallback. Returns True on 2xx."""
+        body = json.dumps(payload).encode("utf-8")
         try:
             import httpx  # noqa: F811
-
             resp = httpx.post(url, content=body, headers=headers, timeout=10)
             return 200 <= resp.status_code < 300
         except ImportError:
-            return False
+            pass
         except Exception:
-            return False
+            pass
 
-    @staticmethod
-    def _try_urllib(url: str, body: bytes, headers: dict) -> bool:
-        """Attempt to POST using urllib.request. Returns True on 2xx."""
         try:
             import urllib.request
-
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return 200 <= resp.status < 300

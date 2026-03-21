@@ -143,6 +143,10 @@ class Shield:
         self._self_integrity_blocked = False
         self._state_store = None
 
+        # Shared connection pool
+        from aegis.core.http import HttpPool
+        self._http_pool = HttpPool()
+
         self._init_state_store()
         self._init_modules()
         self._init_platform_detector()
@@ -177,7 +181,7 @@ class Shield:
         if self._config.is_module_enabled("scanner"):
             try:
                 from aegis.scanner import Scanner
-                self._scanner = Scanner(config=self._config)
+                self._scanner = Scanner(config=self._config, http_pool=self._http_pool)
             except Exception:
                 logger.debug("Scanner module init failed", exc_info=True)
 
@@ -354,6 +358,7 @@ class Shield:
                 operator_id=self._config.operator_id,
                 keypair=keypair,
                 content_hash_provider=self._get_content_hashes,
+                http_pool=self._http_pool,
             )
 
             # Wire compromise callback
@@ -378,6 +383,7 @@ class Shield:
                 config=ks_cfg,
                 agent_id=self._config.agent_id,
                 operator_id=self._config.operator_id,
+                http_pool=self._http_pool,
             )
             self._killswitch.start()
         except Exception:
@@ -396,6 +402,7 @@ class Shield:
                 agent_id=self._config.agent_id,
                 operator_id=self._config.operator_id,
                 poll_interval=mon_cfg.quarantine_poll_interval,
+                http_pool=self._http_pool,
             )
             self._remote_quarantine.start()
         except Exception:
@@ -412,6 +419,7 @@ class Shield:
                 service_url=mon_cfg.service_url,
                 api_key=mon_cfg.api_key,
                 poll_interval=mon_cfg.threat_intel_poll_interval,
+                http_pool=self._http_pool,
             )
             self._remote_threat_intel.start()
         except Exception:
@@ -546,6 +554,51 @@ class Shield:
     def mode(self) -> str:
         """Current mode: 'observe' or 'enforce'."""
         return self._mode
+
+    @property
+    def http_pool(self):
+        """Access the shared HTTP connection pool."""
+        return self._http_pool
+
+    def close(self) -> None:
+        """Stop all background threads and release HTTP resources."""
+        if self._monitoring_client is not None:
+            try:
+                self._monitoring_client.stop()
+            except Exception:
+                logger.debug("Monitoring client stop failed", exc_info=True)
+        if self._killswitch is not None:
+            try:
+                self._killswitch.stop()
+            except Exception:
+                logger.debug("Killswitch stop failed", exc_info=True)
+        if self._remote_quarantine is not None:
+            try:
+                self._remote_quarantine.stop()
+            except Exception:
+                logger.debug("Remote quarantine stop failed", exc_info=True)
+        if self._remote_threat_intel is not None:
+            try:
+                self._remote_threat_intel.stop()
+            except Exception:
+                logger.debug("Remote threat intel stop failed", exc_info=True)
+        if self._self_integrity is not None:
+            try:
+                self._self_integrity.stop()
+            except Exception:
+                logger.debug("Self-integrity stop failed", exc_info=True)
+        self._http_pool.close()
+
+    async def aclose(self) -> None:
+        """Stop all background threads and release both sync and async HTTP resources.
+
+        Runs the blocking ``close()`` (which joins daemon threads) in a
+        thread-pool executor so the event loop is not stalled.
+        """
+        import asyncio
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.close)
+        await self._http_pool.aclose()
 
     @property
     def scanner(self):
@@ -753,6 +806,231 @@ class Shield:
                         contagion_score = 1.0
 
                 # Lever 2: content hash similarity
+                if not contagion_hit and self._content_hash_tracker is not None:
+                    hashes = self._content_hash_tracker.get_hashes()
+                    check_hash = hashes.get("content_hash", "")
+                    if check_hash:
+                        threshold = self._config.monitoring.contagion_similarity_threshold
+                        suspicious, sim_score = self._remote_threat_intel.check_hash(
+                            check_hash, threshold=threshold,
+                        )
+                        if suspicious:
+                            contagion_hit = True
+                            contagion_source = "content_hash"
+                            contagion_score = sim_score
+
+                if contagion_hit:
+                    blocked = self._mode == "enforce"
+                    result.details["contagion"] = {
+                        "source": contagion_source,
+                        "score": contagion_score,
+                        "blocked": blocked,
+                    }
+                    result.is_threat = True
+                    result.threat_score = max(result.threat_score, contagion_score)
+
+                    if blocked:
+                        raise ThreatBlockedError(
+                            result,
+                            f"Pre-emptive contagion block: {contagion_source} "
+                            f"(score={contagion_score:.3f})",
+                        )
+            except ThreatBlockedError:
+                raise
+            except Exception:
+                logger.debug("Pre-emptive contagion check failed", exc_info=True)
+
+        # Log telemetry
+        self._telemetry.log_event(
+            "scan_input",
+            threat_score=result.threat_score,
+            is_threat=result.is_threat,
+            mode=self._mode,
+        )
+
+        return result
+
+    async def ascan_input(
+        self,
+        text: str,
+        source_agent_id: str | None = None,
+        context: list[str] | None = None,
+    ) -> ScanResult:
+        """Async variant of ``scan_input()``.
+
+        Uses ``await self._scanner.ascan_input()`` for the I/O-bound LLM
+        screen step.  All other steps (NK cell, recovery, monitoring,
+        telemetry) remain synchronous as they are CPU-bound or fire-and-forget.
+        """
+        result = ScanResult()
+
+        _was_recovery_quarantined = (
+            self._recovery_quarantine is not None
+            and self._recovery_quarantine.is_quarantined()
+        )
+
+        compromised_hashes: set[int] | None = None
+        if self._remote_threat_intel is not None and context:
+            try:
+                compromised_hashes = self._remote_threat_intel.get_compromised_hashes()
+                if not compromised_hashes:
+                    compromised_hashes = None
+            except Exception:
+                logger.debug("Failed to get compromised hashes", exc_info=True)
+
+        # Step 1: Scanner (async)
+        if self._scanner is not None:
+            scan_result = await self._scanner.ascan_input(
+                text, context=context, compromised_hashes=compromised_hashes,
+            )
+            result.threat_score = scan_result.threat_score
+            result.is_threat = scan_result.is_threat
+            result.details["scanner"] = {
+                "matches": len(scan_result.matches),
+                "threat_score": scan_result.threat_score,
+                "is_threat": scan_result.is_threat,
+            }
+
+        # Content gate
+        if self._content_gate is not None:
+            try:
+                source_platform = None
+                if source_agent_id:
+                    canonical = self.resolve_agent_id(source_agent_id)
+                    for prefix in ("moltbook", "openclaw", "slack", "discord"):
+                        if canonical.startswith(f"{prefix}:"):
+                            source_platform = prefix
+                            break
+
+                gated = self._content_gate.process(text, platform=source_platform)
+                if gated is not None:
+                    result.details["content_gate"] = {
+                        "gated": True,
+                        "summary": gated.summary,
+                        "method": gated.method,
+                        "original_length": gated.original_length,
+                        "metadata": gated.metadata,
+                    }
+            except Exception:
+                logger.debug("Content gate processing failed", exc_info=True)
+
+        # Step 2: Identity / NK cell assessment
+        if self._nk_cell is not None:
+            try:
+                from aegis.identity import AgentContext
+                ctx = AgentContext(
+                    agent_id="self",
+                    has_attestation=False,
+                    attestation_valid=False,
+                    attestation_expired=False,
+                    capabilities_within_scope=True,
+                    drift_sigma=0.0,
+                    clean_interaction_ratio=1.0,
+                    scanner_threat_score=result.threat_score,
+                    communication_count=0,
+                    purpose_hash_changed=False,
+                )
+                verdict = self._nk_cell.assess(ctx)
+                result.details["nk_cell"] = {
+                    "score": verdict.score,
+                    "verdict": verdict.verdict,
+                }
+                if verdict.verdict == "hostile":
+                    result.is_threat = True
+            except Exception:
+                logger.debug("NK cell assessment failed", exc_info=True)
+
+        # Step 3: Recovery auto-quarantine check
+        if self._recovery_quarantine is not None and result.is_threat:
+            nk_verdict = result.details.get("nk_cell")
+            if nk_verdict:
+                try:
+                    from aegis.identity import NKVerdict
+                    verdict_obj = NKVerdict(
+                        score=nk_verdict["score"],
+                        verdict=nk_verdict["verdict"],
+                        recommended_action="quarantine" if nk_verdict["verdict"] == "hostile" else "none",
+                    )
+                    entered = self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
+                    if entered and self._state_store is not None:
+                        try:
+                            self._state_store.enter_quarantine(
+                                reason="Auto-quarantine: hostile NK verdict",
+                                severity="high",
+                            )
+                        except Exception:
+                            logger.debug("State store quarantine recording failed", exc_info=True)
+                except Exception:
+                    logger.debug("Recovery auto-quarantine failed", exc_info=True)
+
+            if _was_recovery_quarantined:
+                escalation_reason = f"Threat detected while already quarantined (score={result.threat_score})"
+                self._recovery_quarantine.escalate(escalation_reason)
+                if self._state_store is not None:
+                    try:
+                        self._state_store.escalate_quarantine(escalation_reason)
+                    except Exception:
+                        logger.debug("State store escalation recording failed", exc_info=True)
+
+        # Compute per-message content hash
+        _per_msg_hash_hex = ""
+        if self._content_hash_tracker is not None:
+            try:
+                from aegis.behavior.content_hash import SemanticHasher
+                _hasher = SemanticHasher()
+                _per_msg_hash_hex = f"{_hasher.hash(text):032x}"
+            except Exception:
+                logger.debug("Per-message hash computation failed", exc_info=True)
+
+        # Monitoring reporting
+        if self._monitoring_client is not None:
+            try:
+                if result.is_threat:
+                    scanner_info = result.details.get("scanner", {})
+                    nk_info = result.details.get("nk_cell", {})
+                    self._monitoring_client.send_threat_event(
+                        threat_score=result.threat_score,
+                        is_threat=True,
+                        scanner_match_count=scanner_info.get("matches", 0),
+                        nk_score=nk_info.get("score", 0.0),
+                        nk_verdict=nk_info.get("verdict", ""),
+                    )
+                    nk_verdict_str = result.details.get("nk_cell", {}).get("verdict", "")
+                    if nk_verdict_str == "hostile":
+                        self._monitoring_client.send_compromise_report(
+                            compromised_agent_id=self._config.agent_id,
+                            source="nk_cell",
+                            nk_score=nk_info.get("score", 0.0),
+                            nk_verdict=nk_verdict_str,
+                            content_hash_hex=_per_msg_hash_hex,
+                        )
+            except Exception:
+                logger.debug("Monitoring threat event reporting failed", exc_info=True)
+
+        # Content hash update
+        if self._content_hash_tracker is not None:
+            try:
+                self._content_hash_tracker.update(text)
+            except Exception:
+                logger.debug("Content hash update failed", exc_info=True)
+
+        # Pre-emptive contagion check
+        if self._remote_threat_intel is not None:
+            try:
+                contagion_hit = False
+                contagion_source = ""
+                contagion_score = 0.0
+
+                if source_agent_id:
+                    if self._remote_threat_intel.is_agent_compromised(source_agent_id):
+                        contagion_hit = True
+                        contagion_source = "compromised_sender"
+                        contagion_score = 1.0
+                    elif self._remote_threat_intel.is_agent_quarantined(source_agent_id):
+                        contagion_hit = True
+                        contagion_source = "quarantined_sender"
+                        contagion_score = 1.0
+
                 if not contagion_hit and self._content_hash_tracker is not None:
                     hashes = self._content_hash_tracker.get_hashes()
                     check_hash = hashes.get("content_hash", "")

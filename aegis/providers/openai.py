@@ -63,7 +63,53 @@ class OpenAIWrapper(BaseWrapper):
 
             return response
 
-        intercept_map = {"chat": {"completions": {"create": intercept_create}}}
+        # Detect async client
+        cls_name = type(client).__name__
+        if "Async" in cls_name:
+            async def async_intercept_create(*args: Any, **kwargs: Any) -> Any:
+                from aegis.shield import ThreatBlockedError
+
+                shield.check_killswitch()
+
+                messages = kwargs.get("messages", [])
+
+                # 1. Scan user input (async)
+                user_text = _extract_user_text(messages)
+                is_threat = False
+                if user_text:
+                    scan = await shield.ascan_input(user_text)
+                    is_threat = scan.is_threat
+                    if is_threat and shield.mode == "enforce":
+                        _record_trust_for_messages(shield, messages, clean=False)
+                        raise ThreatBlockedError(scan)
+
+                # 2. Tag provenance on messages
+                if messages:
+                    kwargs["messages"] = shield.wrap_messages(messages)
+
+                # 3. Call the real async method
+                response = await real_completions.create(*args, **kwargs)
+
+                # 4. Sanitize output
+                response = _sanitize_openai_response(shield, response)
+
+                # 4.5. Record response behavior
+                try:
+                    shield.record_response_behavior(
+                        response=response, provider="openai", kwargs=kwargs,
+                    )
+                except Exception:
+                    logger.debug("Behavior recording failed", exc_info=True)
+
+                # 5. Record trust interaction
+                _record_trust_for_messages(shield, messages, clean=not is_threat)
+
+                return response
+
+            intercept_map = {"chat": {"completions": {"create": async_intercept_create}}}
+        else:
+            intercept_map = {"chat": {"completions": {"create": intercept_create}}}
+
         return WrappedClient(
             client=client, shield=shield, tools=tools, intercept_map=intercept_map,
         )

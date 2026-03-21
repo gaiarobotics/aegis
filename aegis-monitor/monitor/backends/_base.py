@@ -27,6 +27,14 @@ class DatabaseBackend(Protocol):
         """Create tables and indexes if they don't exist."""
         ...
 
+    def transaction(self) -> Any:
+        """Return a context manager yielding a transaction handle.
+
+        The handle exposes ``execute``, ``fetchone``, and ``fetchall``.
+        Commits on clean exit, rolls back on exception.
+        """
+        ...
+
     def close(self) -> None:
         """Release connections / pools."""
         ...

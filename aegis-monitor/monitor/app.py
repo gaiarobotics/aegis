@@ -29,11 +29,12 @@ from monitor.validation import ReportValidator
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-async def _periodic_recluster(app_state, interval: float = 30.0):
-    """Run topic reclustering periodically instead of per-heartbeat."""
+async def _periodic_background(app_state, interval: float = 30.0):
+    """Periodic background work: reclustering, R0, pruning, counter sync."""
     while True:
         await asyncio.sleep(interval)
         try:
+            # 1. Topic reclustering
             graph_state = app_state.graph.get_graph_state()
             agent_statuses = {}
             for n in graph_state["nodes"]:
@@ -51,8 +52,26 @@ async def _periodic_recluster(app_state, interval: float = 30.0):
                 "type": "topic_clusters_updated",
                 "active_cluster_count": active_count,
             })
+
+            # 2. R0 computation + caching
+            cfg = app_state.config
+            app_state.cached_r0 = app_state.r0.estimate_r0(cfg.r0_window_hours)
+            app_state.cached_r0_trend = app_state.r0.get_r0_trend(cfg.r0_window_hours)
+
+            # 3. Prune old records
+            cutoff = time.time() - cfg.r0_window_hours * 3600
+            app_state.r0.prune(cutoff)
+
+            # 4. Recompute agent counters from graph (consistency correction)
+            nodes = graph_state["nodes"]
+            app_state.agent_counts = {
+                "total": len(nodes),
+                "compromised": sum(1 for n in nodes if n["is_compromised"]),
+                "quarantined": sum(1 for n in nodes if n["is_quarantined"]),
+                "killswitched": sum(1 for n in nodes if n["is_killswitched"]),
+            }
         except Exception:
-            logging.getLogger(__name__).debug("Recluster failed", exc_info=True)
+            logging.getLogger(__name__).debug("Background task failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -89,7 +108,11 @@ async def lifespan(app: FastAPI):  # noqa: C901
     # Simulator state is initialised by register_routes() below;
     # do NOT re-assign here or it will overwrite the PresetManager.
 
-    recluster_task = asyncio.create_task(_periodic_recluster(app.state))
+    app.state.cached_r0 = 0.0
+    app.state.cached_r0_trend = []
+    app.state.agent_counts = {"total": 0, "compromised": 0, "quarantined": 0, "killswitched": 0}
+
+    recluster_task = asyncio.create_task(_periodic_background(app.state))
     yield
     recluster_task.cancel()
 

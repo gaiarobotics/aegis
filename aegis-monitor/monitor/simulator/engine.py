@@ -65,9 +65,19 @@ class SimulationEngine:
             from aegis.behavior.content_hash import SemanticHasher
 
             self._semantic_hasher = SemanticHasher()
+            # Eagerly verify that sentence-transformers is importable so we
+            # don't silently produce empty hashes for the entire simulation.
+            self._semantic_hasher._ensure_model()
             self._hash_available = True
-        except ImportError:
-            pass
+        except ImportError as exc:
+            import warnings
+
+            warnings.warn(
+                f"Embedding-based content hashing is unavailable: {exc}. "
+                "Content hashes, topic velocity, and cluster analysis will "
+                "be disabled for this simulation run.",
+                stacklevel=2,
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle

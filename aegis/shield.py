@@ -247,8 +247,12 @@ class Shield:
                         self._content_hash_tracker = ContentHashTracker(
                             window_size=ch_cfg.window_size,
                         )
+                except ImportError:
+                    raise
                 except Exception:
                     logger.debug("Content hash tracker init failed", exc_info=True)
+            except ImportError:
+                raise
             except Exception:
                 logger.debug("Behavior module init failed", exc_info=True)
 

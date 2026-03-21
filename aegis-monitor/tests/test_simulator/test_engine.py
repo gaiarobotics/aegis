@@ -459,7 +459,7 @@ class TestContentHashing:
 
     def test_agents_get_content_hashes_after_tick(self):
         """After a tick, some agents should have non-None content_hash."""
-        pytest.importorskip("aegis")
+        pytest.importorskip("sentence_transformers")
         from monitor.simulator.engine import SimulationEngine
 
         cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
@@ -496,7 +496,7 @@ class TestContentHashing:
 
     def test_get_embedding_entries_returns_neighbors(self):
         """Embedding entries should have neighbors list with <= 5 items."""
-        pytest.importorskip("aegis")
+        pytest.importorskip("sentence_transformers")
         from monitor.simulator.engine import SimulationEngine
 
         cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
@@ -522,7 +522,7 @@ class TestContentHashing:
 
     def test_reset_clears_hash_state(self):
         """After reset, get_embedding_entries() should return empty entries."""
-        pytest.importorskip("aegis")
+        pytest.importorskip("sentence_transformers")
         from monitor.simulator.engine import SimulationEngine
 
         cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)

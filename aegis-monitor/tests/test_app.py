@@ -6,7 +6,6 @@ import time
 import pytest
 
 from monitor.app import app
-from monitor.config import MonitorConfig
 
 
 @pytest.fixture
@@ -26,6 +25,8 @@ def client(tmp_path):
         app.state.config.compromise_quorum = 1
         app.state.config.compromise_min_trust_tier = 0
         app.state.report_validator = ReportValidator(app.state.config)
+        from monitor.cache import InMemoryCache
+        app.state.cache = InMemoryCache()
         yield c
 
     os.environ.pop("MONITOR_DATABASE_PATH", None)

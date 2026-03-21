@@ -18,6 +18,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 _POLL_TIMEOUT = 5  # seconds
 
 
@@ -35,12 +36,14 @@ class RemoteQuarantine:
         agent_id: str,
         operator_id: str,
         poll_interval: float = 30,
+        http_pool: Any = None,
     ) -> None:
         self._url = f"{service_url.rstrip('/')}/quarantine/status"
         self._api_key = api_key
         self._agent_id = agent_id
         self._operator_id = operator_id
         self._poll_interval = poll_interval
+        self._http_pool = http_pool
 
         self._quarantined = False
         self._reason = ""
@@ -107,12 +110,19 @@ class RemoteQuarantine:
                 f"agent_id={urllib.request.quote(self._agent_id)}"
                 f"&operator_id={urllib.request.quote(self._operator_id)}"
             )
-            req = urllib.request.Request(full_url, method="GET")
-            req.add_header("Accept", "application/json")
+            headers: dict[str, str] = {"Accept": "application/json"}
             if self._api_key:
-                req.add_header("Authorization", f"Bearer {self._api_key}")
-            with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
-                data: dict[str, Any] = json.loads(resp.read())
+                headers["Authorization"] = f"Bearer {self._api_key}"
+
+            if self._http_pool is not None:
+                resp = self._http_pool.get(full_url, headers=headers, timeout=_POLL_TIMEOUT)
+                data: dict[str, Any] = resp.json()
+            else:
+                req = urllib.request.Request(full_url, method="GET")
+                for k, v in headers.items():
+                    req.add_header(k, v)
+                with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
+                    data = json.loads(resp.read())
 
             quarantined = bool(data.get("quarantined", False))
             reason = str(data.get("reason", ""))

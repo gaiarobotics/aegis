@@ -23,6 +23,13 @@ class Database:
     def __init__(self, url: str = "monitor.db") -> None:
         self._backend = create_backend(url)
 
+    def transaction(self):
+        """Return a context manager yielding a transaction handle.
+
+        Delegates to the underlying backend's ``transaction()`` method.
+        """
+        return self._backend.transaction()
+
     # ---- Agents ----
 
     def upsert_agent(self, node: AgentNode) -> None:

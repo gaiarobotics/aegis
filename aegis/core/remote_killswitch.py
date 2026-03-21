@@ -47,10 +47,12 @@ class RemoteKillswitch:
         config: KillswitchConfig,
         agent_id: str = "",
         operator_id: str = "",
+        http_pool: Any = None,
     ) -> None:
         self._ttl = config.ttl_seconds
         self._agent_id = agent_id
         self._operator_id = operator_id
+        self._http_pool = http_pool
 
         # Expand aliases and build per-URL state
         self._monitor_states: dict[str, MonitorState] = {}
@@ -121,10 +123,19 @@ class RemoteKillswitch:
                 f"{url}{sep}agent_id={urllib.request.quote(self._agent_id)}"
                 f"&operator_id={urllib.request.quote(self._operator_id)}"
             )
-            req = urllib.request.Request(full_url, method="GET")
-            req.add_header("Accept", "application/json")
-            with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
-                data: dict[str, Any] = json.loads(resp.read())
+
+            if self._http_pool is not None:
+                resp = self._http_pool.get(
+                    full_url,
+                    headers={"Accept": "application/json"},
+                    timeout=_POLL_TIMEOUT,
+                )
+                data: dict[str, Any] = resp.json()
+            else:
+                req = urllib.request.Request(full_url, method="GET")
+                req.add_header("Accept", "application/json")
+                with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
+                    data = json.loads(resp.read())
 
             blocked = bool(data.get("blocked", False))
             reason = str(data.get("reason", ""))

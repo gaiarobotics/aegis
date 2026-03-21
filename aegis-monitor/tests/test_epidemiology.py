@@ -94,3 +94,34 @@ class TestR0Trend:
         trend = est.get_r0_trend(window_hours=1, buckets=4)
         assert len(trend) == 4
         assert all(t["r0"] == 0.0 for t in trend)
+
+
+class TestPrune:
+    def test_prune_removes_old_records(self):
+        est = R0Estimator()
+        now = time.time()
+        est.add_record(_make_record("a1", "a2", now - 7200))  # old
+        est.add_record(_make_record("a1", "a3", now))          # recent
+        removed = est.prune(now - 3600)
+        assert removed == 1
+        assert len(est._records) == 1
+
+    def test_prune_returns_zero_when_nothing_to_remove(self):
+        est = R0Estimator()
+        now = time.time()
+        est.add_record(_make_record("a1", "a2", now))
+        removed = est.prune(now - 3600)
+        assert removed == 0
+
+    def test_prune_empty(self):
+        est = R0Estimator()
+        assert est.prune(time.time()) == 0
+
+    def test_prune_removes_all(self):
+        est = R0Estimator()
+        old = time.time() - 7200
+        est.add_record(_make_record("a1", "a2", old))
+        est.add_record(_make_record("a1", "a3", old))
+        removed = est.prune(time.time())
+        assert removed == 2
+        assert len(est._records) == 0

@@ -745,7 +745,7 @@ monitoring:
   enabled: true
   service_url: "https://aegis.gaiarobotics.com/api/v1"  # or your self-hosted instance
   api_key: "your-api-key"
-  heartbeat_interval_seconds: 60
+  heartbeat_interval_seconds: 120
 ```
 
 When enabled, each agent's AEGIS instance reports:

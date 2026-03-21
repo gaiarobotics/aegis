@@ -39,11 +39,12 @@ class Scanner:
         config: Optional AegisConfig. If not provided, defaults are used.
     """
 
-    def __init__(self, config: Optional[AegisConfig] = None) -> None:
+    def __init__(self, config: Optional[AegisConfig] = None, http_pool: Any = None) -> None:
         if config is None:
             config = AegisConfig()
 
         self._config = config
+        self._http_pool = http_pool
         scanner_cfg = config.scanner
 
         # Load signatures and init pattern matcher
@@ -77,7 +78,7 @@ class Scanner:
         # Init LLM screen adapter (optional secondary LLM classifier)
         self._llm_screen: Optional[LLMScreenAdapter] = None
         if scanner_cfg.llm_screen.enabled:
-            self._llm_screen = LLMScreenAdapter(config=scanner_cfg.llm_screen)
+            self._llm_screen = LLMScreenAdapter(config=scanner_cfg.llm_screen, http_pool=http_pool)
 
         # Init PII detector (optional Presidio-based)
         self._pii_detector: Optional[PiiDetector] = None
@@ -145,6 +146,74 @@ class Scanner:
             pii_result = self._pii_detector.detect(text)
 
         # Intent divergence detection (indirect injection)
+        intent_divergence_result: Optional[IntentDivergenceResult] = None
+        if self._intent_divergence is not None and context:
+            intent_divergence_result = self._intent_divergence.check(
+                text, context, compromised_hashes,
+            )
+
+        # Compute combined threat score
+        threat_score = self._compute_threat_score(
+            matches, semantic_result, llm_guard_result, llm_screen_result,
+            intent_divergence_result,
+        )
+        is_threat = threat_score >= self._confidence_threshold
+
+        return ScanResult(
+            matches=matches,
+            semantic_result=semantic_result,
+            llm_guard_result=llm_guard_result,
+            llm_screen_result=llm_screen_result,
+            pii_result=pii_result,
+            intent_divergence_result=intent_divergence_result,
+            threat_score=round(threat_score, 4),
+            is_threat=is_threat,
+        )
+
+    async def ascan_input(
+        self,
+        text: str,
+        context: list[str] | None = None,
+        compromised_hashes: set[int] | None = None,
+    ) -> ScanResult:
+        """Async variant of ``scan_input()``.
+
+        CPU-bound work (pattern matching, semantic, LLM guard, PII) runs
+        synchronously (they're fast).  The I/O-bound LLM screen step is
+        awaited asynchronously.
+        """
+        matches: list[ThreatMatch] = []
+        semantic_result: Optional[SemanticResult] = None
+        llm_guard_result: Optional[LLMGuardResult] = None
+
+        # Pattern matching (CPU-bound)
+        if self._pattern_matcher is not None:
+            matches = self._pattern_matcher.scan(text)
+
+        # Semantic analysis (CPU-bound)
+        if self._semantic_analyzer is not None:
+            semantic_result = self._semantic_analyzer.analyze(text)
+
+        # LLM Guard ML-based scanning (CPU-bound)
+        if self._llm_guard is not None:
+            llm_guard_result = self._llm_guard.scan(text)
+
+        # LLM screen — async I/O-bound
+        llm_screen_result: Optional[LLMScreenResult] = None
+        if self._llm_screen is not None:
+            pattern_hit = bool(matches) and max(
+                (m.confidence for m in matches), default=0.0,
+            ) >= self._confidence_threshold
+            llm_screen_result = await self._llm_screen.ascreen(
+                text, pattern_hit=pattern_hit,
+            )
+
+        # PII detection (CPU-bound)
+        pii_result: Optional[PiiResult] = None
+        if self._pii_detector is not None:
+            pii_result = self._pii_detector.detect(text)
+
+        # Intent divergence detection (CPU-bound)
         intent_divergence_result: Optional[IntentDivergenceResult] = None
         if self._intent_divergence is not None and context:
             intent_divergence_result = self._intent_divergence.check(

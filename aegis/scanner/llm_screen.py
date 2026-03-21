@@ -65,8 +65,9 @@ class LLMScreenAdapter:
     fail-closed semantics, optional skip when pattern matching already flagged.
     """
 
-    def __init__(self, config: LLMScreenConfig | None = None) -> None:
+    def __init__(self, config: LLMScreenConfig | None = None, http_pool: Any = None) -> None:
         self._config = config or LLMScreenConfig()
+        self._http_pool = http_pool
         self._initialized = False
         self._init_lock = threading.Lock()
         self._system_prompt: str = ""
@@ -158,6 +159,61 @@ class LLMScreenAdapter:
                 model=self._config.model,
             )
 
+    async def ascreen(self, text: str, *, pattern_hit: bool = False) -> LLMScreenResult:
+        """Async variant of ``screen()``.  Requires ``http_pool`` with httpx.
+
+        Same logic and fail-closed semantics as ``screen()``.
+        """
+        if not self._config.enabled:
+            return LLMScreenResult(
+                is_safe=True,
+                is_threat=False,
+                skipped=True,
+                provider=self._config.provider,
+                model=self._config.model,
+            )
+
+        if self._config.skip_if_pattern_hit and pattern_hit:
+            return LLMScreenResult(
+                is_safe=False,
+                is_threat=True,
+                skipped=True,
+                provider=self._config.provider,
+                model=self._config.model,
+            )
+
+        self._init()
+
+        t0 = time.monotonic()
+        try:
+            provider = self._config.provider.lower()
+            if provider == "anthropic":
+                raw = await self._acall_anthropic(text)
+            else:
+                raw = await self._acall_openai_compatible(text)
+
+            is_safe = raw.strip().lower() == "yes"
+            latency = (time.monotonic() - t0) * 1000
+            return LLMScreenResult(
+                raw_response=raw,
+                is_safe=is_safe,
+                is_threat=not is_safe,
+                latency_ms=latency,
+                provider=self._config.provider,
+                model=self._config.model,
+            )
+        except Exception as exc:
+            latency = (time.monotonic() - t0) * 1000
+            logger.warning("Async LLM screen call failed: %s", exc)
+            return LLMScreenResult(
+                error=str(exc),
+                is_safe=False,
+                is_threat=True,
+                latency_ms=latency,
+                provider=self._config.provider,
+                model=self._config.model,
+            )
+
     # ------------------------------------------------------------------
     # Provider calls — raw HTTP, no SDK
     # ------------------------------------------------------------------
@@ -178,8 +234,8 @@ class LLMScreenAdapter:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self._api_key}",
         }
-        resp = self._http_post(url, body, headers, self._config.timeout_seconds)
-        return resp["choices"][0]["message"]["content"]
+        resp_data = self._http_post(url, body, headers, self._config.timeout_seconds)
+        return resp_data["choices"][0]["message"]["content"]
 
     def _call_anthropic(self, text: str) -> str:
         base = self._base_url.rstrip("/") if self._base_url else "https://api.anthropic.com/v1"
@@ -198,15 +254,77 @@ class LLMScreenAdapter:
             "x-api-key": self._api_key,
             "anthropic-version": "2023-06-01",
         }
-        resp = self._http_post(url, body, headers, self._config.timeout_seconds)
-        return resp["content"][0]["text"]
+        resp_data = self._http_post(url, body, headers, self._config.timeout_seconds)
+        return resp_data["content"][0]["text"]
 
     # ------------------------------------------------------------------
-    # HTTP helper — httpx preferred, urllib fallback
+    # Async provider calls — require http_pool
     # ------------------------------------------------------------------
+
+    async def _acall_openai_compatible(self, text: str) -> str:
+        if self._http_pool is None:
+            raise RuntimeError("http_pool is required for async LLM screen calls")
+        base = self._base_url.rstrip("/") if self._base_url else "https://api.openai.com/v1"
+        url = f"{base}/chat/completions"
+        body: dict[str, Any] = {
+            "model": self._config.model,
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                {"role": "user", "content": text},
+            ],
+            "temperature": self._config.temperature,
+            "max_tokens": min(self._config.max_tokens, 2),
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+        resp = await self._http_pool.apost(url, json_body=body, headers=headers, timeout=self._config.timeout_seconds)
+        if not resp.is_success:
+            raise RuntimeError(f"HTTP {resp.status_code} from {url}")
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+    async def _acall_anthropic(self, text: str) -> str:
+        if self._http_pool is None:
+            raise RuntimeError("http_pool is required for async LLM screen calls")
+        base = self._base_url.rstrip("/") if self._base_url else "https://api.anthropic.com/v1"
+        url = f"{base}/messages"
+        body: dict[str, Any] = {
+            "model": self._config.model,
+            "system": self._system_prompt,
+            "messages": [
+                {"role": "user", "content": text},
+            ],
+            "temperature": self._config.temperature,
+            "max_tokens": min(self._config.max_tokens, 2),
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self._api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        resp = await self._http_pool.apost(url, json_body=body, headers=headers, timeout=self._config.timeout_seconds)
+        if not resp.is_success:
+            raise RuntimeError(f"HTTP {resp.status_code} from {url}")
+        data = resp.json()
+        return data["content"][0]["text"]
+
+    # ------------------------------------------------------------------
+    # HTTP helper — pool preferred, httpx, then urllib fallback
+    # ------------------------------------------------------------------
+
+    def _http_post(self, url: str, body: dict, headers: dict, timeout: float) -> dict:
+        if self._http_pool is not None:
+            resp = self._http_pool.post(url, json_body=body, headers=headers, timeout=timeout)
+            if not resp.is_success:
+                raise RuntimeError(f"HTTP {resp.status_code} from {url}")
+            return resp.json()  # type: ignore[no-any-return]
+
+        return self._legacy_http_post(url, body, headers, timeout)
 
     @staticmethod
-    def _http_post(url: str, body: dict, headers: dict, timeout: float) -> dict:
+    def _legacy_http_post(url: str, body: dict, headers: dict, timeout: float) -> dict:
         try:
             import httpx
 

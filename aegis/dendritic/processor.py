@@ -28,6 +28,10 @@ class DendriticResult:
     modifications: list[dict[str, Any]] = field(default_factory=list)
     threat_score: float = 0.0
     source_agent_id: str = ""
+    # True when the cleaned output still triggers the scanner, so content
+    # was dropped entirely to prevent amplification.
+    content_dropped: bool = False
+    rescan_score: Optional[float] = None
 
 
 class DendriticProcessor:
@@ -52,15 +56,23 @@ class DendriticProcessor:
         0.0: DangerSignal.ELEVATED_SCRUTINY,
     }
 
+    # If the re-scanned output scores at or above this fraction of the
+    # original threat score, the content is dropped rather than retransmitted.
+    DEFAULT_RESCAN_RATIO = 0.5
+
     def __init__(
         self,
         content_gate: Any = None,
         sanitizer: Any = None,
+        scanner: Any = None,
         threat_score_thresholds: Optional[dict[float, DangerSignal]] = None,
+        rescan_ratio: Optional[float] = None,
     ) -> None:
         self._content_gate = content_gate
         self._sanitizer = sanitizer
+        self._scanner = scanner
         self._thresholds = threat_score_thresholds or self.DEFAULT_THRESHOLDS
+        self._rescan_ratio = rescan_ratio if rescan_ratio is not None else self.DEFAULT_RESCAN_RATIO
 
     def process(
         self,
@@ -113,12 +125,51 @@ class DendriticProcessor:
             except Exception:
                 logger.debug("Sanitizer failed during dendritic processing", exc_info=True)
 
-        # Step 3: Determine danger signal (MHC-II loading)
+        # Step 3: Re-scan gate — verify the cleaned output is actually clean.
+        # If the output still triggers the scanner above the rescan threshold,
+        # drop the content entirely to prevent amplification.
+        content_dropped = False
+        rescan_score: Optional[float] = None
+
+        if self._scanner is not None and cleaned.strip():
+            try:
+                rescan_result = self._scanner.scan_input(cleaned)
+                rescan_score = rescan_result.threat_score
+                # Drop if re-scan score >= rescan_ratio * original score,
+                # OR if the re-scan independently flags it as a threat.
+                threshold = self._rescan_ratio * threat_score
+                if rescan_result.is_threat or rescan_score >= threshold:
+                    logger.warning(
+                        "Dendritic re-scan gate triggered: cleaned output still "
+                        "scores %.3f (original: %.3f, threshold: %.3f). "
+                        "Dropping content to prevent amplification.",
+                        rescan_score,
+                        threat_score,
+                        threshold,
+                    )
+                    content_dropped = True
+                    modifications.append({
+                        "type": "rescan_gate",
+                        "description": (
+                            f"Content dropped: re-scan score {rescan_score:.3f} "
+                            f"exceeded threshold {threshold:.3f}"
+                        ),
+                        "rescan_score": rescan_score,
+                        "threshold": threshold,
+                    })
+                    cleaned = ""
+            except Exception:
+                logger.debug("Re-scan failed during dendritic processing", exc_info=True)
+
+        # Step 4: Determine danger signal (MHC-II loading)
         danger_signal = self._resolve_danger_signal(threat_score)
 
-        # Step 4: Tag with dendritic provenance
+        # Step 5: Tag with dendritic provenance (only if content survived)
         from aegis.scanner.envelope import DENDRITIC_PROCESSED, DANGER_SIGNAL_TAG
-        cleaned = f"{DENDRITIC_PROCESSED} {DANGER_SIGNAL_TAG} {cleaned}"
+        if content_dropped:
+            cleaned = f"{DENDRITIC_PROCESSED} {DANGER_SIGNAL_TAG} [CONTENT DROPPED — residual injection detected]"
+        else:
+            cleaned = f"{DENDRITIC_PROCESSED} {DANGER_SIGNAL_TAG} {cleaned}"
 
         return DendriticResult(
             cleaned_fragment=cleaned,
@@ -127,6 +178,8 @@ class DendriticProcessor:
             modifications=modifications,
             threat_score=threat_score,
             source_agent_id=source_agent_id,
+            content_dropped=content_dropped,
+            rescan_score=rescan_score,
         )
 
     def build_signed_alert(

@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from monitor.async_db import run_db, run_in_transaction
+from monitor.cache import InMemoryCache
 from monitor.auth import verify_api_key
 from monitor.clustering import ThreatClusterer
 from monitor.config import MonitorConfig
@@ -111,6 +112,7 @@ async def lifespan(app: FastAPI):  # noqa: C901
     app.state.cached_r0 = 0.0
     app.state.cached_r0_trend = []
     app.state.agent_counts = {"total": 0, "compromised": 0, "quarantined": 0, "killswitched": 0}
+    app.state.cache = InMemoryCache()
 
     recluster_task = asyncio.create_task(_periodic_background(app.state))
     yield
@@ -313,6 +315,8 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         if fallback_hash:
             contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash)
         validation_status = "confirmed"
+
+    await app.state.cache.invalidate("threat-intel")
 
     at_risk = graph.get_at_risk_agents(record.compromised_agent_id)
 
@@ -634,6 +638,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
 
             await run_in_transaction(db, _persist_contagion_alert)
             graph.mark_quarantined(agent_id, True)
+            await app.state.cache.invalidate("threat-intel")
 
             await _broadcast(app.state, {
                 "type": "quarantine",
@@ -710,29 +715,29 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
 @app.get("/api/v1/threat-intel")
 async def get_threat_intel(_key: str = Depends(verify_api_key)):
     """Return threat intelligence for agent-side pre-emptive filtering."""
+    cache = app.state.cache
+    cached = await cache.get("threat-intel")
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     graph: AgentGraph = app.state.graph
     contagion_detector: ContagionDetector = app.state.contagion_detector
 
     graph_state = graph.get_graph_state()
-
-    compromised_agents = [
-        n["id"] for n in graph_state["nodes"] if n["is_compromised"]
-    ]
-    quarantined_agents = [
-        n["id"] for n in graph_state["nodes"] if n["is_quarantined"]
-    ]
-
-    # Serialize compromised hashes from contagion detector
+    compromised_agents = [n["id"] for n in graph_state["nodes"] if n["is_compromised"]]
+    quarantined_agents = [n["id"] for n in graph_state["nodes"] if n["is_quarantined"]]
     compromised_hashes = [
         f"{h:032x}" for h in contagion_detector._compromised.values()
     ]
 
-    return {
+    result = {
         "compromised_agents": compromised_agents,
         "compromised_hashes": compromised_hashes,
         "quarantined_agents": quarantined_agents,
         "generated_at": time.time(),
     }
+    await cache.set("threat-intel", json.dumps(result).encode())
+    return result
 
 
 @app.get("/api/v1/topic-clusters")
@@ -1066,6 +1071,8 @@ async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)
     for aid in affected_agents:
         graph.mark_quarantined(aid, True)
 
+    await app.state.cache.invalidate("threat-intel")
+
     await _broadcast(app.state, {
         "type": "quarantine",
         "action": "created",
@@ -1151,6 +1158,8 @@ async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_ke
     # Update graph synchronously after DB transaction
     for aid in unquarantined_agents:
         graph.mark_quarantined(aid, False)
+
+    await app.state.cache.invalidate("threat-intel")
 
     if deleted:
         await _broadcast(app.state, {

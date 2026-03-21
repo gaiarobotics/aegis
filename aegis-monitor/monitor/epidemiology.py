@@ -27,6 +27,15 @@ class R0Estimator:
         """Replace the internal record set."""
         self._records = list(records)
 
+    def prune(self, cutoff: float) -> int:
+        """Remove records older than *cutoff* timestamp.
+
+        Returns the number of records removed.
+        """
+        before = len(self._records)
+        self._records = [r for r in self._records if r.timestamp >= cutoff]
+        return before - len(self._records)
+
     def estimate_r0(self, window_hours: int = 24) -> float:
         """Estimate R0 over the given time window.
 

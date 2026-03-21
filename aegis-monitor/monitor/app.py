@@ -114,6 +114,16 @@ async def lifespan(app: FastAPI):  # noqa: C901
     app.state.agent_counts = {"total": 0, "compromised": 0, "quarantined": 0, "killswitched": 0}
     app.state.cache = InMemoryCache()
 
+    # Warm threat-intel cache
+    _ti_graph_state = app.state.graph.get_graph_state()
+    _ti_result = {
+        "compromised_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_compromised"]],
+        "compromised_hashes": [f"{h:032x}" for h in app.state.contagion_detector._compromised.values()],
+        "quarantined_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_quarantined"]],
+        "generated_at": time.time(),
+    }
+    await app.state.cache.set("threat-intel", json.dumps(_ti_result).encode())
+
     recluster_task = asyncio.create_task(_periodic_background(app.state))
     yield
     recluster_task.cancel()

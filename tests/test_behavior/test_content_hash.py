@@ -15,12 +15,6 @@ def _hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
-def _make_tracker(**kwargs) -> ContentHashTracker:
-    """Create a ContentHashTracker with SemanticHasher._ensure_model patched out."""
-    with patch.object(SemanticHasher, "_ensure_model"):
-        return ContentHashTracker(**kwargs)
-
-
 # ------------------------------------------------------------------
 # SimHash core LSH property
 # ------------------------------------------------------------------
@@ -61,12 +55,6 @@ class TestSemanticHasher:
         with pytest.raises(ImportError, match="sentence-transformers"):
             hasher.hash("hello world")
 
-    def test_constructor_raises_when_unavailable(self):
-        """ContentHashTracker raises ImportError when sentence-transformers is missing."""
-        with patch.object(SemanticHasher, "_ensure_model", side_effect=ImportError("missing")):
-            with pytest.raises(ImportError, match="missing"):
-                ContentHashTracker(window_size=5)
-
 
 # ------------------------------------------------------------------
 # ContentHashTracker
@@ -81,7 +69,8 @@ class TestContentHashTracker:
 
     def test_window_majority_vote(self):
         """Majority vote aggregation produces a stable hash."""
-        tracker = _make_tracker(window_size=5)
+        tracker = ContentHashTracker(window_size=5)
+        tracker._semantic_available = True
         mock_hasher = self._make_mock_hasher(0xDEADBEEF)
         tracker._semantic_hasher = mock_hasher
 
@@ -98,7 +87,8 @@ class TestContentHashTracker:
 
     def test_hashes_format(self):
         """Output is 32-char hex strings."""
-        tracker = _make_tracker(window_size=5)
+        tracker = ContentHashTracker(window_size=5)
+        tracker._semantic_available = True
         mock_hasher = self._make_mock_hasher(0xCAFEBABE)
         tracker._semantic_hasher = mock_hasher
 
@@ -113,12 +103,20 @@ class TestContentHashTracker:
 
     def test_empty_tracker(self):
         """Empty tracker returns empty dict."""
-        tracker = _make_tracker(window_size=5)
+        tracker = ContentHashTracker(window_size=5)
+        assert tracker.get_hashes() == {}
+
+    def test_no_op_without_sentence_transformers(self):
+        """Update is a no-op when sentence-transformers is not installed."""
+        tracker = ContentHashTracker(window_size=5)
+        tracker._semantic_available = False
+        tracker.update("some text")
         assert tracker.get_hashes() == {}
 
     def test_topic_velocity_zero_for_identical(self):
         """Identical consecutive messages produce zero velocity."""
-        tracker = _make_tracker(window_size=10)
+        tracker = ContentHashTracker(window_size=10)
+        tracker._semantic_available = True
         mock_hasher = self._make_mock_hasher(0xAAAA)
         tracker._semantic_hasher = mock_hasher
 
@@ -131,7 +129,8 @@ class TestContentHashTracker:
 
     def test_topic_velocity_high_for_abrupt_change(self):
         """An abrupt topic change produces high velocity."""
-        tracker = _make_tracker(window_size=10)
+        tracker = ContentHashTracker(window_size=10)
+        tracker._semantic_available = True
 
         # Return consistent hash for normal messages
         call_count = 0
@@ -160,7 +159,8 @@ class TestContentHashTracker:
 
     def test_topic_velocity_not_present_without_data(self):
         """No velocity when fewer than 2 messages recorded."""
-        tracker = _make_tracker(window_size=10)
+        tracker = ContentHashTracker(window_size=10)
+        tracker._semantic_available = True
         mock_hasher = self._make_mock_hasher(0xBBBB)
         tracker._semantic_hasher = mock_hasher
 
@@ -172,6 +172,7 @@ class TestContentHashTracker:
 
     def test_per_message_hash_deterministic(self):
         """A standalone per-message hash via SemanticHasher is deterministic."""
+        import math
         import random as _random
 
         hasher = SemanticHasher()
@@ -196,7 +197,8 @@ class TestContentHashTracker:
 
     def test_per_message_hash_differs_from_diluted_window(self):
         """Per-message hash differs from rolling-window hash after dilution."""
-        tracker = _make_tracker(window_size=5)
+        tracker = ContentHashTracker(window_size=5)
+        tracker._semantic_available = True
 
         call_count = 0
         def side_effect(text):
@@ -229,7 +231,8 @@ class TestContentHashTracker:
 
     def test_thread_safety(self):
         """Concurrent updates don't crash."""
-        tracker = _make_tracker(window_size=100)
+        tracker = ContentHashTracker(window_size=100)
+        tracker._semantic_available = True
 
         counter = 0
         def hash_side_effect(text):
@@ -265,7 +268,8 @@ class TestContentHashTracker:
 
     def test_update_signature_no_profile(self):
         """update() takes only text, not a profile parameter."""
-        tracker = _make_tracker(window_size=5)
+        tracker = ContentHashTracker(window_size=5)
+        tracker._semantic_available = True
         mock_hasher = self._make_mock_hasher(0x1234)
         tracker._semantic_hasher = mock_hasher
 

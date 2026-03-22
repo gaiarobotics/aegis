@@ -4,8 +4,8 @@ Uses SimHash from sentence-transformer embeddings (384-dim) to produce 128-bit
 content hashes displayed as 32-char hex strings.  A rolling majority-vote window
 smooths per-message noise into a stable "topic fingerprint."
 
-Requires ``aegis-shield[embeddings]`` (``sentence-transformers``).  Raises
-``ImportError`` at construction time if the dependency is missing.
+Requires ``aegis-shield[embeddings]`` (``sentence-transformers``).  When the
+package is not installed, ``ContentHashTracker.update()`` is a no-op.
 """
 
 from __future__ import annotations
@@ -135,8 +135,8 @@ class ContentHashTracker:
     gradually (low velocity); a prompt injection snaps the topic instantly
     (high velocity spike).
 
-    Raises:
-        ImportError: If ``sentence-transformers`` is not installed.
+    If ``sentence-transformers`` is not installed, ``update()`` is a no-op
+    (graceful degradation).
 
     Args:
         window_size: Number of per-message hashes to keep for majority vote.
@@ -152,9 +152,14 @@ class ContentHashTracker:
         velocity_window: int = 10,
     ) -> None:
         self._semantic_hasher = SemanticHasher()
-        # Eagerly verify sentence-transformers is available — fail loudly
-        # rather than silently producing empty results.
-        self._semantic_hasher._ensure_model()
+        self._semantic_available = False
+
+        # Probe availability without requiring actual text
+        try:
+            import sentence_transformers  # noqa: F401
+            self._semantic_available = True
+        except ImportError:
+            self._semantic_available = False
 
         self._content_window: deque[int] = deque(maxlen=window_size)
 
@@ -167,10 +172,20 @@ class ContentHashTracker:
     def update(self, text: str) -> None:
         """Compute semantic hash for a message and append to the rolling window.
 
+        No-op if ``sentence-transformers`` is not installed.
+
         Args:
             text: The message text.
         """
-        content_hash = self._semantic_hasher.hash(text)
+        if not self._semantic_available:
+            return
+
+        content_hash: int | None = None
+        try:
+            content_hash = self._semantic_hasher.hash(text)
+        except (ImportError, Exception):
+            self._semantic_available = False
+            return
 
         with self._lock:
             if content_hash is not None:

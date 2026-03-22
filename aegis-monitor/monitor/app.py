@@ -11,13 +11,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from monitor.async_db import run_db, run_in_transaction
 from monitor.cache import InMemoryCache
-from monitor.auth import verify_api_key
+from monitor.auth import (
+    LoginRateLimiter,
+    _SESSION_COOKIE_NAME,
+    create_session_token,
+    generate_csrf_token,
+    require_role,
+    verify_api_key,
+    verify_session_token,
+)
 from monitor.clustering import ThreatClusterer
 from monitor.config import MonitorConfig
 from monitor.contagion import ContagionDetector, TopicClusterer as TopicHashClusterer
@@ -28,6 +36,8 @@ from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, Quaranti
 from monitor.validation import ReportValidator
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+_login_limiter = LoginRateLimiter(per_minute=10, per_hour=50)
 
 
 async def _periodic_background(app_state, interval: float = 30.0):
@@ -155,6 +165,100 @@ async def _broadcast(app_state: Any, event: dict) -> None:
     dead = {ws for ws, r in zip(clients, results) if isinstance(r, Exception)}
     if dead:
         app_state.ws_clients -= dead
+
+
+# ------------------------------------------------------------------
+# Auth routes
+# ------------------------------------------------------------------
+
+@app.post("/auth/login")
+async def auth_login(request: Request, data: dict):
+    config: MonitorConfig = request.app.state.config
+
+    client_ip = request.client.host if request.client else "unknown"
+    if not _login_limiter.check(client_ip):
+        raise HTTPException(status_code=429, detail="Too many login attempts")
+
+    api_key = data.get("api_key", "")
+
+    # Open mode
+    if not config.api_keys:
+        secret = config.session_secret or "ephemeral"
+        token = create_session_token("open", api_key, secret)
+        response = JSONResponse({"role": "open"})
+        response.set_cookie(
+            _SESSION_COOKIE_NAME, token,
+            httponly=True, samesite="lax", secure=request.url.scheme == "https",
+            max_age=config.session_ttl_seconds,
+        )
+        return response
+
+    # Validate the key
+    import hmac as _hmac
+    matched_role = None
+    for configured_key, role in config.api_keys.items():
+        if _hmac.compare_digest(api_key, configured_key):
+            matched_role = role
+            break
+
+    if matched_role is None:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    if not config.session_secret:
+        raise HTTPException(status_code=500, detail="Session secret not configured")
+
+    token = create_session_token(matched_role, api_key, config.session_secret)
+    response = JSONResponse({"role": matched_role})
+    response.set_cookie(
+        _SESSION_COOKIE_NAME, token,
+        httponly=True, samesite="lax", secure=request.url.scheme == "https",
+        max_age=config.session_ttl_seconds,
+    )
+    return response
+
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    config: MonitorConfig = request.app.state.config
+    cookie = request.cookies.get(_SESSION_COOKIE_NAME)
+    if not cookie:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    secret = config.session_secret or "ephemeral"
+    payload = verify_session_token(cookie, secret, ttl=config.session_ttl_seconds)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    # In non-open mode, verify key still exists
+    if config.api_keys:
+        import hashlib
+        key_hash = payload.get("key_hash", "")
+        found = any(
+            hashlib.sha256(k.encode()).hexdigest() == key_hash
+            for k in config.api_keys
+        )
+        if not found:
+            raise HTTPException(status_code=401, detail="API key revoked")
+
+    csrf = generate_csrf_token(secret) if config.session_secret else ""
+    return {"role": payload["role"], "csrf_token": csrf}
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    config: MonitorConfig = request.app.state.config
+    cookie = request.cookies.get(_SESSION_COOKIE_NAME)
+    if not cookie:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    secret = config.session_secret or "ephemeral"
+    payload = verify_session_token(cookie, secret, ttl=config.session_ttl_seconds)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    response = JSONResponse({"status": "logged out"})
+    response.delete_cookie(_SESSION_COOKIE_NAME)
+    return response
 
 
 # ------------------------------------------------------------------

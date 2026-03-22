@@ -234,3 +234,84 @@ class TestLoginRateLimiter:
         assert limiter.check("1.1.1.1", now=now)
         assert not limiter.check("1.1.1.1", now=now)
         assert limiter.check("2.2.2.2", now=now)
+
+
+from monitor.app import app as monitor_app
+
+
+@pytest.fixture
+def auth_client(tmp_path):
+    """Test client with API keys and session secret configured."""
+    from fastapi.testclient import TestClient
+
+    db_path = str(tmp_path / "test.db")
+    os.environ["MONITOR_DATABASE_PATH"] = db_path
+    os.environ.pop("MONITOR_API_KEYS", None)
+
+    with TestClient(monitor_app) as c:
+        monitor_app.state.config.api_keys = {
+            "sk-agent-1": "agent",
+            "sk-view-1": "viewer",
+            "sk-ops-1": "operator",
+        }
+        monitor_app.state.config.session_secret = "test-session-secret"
+        monitor_app.state.config.session_ttl_seconds = 3600
+        monitor_app.state.config.compromise_quorum = 1
+        monitor_app.state.config.compromise_min_trust_tier = 0
+        from monitor.validation import ReportValidator
+        monitor_app.state.report_validator = ReportValidator(monitor_app.state.config)
+        from monitor.cache import InMemoryCache
+        monitor_app.state.cache = InMemoryCache()
+        yield c
+
+    os.environ.pop("MONITOR_DATABASE_PATH", None)
+
+
+class TestAuthRoutes:
+    def test_login_valid_key(self, auth_client):
+        resp = auth_client.post("/auth/login", json={"api_key": "sk-view-1"})
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "viewer"
+        assert "aegis_session" in resp.cookies
+
+    def test_login_invalid_key(self, auth_client):
+        resp = auth_client.post("/auth/login", json={"api_key": "wrong"})
+        assert resp.status_code == 403
+
+    def test_me_with_session(self, auth_client):
+        auth_client.post("/auth/login", json={"api_key": "sk-view-1"})
+        resp = auth_client.get("/auth/me")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["role"] == "viewer"
+        assert "csrf_token" in body
+
+    def test_me_without_session(self, auth_client):
+        resp = auth_client.get("/auth/me")
+        assert resp.status_code == 401
+
+    def test_logout_clears_session(self, auth_client):
+        auth_client.post("/auth/login", json={"api_key": "sk-view-1"})
+        resp = auth_client.post("/auth/logout")
+        assert resp.status_code == 200
+        resp = auth_client.get("/auth/me")
+        assert resp.status_code == 401
+
+    def test_logout_without_session_rejected(self, auth_client):
+        resp = auth_client.post("/auth/logout")
+        assert resp.status_code == 401
+
+    def test_login_open_mode(self, auth_client):
+        auth_client.app.state.config.api_keys = {}
+        resp = auth_client.post("/auth/login", json={"api_key": "anything"})
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "open"
+
+    def test_login_rate_limited(self, auth_client):
+        """Excessive login attempts should return 429."""
+        from monitor.app import _login_limiter
+        _login_limiter._attempts.clear()
+        for _ in range(10):
+            auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
+        resp = auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
+        assert resp.status_code == 429

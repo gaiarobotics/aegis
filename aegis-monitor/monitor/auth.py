@@ -105,6 +105,33 @@ def _resolve_session_cookie(request: Request, config: MonitorConfig) -> str | No
     return None  # Key was removed — session invalid
 
 
+def generate_csrf_token(secret: str, *, issued_at: float | None = None) -> str:
+    """Generate a CSRF token: HMAC-signed timestamp + nonce."""
+    iat = issued_at if issued_at is not None else time.time()
+    nonce = secrets.token_hex(16)
+    message = f"{iat}:{nonce}".encode()
+    sig = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+    payload = base64.urlsafe_b64encode(message).decode()
+    return f"{payload}.{sig}"
+
+
+def verify_csrf_token(
+    token: str, secret: str, *, ttl: int, now: float | None = None,
+) -> bool:
+    """Verify a CSRF token is valid and not expired."""
+    try:
+        payload_b64, sig = token.rsplit(".", 1)
+        message = base64.urlsafe_b64decode(payload_b64)
+        expected_sig = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return False
+        iat_str = message.decode().split(":")[0]
+        current_time = now if now is not None else time.time()
+        return (current_time - float(iat_str)) <= ttl
+    except Exception:
+        return False
+
+
 def require_role(*allowed_roles: str) -> Callable:
     """FastAPI dependency factory — restrict access to specific roles.
 

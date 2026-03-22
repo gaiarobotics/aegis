@@ -172,3 +172,26 @@ class TestSessionTokens:
         payload = verify_session_token(token, self.SECRET, ttl=3600)
         expected_hash = hashlib.sha256(b"sk-ops-1").hexdigest()
         assert payload["key_hash"] == expected_hash
+
+
+from monitor.auth import generate_csrf_token, verify_csrf_token
+
+
+class TestCSRF:
+    SECRET = "test-secret-key"
+
+    def test_roundtrip(self):
+        token = generate_csrf_token(self.SECRET)
+        assert verify_csrf_token(token, self.SECRET, ttl=3600)
+
+    def test_expired_rejected(self):
+        token = generate_csrf_token(self.SECRET, issued_at=1000)
+        assert not verify_csrf_token(token, self.SECRET, ttl=3600, now=5000)
+
+    def test_tampered_rejected(self):
+        token = generate_csrf_token(self.SECRET)
+        assert not verify_csrf_token(token + "x", self.SECRET, ttl=3600)
+
+    def test_wrong_secret_rejected(self):
+        token = generate_csrf_token(self.SECRET)
+        assert not verify_csrf_token(token, "wrong", ttl=3600)

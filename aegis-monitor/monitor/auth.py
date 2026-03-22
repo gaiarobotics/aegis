@@ -8,6 +8,7 @@ import hmac
 import json
 import secrets
 import time
+from collections import defaultdict
 from typing import Callable
 
 from fastapi import Depends, HTTPException, Request
@@ -144,6 +145,34 @@ def require_role(*allowed_roles: str) -> Callable:
             raise HTTPException(status_code=403, detail=f"Role '{role}' not permitted")
         return role
     return _check
+
+
+class LoginRateLimiter:
+    """In-memory per-IP rate limiter for login attempts."""
+
+    def __init__(self, per_minute: int = 10, per_hour: int = 50) -> None:
+        self.per_minute = per_minute
+        self.per_hour = per_hour
+        self._attempts: dict[str, list[float]] = defaultdict(list)
+
+    def check(self, ip: str, *, now: float | None = None) -> bool:
+        """Return True if the request is allowed, False if rate-limited."""
+        current = now if now is not None else time.time()
+        attempts = self._attempts[ip]
+
+        # Prune entries older than 1 hour
+        cutoff_hour = current - 3600
+        self._attempts[ip] = [t for t in attempts if t > cutoff_hour]
+        attempts = self._attempts[ip]
+
+        minute_count = sum(1 for t in attempts if t > current - 60)
+        if minute_count >= self.per_minute:
+            return False
+        if len(attempts) >= self.per_hour:
+            return False
+
+        attempts.append(current)
+        return True
 
 
 def verify_report_signature(report_data: dict, config: MonitorConfig) -> bool:

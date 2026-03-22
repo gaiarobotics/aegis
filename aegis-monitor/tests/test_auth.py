@@ -195,3 +195,42 @@ class TestCSRF:
     def test_wrong_secret_rejected(self):
         token = generate_csrf_token(self.SECRET)
         assert not verify_csrf_token(token, "wrong", ttl=3600)
+
+
+from monitor.auth import LoginRateLimiter
+
+
+class TestLoginRateLimiter:
+    def test_allows_under_limit(self):
+        limiter = LoginRateLimiter(per_minute=5, per_hour=20)
+        for _ in range(5):
+            assert limiter.check("1.2.3.4")
+
+    def test_blocks_over_per_minute(self):
+        limiter = LoginRateLimiter(per_minute=3, per_hour=100)
+        now = time.time()
+        for _ in range(3):
+            assert limiter.check("1.2.3.4", now=now)
+        assert not limiter.check("1.2.3.4", now=now)
+
+    def test_resets_after_minute(self):
+        limiter = LoginRateLimiter(per_minute=2, per_hour=100)
+        now = time.time()
+        for _ in range(2):
+            limiter.check("1.2.3.4", now=now)
+        assert not limiter.check("1.2.3.4", now=now)
+        assert limiter.check("1.2.3.4", now=now + 61)
+
+    def test_per_hour_limit(self):
+        limiter = LoginRateLimiter(per_minute=100, per_hour=5)
+        now = time.time()
+        for i in range(5):
+            assert limiter.check("1.2.3.4", now=now + i * 61)
+        assert not limiter.check("1.2.3.4", now=now + 5 * 61)
+
+    def test_different_ips_independent(self):
+        limiter = LoginRateLimiter(per_minute=1, per_hour=100)
+        now = time.time()
+        assert limiter.check("1.1.1.1", now=now)
+        assert not limiter.check("1.1.1.1", now=now)
+        assert limiter.check("2.2.2.2", now=now)

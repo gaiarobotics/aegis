@@ -9,7 +9,7 @@ The adaptive component of AEGIS maintains a shared database of compromised agent
 ## Quick Start
 
 ```bash
-pip install aegis-shield
+pip install aegis-shield[all]
 ```
 
 ```python
@@ -72,6 +72,13 @@ client = aegis.wrap(my_client, mode="observe")
 | **Generic** | `client.create()` or `client.generate()` |
 
 ## Optional Extras
+
+To customize your installation, start with:
+```bash
+pip install aegis-shield                # Basic framework
+```
+
+And layer on the modules you want:
 
 ```bash
 pip install aegis-shield[identity]      # Ed25519 attestation

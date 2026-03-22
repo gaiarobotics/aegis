@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
+import json
+import secrets
+import time
 from typing import Callable
 
 from fastapi import Depends, HTTPException, Request
@@ -42,12 +47,62 @@ def verify_api_key(
     raise HTTPException(status_code=403, detail="Invalid API key")
 
 
-def _resolve_session_cookie(request: Request, config: MonitorConfig) -> str | None:
-    """Check for a valid session cookie. Returns role or None.
+_SESSION_COOKIE_NAME = "aegis_session"
 
-    Placeholder — implemented in Task 3.
+
+def create_session_token(
+    role: str, api_key: str, secret: str, *, issued_at: float | None = None,
+) -> str:
+    """Create an HMAC-SHA256 signed session token.
+
+    Format: base64(payload).signature
+    Payload: {"role": ..., "key_hash": sha256(api_key), "iat": ..., "nonce": ...}
     """
-    return None
+    payload = {
+        "role": role,
+        "key_hash": hashlib.sha256(api_key.encode()).hexdigest(),
+        "iat": issued_at if issued_at is not None else time.time(),
+        "nonce": secrets.token_hex(16),
+    }
+    payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode()
+    sig = hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
+    return f"{payload_b64}.{sig}"
+
+
+def verify_session_token(
+    token: str, secret: str, *, ttl: int, now: float | None = None,
+) -> dict | None:
+    """Verify and decode a session token. Returns payload dict or None."""
+    try:
+        payload_b64, sig = token.rsplit(".", 1)
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        expected_sig = hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        payload = json.loads(payload_bytes)
+        current_time = now if now is not None else time.time()
+        if current_time - payload.get("iat", 0) > ttl:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _resolve_session_cookie(request: Request, config: MonitorConfig) -> str | None:
+    """Check for a valid session cookie. Returns role or None."""
+    token = request.cookies.get(_SESSION_COOKIE_NAME)
+    if not token or not config.session_secret:
+        return None
+    payload = verify_session_token(token, config.session_secret, ttl=config.session_ttl_seconds)
+    if payload is None:
+        return None
+    # Verify the originating API key still exists
+    key_hash = payload.get("key_hash", "")
+    for configured_key in config.api_keys:
+        if hashlib.sha256(configured_key.encode()).hexdigest() == key_hash:
+            return payload["role"]
+    return None  # Key was removed — session invalid
 
 
 def require_role(*allowed_roles: str) -> Callable:

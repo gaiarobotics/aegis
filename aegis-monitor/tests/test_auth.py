@@ -132,3 +132,43 @@ class TestRoleResolution:
         from monitor import auth
         source = inspect.getsource(auth.verify_api_key)
         assert "compare_digest" in source
+
+
+import hashlib
+import time
+
+from monitor.auth import create_session_token, verify_session_token
+
+
+class TestSessionTokens:
+    SECRET = "test-secret-key"
+
+    def test_roundtrip(self):
+        token = create_session_token("viewer", "sk-view-1", self.SECRET)
+        payload = verify_session_token(token, self.SECRET, ttl=3600)
+        assert payload["role"] == "viewer"
+        assert payload["key_hash"] == hashlib.sha256(b"sk-view-1").hexdigest()
+
+    def test_expired_token_rejected(self):
+        token = create_session_token("viewer", "sk-view-1", self.SECRET, issued_at=1000)
+        payload = verify_session_token(token, self.SECRET, ttl=3600, now=5000)
+        assert payload is None
+
+    def test_tampered_token_rejected(self):
+        token = create_session_token("viewer", "sk-view-1", self.SECRET)
+        parts = token.split(".")
+        parts[-1] = "a" + parts[-1][1:]
+        tampered = ".".join(parts)
+        payload = verify_session_token(tampered, self.SECRET, ttl=3600)
+        assert payload is None
+
+    def test_wrong_secret_rejected(self):
+        token = create_session_token("viewer", "sk-view-1", self.SECRET)
+        payload = verify_session_token(token, "wrong-secret", ttl=3600)
+        assert payload is None
+
+    def test_token_contains_key_hash(self):
+        token = create_session_token("operator", "sk-ops-1", self.SECRET)
+        payload = verify_session_token(token, self.SECRET, ttl=3600)
+        expected_hash = hashlib.sha256(b"sk-ops-1").hexdigest()
+        assert payload["key_hash"] == expected_hash

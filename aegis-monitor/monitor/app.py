@@ -266,7 +266,7 @@ async def auth_logout(request: Request):
 # ------------------------------------------------------------------
 
 @app.post("/api/v1/reports/compromise")
-async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_compromise(data: dict, _role: str = Depends(require_role("agent", "operator"))):
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
     r0: R0Estimator = app.state.r0
@@ -448,7 +448,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
 
 
 @app.post("/api/v1/reports/trust")
-async def receive_trust(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_trust(data: dict, _role: str = Depends(require_role("agent", "operator"))):
     db: Database = app.state.db
 
     event = StoredEvent(
@@ -524,7 +524,7 @@ async def receive_trust(data: dict, _key: str = Depends(verify_api_key)):
 
 
 @app.post("/api/v1/reports/threat")
-async def receive_threat(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_threat(data: dict, _role: str = Depends(require_role("agent", "operator"))):
     db: Database = app.state.db
     clusterer: ThreatClusterer = app.state.clusterer
 
@@ -558,7 +558,7 @@ async def receive_threat(data: dict, _key: str = Depends(verify_api_key)):
 
 
 @app.post("/api/v1/heartbeat")
-async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_heartbeat(data: dict, _role: str = Depends(require_role("agent", "operator"))):
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
@@ -782,7 +782,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
 # ------------------------------------------------------------------
 
 @app.get("/api/v1/graph")
-async def get_graph(_key: str = Depends(verify_api_key)):
+async def get_graph(_role: str = Depends(require_role("viewer", "operator"))):
     cache = app.state.cache
     cached = await cache.get("graph")
     if cached is not None:
@@ -803,7 +803,7 @@ async def get_graph(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/metrics")
-async def get_metrics(_key: str = Depends(verify_api_key)):
+async def get_metrics(_role: str = Depends(require_role("viewer", "operator"))):
     cache = app.state.cache
     cached = await cache.get("metrics")
     if cached is not None:
@@ -840,7 +840,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/threat-intel")
-async def get_threat_intel(_key: str = Depends(verify_api_key)):
+async def get_threat_intel(_role: str = Depends(require_role("viewer", "operator"))):
     """Return threat intelligence for agent-side pre-emptive filtering."""
     cache = app.state.cache
     cached = await cache.get("threat-intel")
@@ -868,21 +868,21 @@ async def get_threat_intel(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/topic-clusters")
-async def get_topic_clusters(_key: str = Depends(verify_api_key)):
+async def get_topic_clusters(_role: str = Depends(require_role("viewer", "operator"))):
     """Return cluster centroid data for the dashboard."""
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     return topic_clusterer.get_cluster_centroids()
 
 
 @app.get("/api/v1/embeddings")
-async def get_embeddings(_key: str = Depends(verify_api_key)):
+async def get_embeddings(_role: str = Depends(require_role("viewer", "operator"))):
     """Return nearest-neighbor embedding data."""
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     return topic_clusterer.get_nearest_neighbors()
 
 
 @app.get("/api/v1/dendrogram")
-async def get_dendrogram(_key: str = Depends(verify_api_key)):
+async def get_dendrogram(_role: str = Depends(require_role("viewer", "operator"))):
     """Return linkage data for dendrogram rendering."""
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     graph: AgentGraph = app.state.graph
@@ -903,7 +903,7 @@ async def get_dendrogram(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/trust/{agent_id}")
-async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
+async def get_trust(agent_id: str, _role: str = Depends(require_role("viewer", "operator"))):
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
@@ -935,7 +935,7 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
 async def killswitch_status(
     agent_id: str = "",
     operator_id: str = "",
-    _key: str = Depends(verify_api_key),
+    _role: str = Depends(require_role("viewer", "operator")),
 ):
     """Agent polling endpoint — returns block status."""
     db: Database = app.state.db
@@ -944,7 +944,7 @@ async def killswitch_status(
 
 
 @app.post("/api/v1/killswitch/rules")
-async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)):
+async def create_killswitch_rule(data: dict, _role: str = Depends(require_role("operator"))):
     """Create a killswitch rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -1036,7 +1036,7 @@ async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)
 
 
 @app.get("/api/v1/killswitch/rules")
-async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
+async def list_killswitch_rules(_role: str = Depends(require_role("viewer", "operator"))):
     """List all active killswitch rules."""
     db: Database = app.state.db
     rules = await run_db(db.get_killswitch_rules)
@@ -1057,7 +1057,7 @@ async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
 
 
 @app.delete("/api/v1/killswitch/rules/{rule_id}")
-async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+async def delete_killswitch_rule(rule_id: str, _role: str = Depends(require_role("operator"))):
     """Remove a killswitch rule."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
@@ -1127,7 +1127,7 @@ async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_ke
 async def quarantine_status(
     agent_id: str = "",
     operator_id: str = "",
-    _key: str = Depends(verify_api_key),
+    _role: str = Depends(require_role("viewer", "operator")),
 ):
     """Agent polling endpoint — returns quarantine status."""
     db: Database = app.state.db
@@ -1136,7 +1136,7 @@ async def quarantine_status(
 
 
 @app.post("/api/v1/quarantine/rules")
-async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)):
+async def create_quarantine_rule(data: dict, _role: str = Depends(require_role("operator"))):
     """Create a quarantine rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -1233,7 +1233,7 @@ async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)
 
 
 @app.get("/api/v1/quarantine/rules")
-async def list_quarantine_rules(_key: str = Depends(verify_api_key)):
+async def list_quarantine_rules(_role: str = Depends(require_role("viewer", "operator"))):
     """List all active quarantine rules."""
     db: Database = app.state.db
     rules = await run_db(db.get_quarantine_rules)
@@ -1255,7 +1255,7 @@ async def list_quarantine_rules(_key: str = Depends(verify_api_key)):
 
 
 @app.delete("/api/v1/quarantine/rules/{rule_id}")
-async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role("operator"))):
     """Remove a quarantine rule (release quarantine)."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph

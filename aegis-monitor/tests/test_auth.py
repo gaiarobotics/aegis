@@ -315,3 +315,79 @@ class TestAuthRoutes:
             auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
         resp = auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
         assert resp.status_code == 429
+
+
+class TestEndpointPermissions:
+    """Verify each endpoint enforces the correct role."""
+
+    AGENT_ENDPOINTS = [
+        ("POST", "/api/v1/reports/compromise", {"agent_id": "a", "evidence": {}}),
+        ("POST", "/api/v1/reports/trust", {"agent_id": "a", "trust_score": 50}),
+        ("POST", "/api/v1/reports/threat", {"agent_id": "a", "threat_score": 0.5}),
+        ("POST", "/api/v1/heartbeat", {"agent_id": "a", "operator_id": "o", "trust_tier": 1, "trust_score": 50, "edges": []}),
+    ]
+
+    VIEWER_ENDPOINTS = [
+        ("GET", "/api/v1/graph", None),
+        ("GET", "/api/v1/metrics", None),
+        ("GET", "/api/v1/threat-intel", None),
+        ("GET", "/api/v1/topic-clusters", None),
+        ("GET", "/api/v1/embeddings", None),
+        ("GET", "/api/v1/dendrogram", None),
+        ("GET", "/api/v1/trust/agent-1", None),
+        ("GET", "/api/v1/killswitch/status", None),
+        ("GET", "/api/v1/killswitch/rules", None),
+        ("GET", "/api/v1/quarantine/status", None),
+        ("GET", "/api/v1/quarantine/rules", None),
+    ]
+
+    OPERATOR_ENDPOINTS = [
+        ("POST", "/api/v1/killswitch/rules", {"scope": "agent", "target": "a-1"}),
+        ("DELETE", "/api/v1/killswitch/rules/test-rule-id", None),
+        ("POST", "/api/v1/quarantine/rules", {"scope": "agent", "target": "a-1"}),
+        ("DELETE", "/api/v1/quarantine/rules/test-rule-id", None),
+    ]
+
+    def _request(self, client, method, path, json_body, key):
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        if method == "GET":
+            return client.get(path, headers=headers)
+        elif method == "DELETE":
+            return client.delete(path, headers=headers)
+        return client.post(path, json=json_body, headers=headers)
+
+    def test_agent_key_can_submit_reports(self, auth_client):
+        for method, path, body in self.AGENT_ENDPOINTS:
+            resp = self._request(auth_client, method, path, body, "sk-agent-1")
+            assert resp.status_code != 403, f"agent rejected from {path}"
+
+    def test_agent_key_rejected_from_viewer_endpoints(self, auth_client):
+        for method, path, body in self.VIEWER_ENDPOINTS:
+            resp = self._request(auth_client, method, path, body, "sk-agent-1")
+            assert resp.status_code == 403, f"agent allowed on {path}"
+
+    def test_agent_key_rejected_from_operator_endpoints(self, auth_client):
+        for method, path, body in self.OPERATOR_ENDPOINTS:
+            resp = self._request(auth_client, method, path, body, "sk-agent-1")
+            assert resp.status_code == 403, f"agent allowed on {path}"
+
+    def test_viewer_key_can_read(self, auth_client):
+        for method, path, body in self.VIEWER_ENDPOINTS:
+            resp = self._request(auth_client, method, path, body, "sk-view-1")
+            assert resp.status_code != 403, f"viewer rejected from {path}"
+
+    def test_viewer_key_rejected_from_agent_endpoints(self, auth_client):
+        for method, path, body in self.AGENT_ENDPOINTS:
+            resp = self._request(auth_client, method, path, body, "sk-view-1")
+            assert resp.status_code == 403, f"viewer allowed on {path}"
+
+    def test_viewer_key_rejected_from_operator_endpoints(self, auth_client):
+        for method, path, body in self.OPERATOR_ENDPOINTS:
+            resp = self._request(auth_client, method, path, body, "sk-view-1")
+            assert resp.status_code == 403, f"viewer allowed on {path}"
+
+    def test_operator_key_allowed_everywhere(self, auth_client):
+        all_endpoints = self.AGENT_ENDPOINTS + self.VIEWER_ENDPOINTS + self.OPERATOR_ENDPOINTS
+        for method, path, body in all_endpoints:
+            resp = self._request(auth_client, method, path, body, "sk-ops-1")
+            assert resp.status_code != 403, f"operator rejected from {path}"

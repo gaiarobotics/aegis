@@ -133,6 +133,24 @@ def verify_csrf_token(
         return False
 
 
+def require_csrf(request: Request, config: MonitorConfig = Depends(get_config)) -> None:
+    """Enforce CSRF token for cookie-authenticated mutation requests.
+
+    Skipped for Bearer-authenticated requests (not cookie-based).
+    Skipped in open mode.
+    """
+    if not config.api_keys:
+        return  # Open mode
+    if request.headers.get("Authorization", "").startswith("Bearer "):
+        return  # Bearer auth — not vulnerable to CSRF
+    if not config.session_secret:
+        return
+
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not csrf_token or not verify_csrf_token(csrf_token, config.session_secret, ttl=config.session_ttl_seconds):
+        raise HTTPException(status_code=403, detail="Missing or invalid CSRF token")
+
+
 def require_role(*allowed_roles: str) -> Callable:
     """FastAPI dependency factory — restrict access to specific roles.
 

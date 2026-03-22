@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse
 
 from monitor.auth import (
     _SESSION_COOKIE_NAME,
+    require_csrf,
     require_role,
     verify_session_token,
 )
@@ -97,13 +98,13 @@ def register_routes(app: FastAPI) -> None:
         return app.state.preset_manager._config_to_dict(config)
 
     @app.post("/api/v1/simulator/presets/{name}")
-    async def save_preset(name: str, body: dict[str, Any], _role: str = Depends(require_role("operator"))):
+    async def save_preset(name: str, body: dict[str, Any], _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         config = app.state.preset_manager._dict_to_config(body)
         app.state.preset_manager.save(name, config)
         return {"status": "ok"}
 
     @app.delete("/api/v1/simulator/presets/{name}")
-    async def delete_preset(name: str, _role: str = Depends(require_role("operator"))):
+    async def delete_preset(name: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         try:
             app.state.preset_manager.delete(name)
         except FileNotFoundError:
@@ -115,7 +116,7 @@ def register_routes(app: FastAPI) -> None:
     # ------------------------------------------------------------------
 
     @app.post("/api/v1/simulator/generate")
-    async def generate(body: dict[str, Any], _role: str = Depends(require_role("operator"))):
+    async def generate(body: dict[str, Any], _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         config = app.state.preset_manager._dict_to_config(body)
         engine = SimulationEngine(config)
         try:
@@ -126,7 +127,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value, "num_agents": config.num_agents}
 
     @app.post("/api/v1/simulator/start")
-    async def start(_role: str = Depends(require_role("operator"))):
+    async def start(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         try:
             engine.start()
@@ -135,7 +136,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/pause")
-    async def pause(_role: str = Depends(require_role("operator"))):
+    async def pause(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         # Cancel auto-tick task if running
         task: asyncio.Task | None = getattr(app.state, "sim_tick_task", None)
@@ -149,7 +150,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/resume")
-    async def resume(_role: str = Depends(require_role("operator"))):
+    async def resume(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         try:
             engine.resume()
@@ -158,7 +159,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/stop")
-    async def stop(_role: str = Depends(require_role("operator"))):
+    async def stop(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         # Cancel auto-tick task if running
         task: asyncio.Task | None = getattr(app.state, "sim_tick_task", None)
@@ -172,7 +173,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/reset")
-    async def reset(_role: str = Depends(require_role("operator"))):
+    async def reset(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _get_engine(app)
         if engine is not None:
             engine.reset()
@@ -180,7 +181,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": SimState.IDLE.value}
 
     @app.post("/api/v1/simulator/tick")
-    async def tick(_role: str = Depends(require_role("operator"))):
+    async def tick(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         try:
             snapshot = engine.tick()
@@ -191,7 +192,7 @@ def register_routes(app: FastAPI) -> None:
         return data
 
     @app.post("/api/v1/simulator/run")
-    async def run(body: dict[str, Any], _role: str = Depends(require_role("operator"))):
+    async def run(body: dict[str, Any], _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         ticks_per_second = body.get("ticks_per_second", 1)
         delay = 1.0 / max(0.1, ticks_per_second)

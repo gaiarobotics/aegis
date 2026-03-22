@@ -22,6 +22,7 @@ from monitor.auth import (
     _SESSION_COOKIE_NAME,
     create_session_token,
     generate_csrf_token,
+    require_csrf,
     require_role,
     verify_api_key,
     verify_session_token,
@@ -944,7 +945,7 @@ async def killswitch_status(
 
 
 @app.post("/api/v1/killswitch/rules")
-async def create_killswitch_rule(data: dict, _role: str = Depends(require_role("operator"))):
+async def create_killswitch_rule(data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Create a killswitch rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -1057,7 +1058,7 @@ async def list_killswitch_rules(_role: str = Depends(require_role("viewer", "ope
 
 
 @app.delete("/api/v1/killswitch/rules/{rule_id}")
-async def delete_killswitch_rule(rule_id: str, _role: str = Depends(require_role("operator"))):
+async def delete_killswitch_rule(rule_id: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Remove a killswitch rule."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
@@ -1136,7 +1137,7 @@ async def quarantine_status(
 
 
 @app.post("/api/v1/quarantine/rules")
-async def create_quarantine_rule(data: dict, _role: str = Depends(require_role("operator"))):
+async def create_quarantine_rule(data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Create a quarantine rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -1255,7 +1256,7 @@ async def list_quarantine_rules(_role: str = Depends(require_role("viewer", "ope
 
 
 @app.delete("/api/v1/quarantine/rules/{rule_id}")
-async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role("operator"))):
+async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Remove a quarantine rule (release quarantine)."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph

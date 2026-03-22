@@ -447,3 +447,57 @@ class TestWebSocketAuth:
             ws.send_json({"auth": {"api_key": "sk-agent-1"}})
             resp = ws.receive_json()
             assert resp.get("authenticated") is False
+
+
+class TestCSRFEnforcement:
+    @pytest.fixture(autouse=True)
+    def _clear_rate_limiter(self):
+        from monitor.app import _login_limiter
+        _login_limiter._attempts.clear()
+
+    def test_operator_mutation_via_cookie_requires_csrf(self, auth_client):
+        """Cookie-authenticated mutation without CSRF token should be rejected."""
+        auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
+        resp = auth_client.post(
+            "/api/v1/killswitch/rules",
+            json={"scope": "agent", "target": "a-1"},
+        )
+        assert resp.status_code == 403
+        assert "CSRF" in resp.json().get("detail", "")
+
+    def test_operator_mutation_via_cookie_with_csrf_succeeds(self, auth_client):
+        auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
+        me_resp = auth_client.get("/auth/me")
+        csrf_token = me_resp.json()["csrf_token"]
+        resp = auth_client.post(
+            "/api/v1/killswitch/rules",
+            json={"scope": "agent", "target": "a-1"},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        assert resp.status_code != 403
+
+    def test_operator_mutation_via_bearer_skips_csrf(self, auth_client):
+        """Bearer-authenticated requests don't need CSRF tokens."""
+        resp = auth_client.post(
+            "/api/v1/killswitch/rules",
+            json={"scope": "agent", "target": "a-1"},
+            headers={"Authorization": "Bearer sk-ops-1"},
+        )
+        assert resp.status_code != 403
+
+    def test_simulator_mutation_via_cookie_requires_csrf(self, auth_client):
+        """Simulator mutations via cookie also require CSRF."""
+        auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
+        resp = auth_client.post("/api/v1/simulator/start")
+        assert resp.status_code == 403
+        assert "CSRF" in resp.json().get("detail", "")
+
+    def test_simulator_mutation_via_cookie_with_csrf_succeeds(self, auth_client):
+        auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
+        me_resp = auth_client.get("/auth/me")
+        csrf_token = me_resp.json()["csrf_token"]
+        resp = auth_client.post(
+            "/api/v1/simulator/start",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        assert resp.status_code != 403

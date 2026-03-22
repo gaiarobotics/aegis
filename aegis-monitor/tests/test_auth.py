@@ -391,3 +391,30 @@ class TestEndpointPermissions:
         for method, path, body in all_endpoints:
             resp = self._request(auth_client, method, path, body, "sk-ops-1")
             assert resp.status_code != 403, f"operator rejected from {path}"
+
+
+class TestSimulatorPermissions:
+    SIMULATOR_ENDPOINTS = [
+        ("GET", "/api/v1/simulator/presets"),
+        ("GET", "/api/v1/simulator/status"),
+        ("POST", "/api/v1/simulator/start"),
+        ("POST", "/api/v1/simulator/reset"),
+    ]
+
+    def test_agent_rejected(self, auth_client):
+        for method, path in self.SIMULATOR_ENDPOINTS:
+            headers = {"Authorization": "Bearer sk-agent-1"}
+            resp = auth_client.request(method, path, headers=headers)
+            assert resp.status_code == 403, f"agent allowed on {path}"
+
+    def test_viewer_rejected(self, auth_client):
+        for method, path in self.SIMULATOR_ENDPOINTS:
+            headers = {"Authorization": "Bearer sk-view-1"}
+            resp = auth_client.request(method, path, headers=headers)
+            assert resp.status_code == 403, f"viewer allowed on {path}"
+
+    def test_operator_allowed(self, auth_client):
+        for method, path in self.SIMULATOR_ENDPOINTS:
+            headers = {"Authorization": "Bearer sk-ops-1"}
+            resp = auth_client.request(method, path, headers=headers)
+            assert resp.status_code != 403, f"operator rejected from {path}"

@@ -501,3 +501,24 @@ class TestCSRFEnforcement:
             headers={"X-CSRF-Token": csrf_token},
         )
         assert resp.status_code != 403
+
+
+class TestSessionSecretWarning:
+    def test_warns_when_no_session_secret(self, caplog):
+        """Auto-generated session secret should emit a loud warning."""
+        import logging
+        from monitor.app import _ensure_session_secret
+        cfg = MonitorConfig()
+        assert cfg.session_secret == ""
+        with caplog.at_level(logging.WARNING):
+            _ensure_session_secret(cfg)
+        assert cfg.session_secret != ""
+        assert "session_secret not configured" in caplog.text
+
+    def test_no_warning_when_secret_configured(self, caplog):
+        import logging
+        from monitor.app import _ensure_session_secret
+        cfg = MonitorConfig(session_secret="my-secret")
+        with caplog.at_level(logging.WARNING):
+            _ensure_session_secret(cfg)
+        assert "session_secret not configured" not in caplog.text

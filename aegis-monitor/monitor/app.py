@@ -41,6 +41,18 @@ STATIC_DIR = Path(__file__).parent / "static"
 _login_limiter = LoginRateLimiter(per_minute=10, per_hour=50)
 
 
+def _ensure_session_secret(config: MonitorConfig) -> None:
+    """Auto-generate session_secret if not configured, with a warning."""
+    if not config.session_secret:
+        import secrets as _secrets
+        config.session_secret = _secrets.token_hex(32)
+        logging.warning(
+            "WARNING: session_secret not configured — sessions will not survive "
+            "restarts and are invalid across instances. Set session_secret in "
+            "monitor.yaml for production use."
+        )
+
+
 async def _periodic_background(app_state, interval: float = 30.0):
     """Periodic background work: reclustering, R0, pruning, counter sync."""
     while True:
@@ -89,6 +101,7 @@ async def _periodic_background(app_state, interval: float = 30.0):
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: C901
     cfg = MonitorConfig.load()
+    _ensure_session_secret(cfg)
     app.state.config = cfg
     app.state.db = Database(cfg.effective_database_url)
     app.state.graph = AgentGraph()

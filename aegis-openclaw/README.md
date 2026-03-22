@@ -2,8 +2,8 @@
 
 AEGIS skill and hooks package for [OpenClaw](https://github.com/gaiarobotics/openclaw) agents. Provides runtime security scanning, output sanitization, action auditing, and behavioral drift detection through two complementary layers:
 
-1. **Hooks** — Automatic runtime integration that scans inbound messages, sanitizes outbound messages, and audits every tool call
-2. **Skill commands** — Agent-accessible security commands (`aegis-scan`, `aegis-trust`, `aegis-quarantine`, etc.)
+1. **Hooks** - Automatic runtime integration that scans inbound messages, sanitizes outbound messages, and audits every tool call
+2. **Skill commands** - Agent-accessible security commands (`aegis-scan`, `aegis-trust`, `aegis-quarantine`, etc.)
 
 For proxy-based protection, see the [AEGIS Proxy](../aegis_proxy/) and the full [OpenClaw Integration Guide](../docs/openclaw-integration.md).
 
@@ -42,7 +42,7 @@ Copy `SKILL.md` and `scripts/` into your OpenClaw skills directory. The skill re
 ```bash
 export AEGIS_MODE=enforce              # "enforce" or "observe". "Observe" should only be used for testing.
 export AEGIS_CONFIG=/path/to/aegis.yaml  # Optional config file
-export AEGIS_STATE_KEY=<hex-secret>    # Optional — enables persistent tamper-proof state. Set to a unique hex string of your choosing.
+export AEGIS_STATE_KEY=<hex-secret>    # Optional - enables persistent tamper-proof state. Set to a unique hex string of your choosing.
 export AEGIS_EXIT_TOKEN=<token>        # Required to exit quarantine
 ```
 
@@ -66,7 +66,7 @@ Scans every inbound user message through the AEGIS scanner. If a threat is detec
 
 Sanitizes every outbound assistant message. Removes authority markers (`[SYSTEM]`, `[ADMIN]`), credential fragments, and instruction-shaped content. Detects behavioral drift against the frozen baseline.
 
-### aegis-tool-audit (`tool_result_persist`) — Critical
+### aegis-tool-audit (`tool_result_persist`) - Critical
 
 The most important hook. Evaluates every tool call against AEGIS broker policies before execution. Classifies tools as read or write, checks budget limits, enforces quarantine restrictions, and feeds tool usage into the behavior tracker for drift detection.
 

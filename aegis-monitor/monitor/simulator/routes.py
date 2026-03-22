@@ -13,10 +13,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+import hashlib
+import hmac as _hmac
+
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from monitor.auth import require_role
+from monitor.auth import (
+    _SESSION_COOKIE_NAME,
+    require_role,
+    verify_session_token,
+)
+from monitor.config import MonitorConfig
 
 from monitor.simulator.engine import SimulationEngine
 from monitor.simulator.models import SimState
@@ -274,15 +282,72 @@ def register_routes(app: FastAPI) -> None:
 
     @app.websocket("/ws/simulator")
     async def websocket_simulator(ws: WebSocket):
+        config: MonitorConfig = ws.app.state.config
+
+        # In open mode, accept immediately
+        if not config.api_keys:
+            await ws.accept()
+            app.state.sim_ws_clients.add(ws)
+            try:
+                while True:
+                    await ws.receive_text()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                app.state.sim_ws_clients.discard(ws)
+            return
+
+        # Try session cookie first
+        cookie = ws.cookies.get(_SESSION_COOKIE_NAME)
+        role = None
+        if cookie and config.session_secret:
+            payload = verify_session_token(cookie, config.session_secret, ttl=config.session_ttl_seconds)
+            if payload and payload.get("role") == "operator":
+                key_hash = payload.get("key_hash", "")
+                for k in config.api_keys:
+                    if hashlib.sha256(k.encode()).hexdigest() == key_hash:
+                        role = payload["role"]
+                        break
+
+        if role:
+            await ws.accept()
+            app.state.sim_ws_clients.add(ws)
+            try:
+                while True:
+                    await ws.receive_text()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                app.state.sim_ws_clients.discard(ws)
+            return
+
+        # No valid cookie — accept and require first-message auth
         await ws.accept()
-        app.state.sim_ws_clients.add(ws)
         try:
-            while True:
-                await ws.receive_text()
-        except WebSocketDisconnect:
-            pass
-        finally:
-            app.state.sim_ws_clients.discard(ws)
+            raw = await asyncio.wait_for(ws.receive_json(), timeout=10.0)
+            auth_data = raw.get("auth", {})
+            api_key = auth_data.get("api_key", "")
+            matched_role = None
+            for configured_key, r in config.api_keys.items():
+                if _hmac.compare_digest(api_key, configured_key):
+                    matched_role = r
+                    break
+            if matched_role != "operator":
+                await ws.send_json({"authenticated": False, "error": "Insufficient permissions"})
+                await ws.close(code=4003, reason="Forbidden")
+                return
+
+            await ws.send_json({"authenticated": True, "role": matched_role})
+            app.state.sim_ws_clients.add(ws)
+            try:
+                while True:
+                    await ws.receive_text()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                app.state.sim_ws_clients.discard(ws)
+        except (asyncio.TimeoutError, Exception):
+            await ws.close(code=4003, reason="Authentication required")
 
     # ------------------------------------------------------------------
     # Page

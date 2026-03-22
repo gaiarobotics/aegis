@@ -418,3 +418,32 @@ class TestSimulatorPermissions:
             headers = {"Authorization": "Bearer sk-ops-1"}
             resp = auth_client.request(method, path, headers=headers)
             assert resp.status_code != 403, f"operator rejected from {path}"
+
+
+class TestWebSocketAuth:
+    def test_dashboard_ws_accepted_with_viewer_session(self, auth_client):
+        """Viewer session cookie should allow WebSocket upgrade."""
+        auth_client.post("/auth/login", json={"api_key": "sk-view-1"})
+        with auth_client.websocket_connect("/ws/dashboard") as ws:
+            pass
+
+    def test_dashboard_ws_first_message_auth_valid(self, auth_client):
+        """Non-browser clients authenticate via first JSON message."""
+        with auth_client.websocket_connect("/ws/dashboard") as ws:
+            ws.send_json({"auth": {"api_key": "sk-view-1"}})
+            resp = ws.receive_json()
+            assert resp.get("authenticated") is True
+
+    def test_dashboard_ws_first_message_auth_invalid(self, auth_client):
+        """Invalid key in first message should close with 4003."""
+        with auth_client.websocket_connect("/ws/dashboard") as ws:
+            ws.send_json({"auth": {"api_key": "wrong-key"}})
+            resp = ws.receive_json()
+            assert resp.get("authenticated") is False
+
+    def test_dashboard_ws_first_message_auth_agent_rejected(self, auth_client):
+        """Agent role should be rejected from dashboard WS."""
+        with auth_client.websocket_connect("/ws/dashboard") as ws:
+            ws.send_json({"auth": {"api_key": "sk-agent-1"}})
+            resp = ws.receive_json()
+            assert resp.get("authenticated") is False

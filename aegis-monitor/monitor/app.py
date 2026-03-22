@@ -1324,16 +1324,74 @@ async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role
 
 @app.websocket("/ws/dashboard")
 async def ws_dashboard(ws: WebSocket):
+    config: MonitorConfig = ws.app.state.config
+
+    # In open mode, accept immediately
+    if not config.api_keys:
+        await ws.accept()
+        app.state.ws_clients.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            app.state.ws_clients.discard(ws)
+        return
+
+    # Try session cookie first
+    import hashlib
+    cookie = ws.cookies.get(_SESSION_COOKIE_NAME)
+    role = None
+    if cookie and config.session_secret:
+        payload = verify_session_token(cookie, config.session_secret, ttl=config.session_ttl_seconds)
+        if payload and payload.get("role") in ("viewer", "operator", "open"):
+            key_hash = payload.get("key_hash", "")
+            for k in config.api_keys:
+                if hashlib.sha256(k.encode()).hexdigest() == key_hash:
+                    role = payload["role"]
+                    break
+
+    if role:
+        await ws.accept()
+        app.state.ws_clients.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            app.state.ws_clients.discard(ws)
+        return
+
+    # No valid cookie — accept and require first-message auth
     await ws.accept()
-    app.state.ws_clients.add(ws)
     try:
-        while True:
-            # Keep connection alive; client can send pings
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        pass
-    finally:
-        app.state.ws_clients.discard(ws)
+        import hmac as _hmac
+        raw = await asyncio.wait_for(ws.receive_json(), timeout=10.0)
+        auth_data = raw.get("auth", {})
+        api_key = auth_data.get("api_key", "")
+        matched_role = None
+        for configured_key, r in config.api_keys.items():
+            if _hmac.compare_digest(api_key, configured_key):
+                matched_role = r
+                break
+        if matched_role not in ("viewer", "operator"):
+            await ws.send_json({"authenticated": False, "error": "Insufficient permissions"})
+            await ws.close(code=4003, reason="Forbidden")
+            return
+
+        await ws.send_json({"authenticated": True, "role": matched_role})
+        app.state.ws_clients.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            app.state.ws_clients.discard(ws)
+    except (asyncio.TimeoutError, Exception):
+        await ws.close(code=4003, reason="Authentication required")
 
 
 # ------------------------------------------------------------------

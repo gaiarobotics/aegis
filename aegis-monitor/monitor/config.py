@@ -12,6 +12,16 @@ import yaml
 
 
 @dataclass
+class AgentKey:
+    """Public key for agent report signature verification."""
+    key_type: str   # "hmac-sha256" or "ed25519"
+    key_bytes: bytes
+
+
+_KEY_TYPE_MAP = {"hmac": "hmac-sha256", "ed25519": "ed25519"}
+
+
+@dataclass
 class MonitorConfig:
     """Monitor service configuration."""
 
@@ -22,7 +32,7 @@ class MonitorConfig:
     api_keys: dict[str, str] = field(default_factory=dict)
     session_secret: str = ""
     session_ttl_seconds: int = 28800
-    agent_public_keys: dict[str, bytes] = field(default_factory=dict)
+    agent_public_keys: dict[str, AgentKey] = field(default_factory=dict)
     clustering_enabled: bool = False
     r0_window_hours: int = 24
     compromise_rate_limit: int = 5
@@ -55,6 +65,12 @@ class MonitorConfig:
             if candidate.is_file():
                 raw = yaml.safe_load(candidate.read_text()) or {}
 
+        raw_pubkeys = raw.get("agent_public_keys", {})
+        parsed_pubkeys: dict[str, AgentKey] = {}
+        if isinstance(raw_pubkeys, dict):
+            for agent_id, key_str in raw_pubkeys.items():
+                parsed_pubkeys[agent_id] = cls._parse_agent_key(key_str)
+
         cfg = cls(
             host=raw.get("host", "0.0.0.0"),
             port=int(raw.get("port", 8080)),
@@ -63,6 +79,7 @@ class MonitorConfig:
             api_keys=cls._parse_api_keys(raw.get("api_keys")),
             session_secret=raw.get("session_secret", ""),
             session_ttl_seconds=int(raw.get("session_ttl_seconds", 28800)),
+            agent_public_keys=parsed_pubkeys,
             clustering_enabled=bool(raw.get("clustering_enabled", False)),
             r0_window_hours=int(raw.get("r0_window_hours", 24)),
             compromise_rate_limit=int(raw.get("compromise_rate_limit", 5)),
@@ -98,8 +115,36 @@ class MonitorConfig:
             cfg.compromise_min_trust_tier = int(v)
         if v := os.environ.get("MONITOR_COMPROMISE_QUORUM"):
             cfg.compromise_quorum = int(v)
+        if v := os.environ.get("MONITOR_AGENT_PUBLIC_KEYS"):
+            parsed: dict[str, AgentKey] = {}
+            for entry in v.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                parts = entry.split(":")
+                if len(parts) != 3:
+                    raise ValueError(
+                        f"MONITOR_AGENT_PUBLIC_KEYS entry '{entry}' has invalid format. "
+                        "Expected exactly: agent_id:type:hexbytes (3 colon-separated parts). "
+                        "Agent IDs must not contain colons."
+                    )
+                agent_id, type_prefix, hex_bytes = parts
+                key = cls._parse_agent_key(f"{type_prefix}:{hex_bytes}")
+                parsed[agent_id] = key
+            cfg.agent_public_keys = parsed
 
         return cfg
+
+    @staticmethod
+    def _parse_agent_key(value: str) -> "AgentKey":
+        """Parse a prefixed key string like ``hmac:aabb...`` into an AgentKey."""
+        if ":" not in value:
+            raise ValueError(f"Agent key must have type prefix (hmac: or ed25519:), got: {value!r}")
+        prefix, hex_bytes = value.split(":", 1)
+        key_type = _KEY_TYPE_MAP.get(prefix)
+        if key_type is None:
+            raise ValueError(f"Unsupported key type prefix: {prefix!r}. Use 'hmac' or 'ed25519'.")
+        return AgentKey(key_type=key_type, key_bytes=bytes.fromhex(hex_bytes))
 
     @staticmethod
     def _parse_api_keys(raw_value: Any) -> dict[str, str]:

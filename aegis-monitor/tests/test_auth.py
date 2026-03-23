@@ -2,7 +2,63 @@
 
 import os
 import pytest
-from monitor.config import MonitorConfig
+from monitor.config import MonitorConfig, AgentKey
+
+
+class TestAgentKeyConfig:
+    def test_parse_hmac_key_from_yaml(self, tmp_path):
+        cfg_file = tmp_path / "monitor.yaml"
+        cfg_file.write_text(
+            'agent_public_keys:\n'
+            '  "agent-1": "hmac:' + 'aa' * 32 + '"\n'
+        )
+        cfg = MonitorConfig.load(cfg_file)
+        assert "agent-1" in cfg.agent_public_keys
+        key = cfg.agent_public_keys["agent-1"]
+        assert key.key_type == "hmac-sha256"
+        assert key.key_bytes == bytes.fromhex('aa' * 32)
+
+    def test_parse_ed25519_key_from_yaml(self, tmp_path):
+        cfg_file = tmp_path / "monitor.yaml"
+        cfg_file.write_text(
+            'agent_public_keys:\n'
+            '  "agent-2": "ed25519:' + 'bb' * 32 + '"\n'
+        )
+        cfg = MonitorConfig.load(cfg_file)
+        key = cfg.agent_public_keys["agent-2"]
+        assert key.key_type == "ed25519"
+        assert key.key_bytes == bytes.fromhex('bb' * 32)
+
+    def test_parse_keys_from_env_var(self, monkeypatch):
+        monkeypatch.setenv(
+            "MONITOR_AGENT_PUBLIC_KEYS",
+            "agent-1:hmac:" + "aa" * 32 + ",agent-2:ed25519:" + "bb" * 32,
+        )
+        cfg = MonitorConfig.load()
+        assert len(cfg.agent_public_keys) == 2
+        assert cfg.agent_public_keys["agent-1"].key_type == "hmac-sha256"
+        assert cfg.agent_public_keys["agent-2"].key_type == "ed25519"
+
+    def test_env_var_agent_id_with_colon_rejected(self, monkeypatch):
+        monkeypatch.setenv(
+            "MONITOR_AGENT_PUBLIC_KEYS",
+            "bad:id:hmac:" + "aa" * 32,
+        )
+        with pytest.raises(ValueError):
+            MonitorConfig.load()
+
+    def test_empty_agent_public_keys_default(self):
+        cfg = MonitorConfig.load()
+        assert cfg.agent_public_keys == {}
+
+    def test_invalid_key_type_rejected(self, tmp_path):
+        cfg_file = tmp_path / "monitor.yaml"
+        cfg_file.write_text(
+            'agent_public_keys:\n'
+            '  "agent-1": "rsa:' + 'aa' * 32 + '"\n'
+        )
+        with pytest.raises(ValueError, match="Unsupported key type"):
+            MonitorConfig.load(cfg_file)
 
 
 class TestConfigMigration:

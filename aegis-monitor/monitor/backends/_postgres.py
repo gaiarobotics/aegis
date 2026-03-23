@@ -65,6 +65,7 @@ _SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_compromises_compromised ON compromises(compromised_agent_id)",
     "CREATE INDEX IF NOT EXISTS idx_compromises_ts ON compromises(timestamp)",
+    "ALTER TABLE compromises ADD COLUMN IF NOT EXISTS verified INTEGER NOT NULL DEFAULT 0",
     """
     CREATE TABLE IF NOT EXISTS killswitch_rules (
         rule_id    TEXT PRIMARY KEY,

@@ -58,6 +58,7 @@ class CompromiseRecord:
     recommended_action: str = "quarantine"
     content_hash_hex: str = ""
     timestamp: float = field(default_factory=time.time)
+    verified: bool = False
 
 
 @dataclass

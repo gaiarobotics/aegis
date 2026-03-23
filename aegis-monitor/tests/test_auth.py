@@ -674,3 +674,15 @@ class TestReportSignatureVerification:
         accepted, verified = verify_report_signature(data, cfg)
         assert accepted is True
         assert verified is True
+
+
+class TestVerifiedFieldPersistence:
+    def test_compromise_record_has_verified_field(self):
+        from monitor.models import CompromiseRecord
+        record = CompromiseRecord(record_id="r1", verified=True)
+        assert record.verified is True
+
+    def test_compromise_record_defaults_unverified(self):
+        from monitor.models import CompromiseRecord
+        record = CompromiseRecord(record_id="r1")
+        assert record.verified is False

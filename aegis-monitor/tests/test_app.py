@@ -20,7 +20,7 @@ def client(tmp_path):
     with TestClient(app) as c:
         from monitor.validation import ReportValidator
         # Ensure open auth mode for most tests
-        app.state.config.api_keys = []
+        app.state.config.api_keys = {}
         # Backwards-compatible: quorum=1, min_trust=0 so existing tests pass
         app.state.config.compromise_quorum = 1
         app.state.config.compromise_min_trust_tier = 0
@@ -149,17 +149,17 @@ class TestAuth:
         assert resp.status_code == 200
 
     def test_auth_rejects_invalid_key(self, client):
-        app.state.config.api_keys = ["valid-key"]
+        app.state.config.api_keys = {"valid-key": "viewer"}
         resp = client.get("/api/v1/graph", headers={"Authorization": "Bearer wrong"})
         assert resp.status_code == 403
 
     def test_auth_accepts_valid_key(self, client):
-        app.state.config.api_keys = ["valid-key"]
+        app.state.config.api_keys = {"valid-key": "viewer"}
         resp = client.get("/api/v1/graph", headers={"Authorization": "Bearer valid-key"})
         assert resp.status_code == 200
 
     def test_auth_rejects_missing_header(self, client):
-        app.state.config.api_keys = ["valid-key"]
+        app.state.config.api_keys = {"valid-key": "viewer"}
         resp = client.get("/api/v1/graph")
         assert resp.status_code == 401
 

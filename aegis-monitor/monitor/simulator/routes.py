@@ -13,8 +13,19 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import hashlib
+import hmac as _hmac
+
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+
+from monitor.auth import (
+    _SESSION_COOKIE_NAME,
+    require_csrf,
+    require_role,
+    verify_session_token,
+)
+from monitor.config import MonitorConfig
 
 from monitor.simulator.engine import SimulationEngine
 from monitor.simulator.models import SimState
@@ -75,11 +86,11 @@ def register_routes(app: FastAPI) -> None:
     # ------------------------------------------------------------------
 
     @app.get("/api/v1/simulator/presets")
-    async def list_presets() -> list[str]:
+    async def list_presets(_role: str = Depends(require_role("operator"))) -> list[str]:
         return app.state.preset_manager.list_presets()
 
     @app.get("/api/v1/simulator/presets/{name}")
-    async def load_preset(name: str):
+    async def load_preset(name: str, _role: str = Depends(require_role("operator"))):
         try:
             config = app.state.preset_manager.load(name)
         except FileNotFoundError:
@@ -87,13 +98,13 @@ def register_routes(app: FastAPI) -> None:
         return app.state.preset_manager._config_to_dict(config)
 
     @app.post("/api/v1/simulator/presets/{name}")
-    async def save_preset(name: str, body: dict[str, Any]):
+    async def save_preset(name: str, body: dict[str, Any], _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         config = app.state.preset_manager._dict_to_config(body)
         app.state.preset_manager.save(name, config)
         return {"status": "ok"}
 
     @app.delete("/api/v1/simulator/presets/{name}")
-    async def delete_preset(name: str):
+    async def delete_preset(name: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         try:
             app.state.preset_manager.delete(name)
         except FileNotFoundError:
@@ -105,7 +116,7 @@ def register_routes(app: FastAPI) -> None:
     # ------------------------------------------------------------------
 
     @app.post("/api/v1/simulator/generate")
-    async def generate(body: dict[str, Any]):
+    async def generate(body: dict[str, Any], _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         config = app.state.preset_manager._dict_to_config(body)
         engine = SimulationEngine(config)
         try:
@@ -116,7 +127,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value, "num_agents": config.num_agents}
 
     @app.post("/api/v1/simulator/start")
-    async def start():
+    async def start(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         try:
             engine.start()
@@ -125,7 +136,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/pause")
-    async def pause():
+    async def pause(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         # Cancel auto-tick task if running
         task: asyncio.Task | None = getattr(app.state, "sim_tick_task", None)
@@ -139,7 +150,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/resume")
-    async def resume():
+    async def resume(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         try:
             engine.resume()
@@ -148,7 +159,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/stop")
-    async def stop():
+    async def stop(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         # Cancel auto-tick task if running
         task: asyncio.Task | None = getattr(app.state, "sim_tick_task", None)
@@ -162,7 +173,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": engine.state.value}
 
     @app.post("/api/v1/simulator/reset")
-    async def reset():
+    async def reset(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _get_engine(app)
         if engine is not None:
             engine.reset()
@@ -170,7 +181,7 @@ def register_routes(app: FastAPI) -> None:
         return {"state": SimState.IDLE.value}
 
     @app.post("/api/v1/simulator/tick")
-    async def tick():
+    async def tick(_role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         try:
             snapshot = engine.tick()
@@ -181,7 +192,7 @@ def register_routes(app: FastAPI) -> None:
         return data
 
     @app.post("/api/v1/simulator/run")
-    async def run(body: dict[str, Any]):
+    async def run(body: dict[str, Any], _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         engine = _require_engine(app)
         ticks_per_second = body.get("ticks_per_second", 1)
         delay = 1.0 / max(0.1, ticks_per_second)
@@ -208,7 +219,7 @@ def register_routes(app: FastAPI) -> None:
     # ------------------------------------------------------------------
 
     @app.get("/api/v1/simulator/status")
-    async def status():
+    async def status(_role: str = Depends(require_role("operator"))):
         engine = _get_engine(app)
         if engine is None:
             return {
@@ -230,12 +241,12 @@ def register_routes(app: FastAPI) -> None:
         }
 
     @app.get("/api/v1/simulator/agents")
-    async def agents():
+    async def agents(_role: str = Depends(require_role("operator"))):
         engine = _require_engine(app)
         return engine.get_agent_states()
 
     @app.get("/api/v1/simulator/graph")
-    async def graph():
+    async def graph(_role: str = Depends(require_role("operator"))):
         engine = _require_engine(app)
         if engine._graph is None:
             raise HTTPException(status_code=400, detail="No graph generated")
@@ -247,22 +258,22 @@ def register_routes(app: FastAPI) -> None:
         return graph_data
 
     @app.get("/api/v1/simulator/embeddings")
-    async def embeddings():
+    async def embeddings(_role: str = Depends(require_role("operator"))):
         engine = _require_engine(app)
         return engine.get_embedding_entries()
 
     @app.get("/api/v1/simulator/scatter")
-    async def scatter():
+    async def scatter(_role: str = Depends(require_role("operator"))):
         engine = _require_engine(app)
         return engine.get_scatter_data()
 
     @app.get("/api/v1/simulator/dendrogram")
-    async def dendrogram():
+    async def dendrogram(_role: str = Depends(require_role("operator"))):
         engine = _require_engine(app)
         return engine.get_dendrogram_data()
 
     @app.get("/api/v1/simulator/export")
-    async def export():
+    async def export(_role: str = Depends(require_role("operator"))):
         engine = _require_engine(app)
         return engine.export_results()
 
@@ -272,15 +283,72 @@ def register_routes(app: FastAPI) -> None:
 
     @app.websocket("/ws/simulator")
     async def websocket_simulator(ws: WebSocket):
+        config: MonitorConfig = ws.app.state.config
+
+        # In open mode, accept immediately
+        if not config.api_keys:
+            await ws.accept()
+            app.state.sim_ws_clients.add(ws)
+            try:
+                while True:
+                    await ws.receive_text()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                app.state.sim_ws_clients.discard(ws)
+            return
+
+        # Try session cookie first
+        cookie = ws.cookies.get(_SESSION_COOKIE_NAME)
+        role = None
+        if cookie and config.session_secret:
+            payload = verify_session_token(cookie, config.session_secret, ttl=config.session_ttl_seconds)
+            if payload and payload.get("role") == "operator":
+                key_hash = payload.get("key_hash", "")
+                for k in config.api_keys:
+                    if hashlib.sha256(k.encode()).hexdigest() == key_hash:
+                        role = payload["role"]
+                        break
+
+        if role:
+            await ws.accept()
+            app.state.sim_ws_clients.add(ws)
+            try:
+                while True:
+                    await ws.receive_text()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                app.state.sim_ws_clients.discard(ws)
+            return
+
+        # No valid cookie — accept and require first-message auth
         await ws.accept()
-        app.state.sim_ws_clients.add(ws)
         try:
-            while True:
-                await ws.receive_text()
-        except WebSocketDisconnect:
-            pass
-        finally:
-            app.state.sim_ws_clients.discard(ws)
+            raw = await asyncio.wait_for(ws.receive_json(), timeout=10.0)
+            auth_data = raw.get("auth", {})
+            api_key = auth_data.get("api_key", "")
+            matched_role = None
+            for configured_key, r in config.api_keys.items():
+                if _hmac.compare_digest(api_key, configured_key):
+                    matched_role = r
+                    break
+            if matched_role != "operator":
+                await ws.send_json({"authenticated": False, "error": "Insufficient permissions"})
+                await ws.close(code=4003, reason="Forbidden")
+                return
+
+            await ws.send_json({"authenticated": True, "role": matched_role})
+            app.state.sim_ws_clients.add(ws)
+            try:
+                while True:
+                    await ws.receive_text()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                app.state.sim_ws_clients.discard(ws)
+        except (asyncio.TimeoutError, Exception):
+            await ws.close(code=4003, reason="Authentication required")
 
     # ------------------------------------------------------------------
     # Page

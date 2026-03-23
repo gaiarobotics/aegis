@@ -11,13 +11,23 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from monitor.async_db import run_db, run_in_transaction
 from monitor.cache import InMemoryCache
-from monitor.auth import verify_api_key
+from monitor.auth import (
+    LoginRateLimiter,
+    _SESSION_COOKIE_NAME,
+    create_session_token,
+    generate_csrf_token,
+    require_csrf,
+    require_role,
+    verify_api_key,
+    verify_report_signature,
+    verify_session_token,
+)
 from monitor.clustering import ThreatClusterer
 from monitor.config import MonitorConfig
 from monitor.contagion import ContagionDetector, TopicClusterer as TopicHashClusterer
@@ -28,6 +38,20 @@ from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, Quaranti
 from monitor.validation import ReportValidator
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+_login_limiter = LoginRateLimiter(per_minute=10, per_hour=50)
+
+
+def _ensure_session_secret(config: MonitorConfig) -> None:
+    """Auto-generate session_secret if not configured, with a warning."""
+    if not config.session_secret:
+        import secrets as _secrets
+        config.session_secret = _secrets.token_hex(32)
+        logging.warning(
+            "WARNING: session_secret not configured — sessions will not survive "
+            "restarts and are invalid across instances. Set session_secret in "
+            "monitor.yaml for production use."
+        )
 
 
 async def _periodic_background(app_state, interval: float = 30.0):
@@ -78,6 +102,7 @@ async def _periodic_background(app_state, interval: float = 30.0):
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: C901
     cfg = MonitorConfig.load()
+    _ensure_session_secret(cfg)
     app.state.config = cfg
     app.state.db = Database(cfg.effective_database_url)
     app.state.graph = AgentGraph()
@@ -158,11 +183,110 @@ async def _broadcast(app_state: Any, event: dict) -> None:
 
 
 # ------------------------------------------------------------------
+# Auth routes
+# ------------------------------------------------------------------
+
+@app.post("/auth/login")
+async def auth_login(request: Request, data: dict):
+    config: MonitorConfig = request.app.state.config
+
+    client_ip = request.client.host if request.client else "unknown"
+    if not _login_limiter.check(client_ip):
+        raise HTTPException(status_code=429, detail="Too many login attempts")
+
+    api_key = data.get("api_key", "")
+
+    # Open mode
+    if not config.api_keys:
+        secret = config.session_secret or "ephemeral"
+        token = create_session_token("open", api_key, secret)
+        response = JSONResponse({"role": "open"})
+        response.set_cookie(
+            _SESSION_COOKIE_NAME, token,
+            httponly=True, samesite="lax", secure=request.url.scheme == "https",
+            max_age=config.session_ttl_seconds,
+        )
+        return response
+
+    # Validate the key
+    import hmac as _hmac
+    matched_role = None
+    for configured_key, role in config.api_keys.items():
+        if _hmac.compare_digest(api_key, configured_key):
+            matched_role = role
+            break
+
+    if matched_role is None:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    if not config.session_secret:
+        raise HTTPException(status_code=500, detail="Session secret not configured")
+
+    token = create_session_token(matched_role, api_key, config.session_secret)
+    response = JSONResponse({"role": matched_role})
+    response.set_cookie(
+        _SESSION_COOKIE_NAME, token,
+        httponly=True, samesite="lax", secure=request.url.scheme == "https",
+        max_age=config.session_ttl_seconds,
+    )
+    return response
+
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    config: MonitorConfig = request.app.state.config
+    cookie = request.cookies.get(_SESSION_COOKIE_NAME)
+    if not cookie:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    secret = config.session_secret or "ephemeral"
+    payload = verify_session_token(cookie, secret, ttl=config.session_ttl_seconds)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    # In non-open mode, verify key still exists
+    if config.api_keys:
+        import hashlib
+        key_hash = payload.get("key_hash", "")
+        found = any(
+            hashlib.sha256(k.encode()).hexdigest() == key_hash
+            for k in config.api_keys
+        )
+        if not found:
+            raise HTTPException(status_code=401, detail="API key revoked")
+
+    csrf = generate_csrf_token(secret) if config.session_secret else ""
+    return {"role": payload["role"], "csrf_token": csrf}
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    config: MonitorConfig = request.app.state.config
+    cookie = request.cookies.get(_SESSION_COOKIE_NAME)
+    if not cookie:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    secret = config.session_secret or "ephemeral"
+    payload = verify_session_token(cookie, secret, ttl=config.session_ttl_seconds)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    response = JSONResponse({"status": "logged out"})
+    response.delete_cookie(_SESSION_COOKIE_NAME)
+    return response
+
+
+# ------------------------------------------------------------------
 # Report endpoints
 # ------------------------------------------------------------------
 
 @app.post("/api/v1/reports/compromise")
-async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_compromise(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
     r0: R0Estimator = app.state.r0
@@ -177,6 +301,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
         recommended_action=data.get("recommended_action", "quarantine"),
         content_hash_hex=data.get("content_hash_hex", ""),
         timestamp=data.get("timestamp", time.time()),
+        verified=verified,
     )
     # Synchronous in-memory mutations first
     r0.add_record(record)
@@ -209,8 +334,8 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
             """INSERT INTO compromises
                    (record_id, reporter_agent_id, compromised_agent_id,
                     source, nk_score, nk_verdict, recommended_action,
-                    content_hash_hex, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_hash_hex, timestamp, verified)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(record_id) DO UPDATE SET
                    reporter_agent_id    = excluded.reporter_agent_id,
                    compromised_agent_id = excluded.compromised_agent_id,
@@ -219,7 +344,8 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
                    nk_verdict           = excluded.nk_verdict,
                    recommended_action   = excluded.recommended_action,
                    content_hash_hex     = excluded.content_hash_hex,
-                   timestamp            = excluded.timestamp
+                   timestamp            = excluded.timestamp,
+                   verified             = excluded.verified
             """,
             (
                 record.record_id,
@@ -231,6 +357,7 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
                 record.recommended_action,
                 record.content_hash_hex,
                 record.timestamp,
+                int(record.verified),
             ),
         )
         # Upsert agent state
@@ -344,7 +471,12 @@ async def receive_compromise(data: dict, _key: str = Depends(verify_api_key)):
 
 
 @app.post("/api/v1/reports/trust")
-async def receive_trust(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_trust(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
 
     event = StoredEvent(
@@ -420,7 +552,12 @@ async def receive_trust(data: dict, _key: str = Depends(verify_api_key)):
 
 
 @app.post("/api/v1/reports/threat")
-async def receive_threat(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_threat(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
     clusterer: ThreatClusterer = app.state.clusterer
 
@@ -454,7 +591,12 @@ async def receive_threat(data: dict, _key: str = Depends(verify_api_key)):
 
 
 @app.post("/api/v1/heartbeat")
-async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
+async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
@@ -678,7 +820,7 @@ async def receive_heartbeat(data: dict, _key: str = Depends(verify_api_key)):
 # ------------------------------------------------------------------
 
 @app.get("/api/v1/graph")
-async def get_graph(_key: str = Depends(verify_api_key)):
+async def get_graph(_role: str = Depends(require_role("viewer", "operator"))):
     cache = app.state.cache
     cached = await cache.get("graph")
     if cached is not None:
@@ -699,7 +841,7 @@ async def get_graph(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/metrics")
-async def get_metrics(_key: str = Depends(verify_api_key)):
+async def get_metrics(_role: str = Depends(require_role("viewer", "operator"))):
     cache = app.state.cache
     cached = await cache.get("metrics")
     if cached is not None:
@@ -736,7 +878,7 @@ async def get_metrics(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/threat-intel")
-async def get_threat_intel(_key: str = Depends(verify_api_key)):
+async def get_threat_intel(_role: str = Depends(require_role("viewer", "operator"))):
     """Return threat intelligence for agent-side pre-emptive filtering."""
     cache = app.state.cache
     cached = await cache.get("threat-intel")
@@ -764,21 +906,21 @@ async def get_threat_intel(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/topic-clusters")
-async def get_topic_clusters(_key: str = Depends(verify_api_key)):
+async def get_topic_clusters(_role: str = Depends(require_role("viewer", "operator"))):
     """Return cluster centroid data for the dashboard."""
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     return topic_clusterer.get_cluster_centroids()
 
 
 @app.get("/api/v1/embeddings")
-async def get_embeddings(_key: str = Depends(verify_api_key)):
+async def get_embeddings(_role: str = Depends(require_role("viewer", "operator"))):
     """Return nearest-neighbor embedding data."""
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     return topic_clusterer.get_nearest_neighbors()
 
 
 @app.get("/api/v1/dendrogram")
-async def get_dendrogram(_key: str = Depends(verify_api_key)):
+async def get_dendrogram(_role: str = Depends(require_role("viewer", "operator"))):
     """Return linkage data for dendrogram rendering."""
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     graph: AgentGraph = app.state.graph
@@ -799,7 +941,7 @@ async def get_dendrogram(_key: str = Depends(verify_api_key)):
 
 
 @app.get("/api/v1/trust/{agent_id}")
-async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
+async def get_trust(agent_id: str, _role: str = Depends(require_role("viewer", "operator"))):
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
@@ -831,7 +973,7 @@ async def get_trust(agent_id: str, _key: str = Depends(verify_api_key)):
 async def killswitch_status(
     agent_id: str = "",
     operator_id: str = "",
-    _key: str = Depends(verify_api_key),
+    _role: str = Depends(require_role("viewer", "operator")),
 ):
     """Agent polling endpoint — returns block status."""
     db: Database = app.state.db
@@ -840,7 +982,7 @@ async def killswitch_status(
 
 
 @app.post("/api/v1/killswitch/rules")
-async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)):
+async def create_killswitch_rule(data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Create a killswitch rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -932,7 +1074,7 @@ async def create_killswitch_rule(data: dict, _key: str = Depends(verify_api_key)
 
 
 @app.get("/api/v1/killswitch/rules")
-async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
+async def list_killswitch_rules(_role: str = Depends(require_role("viewer", "operator"))):
     """List all active killswitch rules."""
     db: Database = app.state.db
     rules = await run_db(db.get_killswitch_rules)
@@ -953,7 +1095,7 @@ async def list_killswitch_rules(_key: str = Depends(verify_api_key)):
 
 
 @app.delete("/api/v1/killswitch/rules/{rule_id}")
-async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+async def delete_killswitch_rule(rule_id: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Remove a killswitch rule."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
@@ -1023,7 +1165,7 @@ async def delete_killswitch_rule(rule_id: str, _key: str = Depends(verify_api_ke
 async def quarantine_status(
     agent_id: str = "",
     operator_id: str = "",
-    _key: str = Depends(verify_api_key),
+    _role: str = Depends(require_role("viewer", "operator")),
 ):
     """Agent polling endpoint — returns quarantine status."""
     db: Database = app.state.db
@@ -1032,7 +1174,7 @@ async def quarantine_status(
 
 
 @app.post("/api/v1/quarantine/rules")
-async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)):
+async def create_quarantine_rule(data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Create a quarantine rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -1129,7 +1271,7 @@ async def create_quarantine_rule(data: dict, _key: str = Depends(verify_api_key)
 
 
 @app.get("/api/v1/quarantine/rules")
-async def list_quarantine_rules(_key: str = Depends(verify_api_key)):
+async def list_quarantine_rules(_role: str = Depends(require_role("viewer", "operator"))):
     """List all active quarantine rules."""
     db: Database = app.state.db
     rules = await run_db(db.get_quarantine_rules)
@@ -1151,7 +1293,7 @@ async def list_quarantine_rules(_key: str = Depends(verify_api_key)):
 
 
 @app.delete("/api/v1/quarantine/rules/{rule_id}")
-async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_key)):
+async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
     """Remove a quarantine rule (release quarantine)."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
@@ -1220,16 +1362,74 @@ async def delete_quarantine_rule(rule_id: str, _key: str = Depends(verify_api_ke
 
 @app.websocket("/ws/dashboard")
 async def ws_dashboard(ws: WebSocket):
+    config: MonitorConfig = ws.app.state.config
+
+    # In open mode, accept immediately
+    if not config.api_keys:
+        await ws.accept()
+        app.state.ws_clients.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            app.state.ws_clients.discard(ws)
+        return
+
+    # Try session cookie first
+    import hashlib
+    cookie = ws.cookies.get(_SESSION_COOKIE_NAME)
+    role = None
+    if cookie and config.session_secret:
+        payload = verify_session_token(cookie, config.session_secret, ttl=config.session_ttl_seconds)
+        if payload and payload.get("role") in ("viewer", "operator", "open"):
+            key_hash = payload.get("key_hash", "")
+            for k in config.api_keys:
+                if hashlib.sha256(k.encode()).hexdigest() == key_hash:
+                    role = payload["role"]
+                    break
+
+    if role:
+        await ws.accept()
+        app.state.ws_clients.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            app.state.ws_clients.discard(ws)
+        return
+
+    # No valid cookie — accept and require first-message auth
     await ws.accept()
-    app.state.ws_clients.add(ws)
     try:
-        while True:
-            # Keep connection alive; client can send pings
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        pass
-    finally:
-        app.state.ws_clients.discard(ws)
+        import hmac as _hmac
+        raw = await asyncio.wait_for(ws.receive_json(), timeout=10.0)
+        auth_data = raw.get("auth", {})
+        api_key = auth_data.get("api_key", "")
+        matched_role = None
+        for configured_key, r in config.api_keys.items():
+            if _hmac.compare_digest(api_key, configured_key):
+                matched_role = r
+                break
+        if matched_role not in ("viewer", "operator"):
+            await ws.send_json({"authenticated": False, "error": "Insufficient permissions"})
+            await ws.close(code=4003, reason="Forbidden")
+            return
+
+        await ws.send_json({"authenticated": True, "role": matched_role})
+        app.state.ws_clients.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            app.state.ws_clients.discard(ws)
+    except (asyncio.TimeoutError, Exception):
+        await ws.close(code=4003, reason="Authentication required")
 
 
 # ------------------------------------------------------------------

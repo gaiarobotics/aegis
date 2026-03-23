@@ -10,8 +10,10 @@ from fastapi.testclient import TestClient
 def client(tmp_path):
     """Create a TestClient with a temporary preset directory."""
     from monitor.simulator.routes import create_simulator_app
+    from monitor.config import MonitorConfig
 
     app = create_simulator_app(preset_dir=str(tmp_path))
+    app.state.config = MonitorConfig(api_keys={})
     return TestClient(app)
 
 

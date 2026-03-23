@@ -25,6 +25,7 @@ from monitor.auth import (
     require_csrf,
     require_role,
     verify_api_key,
+    verify_report_signature,
     verify_session_token,
 )
 from monitor.clustering import ThreatClusterer
@@ -280,7 +281,12 @@ async def auth_logout(request: Request):
 # ------------------------------------------------------------------
 
 @app.post("/api/v1/reports/compromise")
-async def receive_compromise(data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_compromise(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
     r0: R0Estimator = app.state.r0
@@ -295,6 +301,7 @@ async def receive_compromise(data: dict, _role: str = Depends(require_role("agen
         recommended_action=data.get("recommended_action", "quarantine"),
         content_hash_hex=data.get("content_hash_hex", ""),
         timestamp=data.get("timestamp", time.time()),
+        verified=verified,
     )
     # Synchronous in-memory mutations first
     r0.add_record(record)
@@ -327,8 +334,8 @@ async def receive_compromise(data: dict, _role: str = Depends(require_role("agen
             """INSERT INTO compromises
                    (record_id, reporter_agent_id, compromised_agent_id,
                     source, nk_score, nk_verdict, recommended_action,
-                    content_hash_hex, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_hash_hex, timestamp, verified)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(record_id) DO UPDATE SET
                    reporter_agent_id    = excluded.reporter_agent_id,
                    compromised_agent_id = excluded.compromised_agent_id,
@@ -337,7 +344,8 @@ async def receive_compromise(data: dict, _role: str = Depends(require_role("agen
                    nk_verdict           = excluded.nk_verdict,
                    recommended_action   = excluded.recommended_action,
                    content_hash_hex     = excluded.content_hash_hex,
-                   timestamp            = excluded.timestamp
+                   timestamp            = excluded.timestamp,
+                   verified             = excluded.verified
             """,
             (
                 record.record_id,
@@ -349,6 +357,7 @@ async def receive_compromise(data: dict, _role: str = Depends(require_role("agen
                 record.recommended_action,
                 record.content_hash_hex,
                 record.timestamp,
+                int(record.verified),
             ),
         )
         # Upsert agent state
@@ -462,7 +471,12 @@ async def receive_compromise(data: dict, _role: str = Depends(require_role("agen
 
 
 @app.post("/api/v1/reports/trust")
-async def receive_trust(data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_trust(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
 
     event = StoredEvent(
@@ -538,7 +552,12 @@ async def receive_trust(data: dict, _role: str = Depends(require_role("agent", "
 
 
 @app.post("/api/v1/reports/threat")
-async def receive_threat(data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_threat(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
     clusterer: ThreatClusterer = app.state.clusterer
 
@@ -572,7 +591,12 @@ async def receive_threat(data: dict, _role: str = Depends(require_role("agent", 
 
 
 @app.post("/api/v1/heartbeat")
-async def receive_heartbeat(data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+    config: MonitorConfig = request.app.state.config
+    accepted, verified = verify_report_signature(data, config)
+    if not accepted:
+        raise HTTPException(status_code=401, detail="Invalid report signature")
+
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 

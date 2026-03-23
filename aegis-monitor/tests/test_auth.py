@@ -676,6 +676,74 @@ class TestReportSignatureVerification:
         assert verified is True
 
 
+class TestEndpointSignatureVerification:
+    def test_known_agent_bad_signature_rejected(self, auth_client):
+        from monitor.config import AgentKey
+        kp = generate_keypair("hmac-sha256")
+        auth_client.app.state.config.agent_public_keys = {
+            "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=kp.public_key),
+        }
+        resp = auth_client.post(
+            "/api/v1/reports/compromise",
+            json={"agent_id": "agent-1", "compromised_agent_id": "agent-2"},
+            headers={"Authorization": "Bearer sk-agent-1"},
+        )
+        assert resp.status_code == 401
+
+    def test_known_agent_valid_signature_accepted(self, auth_client):
+        from monitor.config import AgentKey
+        kp = generate_keypair("hmac-sha256")
+        auth_client.app.state.config.agent_public_keys = {
+            "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=kp.public_key),
+        }
+        report = CompromiseReport(
+            agent_id="agent-1",
+            compromised_agent_id="agent-2",
+            source="test",
+        )
+        report.sign(kp)
+        resp = auth_client.post(
+            "/api/v1/reports/compromise",
+            json=report.to_dict(),
+            headers={"Authorization": "Bearer sk-agent-1"},
+        )
+        assert resp.status_code != 401
+
+    def test_unknown_agent_accepted_without_signature(self, auth_client):
+        from monitor.config import AgentKey
+        auth_client.app.state.config.agent_public_keys = {
+            "other-agent": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
+        }
+        resp = auth_client.post(
+            "/api/v1/reports/compromise",
+            json={"agent_id": "agent-1", "compromised_agent_id": "agent-2"},
+            headers={"Authorization": "Bearer sk-agent-1"},
+        )
+        assert resp.status_code != 401
+
+    def test_open_mode_no_verification(self, auth_client):
+        auth_client.app.state.config.agent_public_keys = {}
+        resp = auth_client.post(
+            "/api/v1/reports/compromise",
+            json={"agent_id": "agent-1", "compromised_agent_id": "agent-2"},
+            headers={"Authorization": "Bearer sk-agent-1"},
+        )
+        assert resp.status_code != 401
+
+    def test_heartbeat_verification(self, auth_client):
+        from monitor.config import AgentKey
+        kp = generate_keypair("hmac-sha256")
+        auth_client.app.state.config.agent_public_keys = {
+            "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=kp.public_key),
+        }
+        resp = auth_client.post(
+            "/api/v1/heartbeat",
+            json={"agent_id": "agent-1", "operator_id": "op-1", "trust_tier": 1, "trust_score": 50, "edges": []},
+            headers={"Authorization": "Bearer sk-agent-1"},
+        )
+        assert resp.status_code == 401
+
+
 class TestVerifiedFieldPersistence:
     def test_compromise_record_has_verified_field(self):
         from monitor.models import CompromiseRecord

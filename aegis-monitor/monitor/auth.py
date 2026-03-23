@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 from collections import defaultdict
@@ -14,6 +15,8 @@ from typing import Callable
 from fastapi import Depends, HTTPException, Request
 
 from monitor.config import MonitorConfig
+
+logger = logging.getLogger(__name__)
 
 
 def get_config(request: Request) -> MonitorConfig:
@@ -193,19 +196,73 @@ class LoginRateLimiter:
         return True
 
 
-def verify_report_signature(report_data: dict, config: MonitorConfig) -> bool:
-    """Verify a report's cryptographic signature using agent public keys."""
-    if not config.agent_public_keys:
-        return True
+_REPORT_TYPE_MAP: dict[str, type] | None = None
 
-    agent_id = report_data.get("agent_id", "")
-    public_key = config.agent_public_keys.get(agent_id)
-    if public_key is None:
-        return False
+
+def _get_report_type_map() -> dict[str, type]:
+    """Lazy-load report subclass map to avoid import cycles."""
+    global _REPORT_TYPE_MAP
+    if _REPORT_TYPE_MAP is None:
+        from aegis.monitoring.reports import (
+            AgentHeartbeat,
+            CompromiseReport,
+            ThreatEventReport,
+            TrustReport,
+        )
+        _REPORT_TYPE_MAP = {
+            "compromise": CompromiseReport,
+            "trust": TrustReport,
+            "threat_event": ThreatEventReport,
+            "heartbeat": AgentHeartbeat,
+        }
+    return _REPORT_TYPE_MAP
+
+
+def verify_report_signature(data: dict, config: MonitorConfig) -> tuple[bool, bool]:
+    """Verify a report's cryptographic signature.
+
+    Returns:
+        (accepted, verified):
+        - (True, True): known agent, valid signature
+        - (True, False): unknown agent or no keys configured
+        - (False, False): known agent, invalid/missing signature
+    """
+    if not config.agent_public_keys:
+        return (True, False)
+
+    agent_id = data.get("agent_id", "")
+    agent_key = config.agent_public_keys.get(agent_id)
+
+    if agent_key is None:
+        logger.debug("Report from unknown agent %r accepted unverified", agent_id)
+        return (True, False)
+
+    sig = data.get("signature", "")
+    if not sig:
+        logger.warning("Report from known agent %r rejected: missing signature", agent_id)
+        return (False, False)
+
+    report_key_type = data.get("key_type", "hmac-sha256")
+    if report_key_type != agent_key.key_type:
+        logger.warning(
+            "Report from agent %r rejected: key_type mismatch (report=%r, config=%r)",
+            agent_id, report_key_type, agent_key.key_type,
+        )
+        return (False, False)
+
+    report_type = data.get("report_type", "")
+    type_map = _get_report_type_map()
+    report_cls = type_map.get(report_type)
+    if report_cls is None:
+        logger.warning("Report from agent %r rejected: unknown report_type %r", agent_id, report_type)
+        return (False, False)
 
     try:
-        from aegis.monitoring.reports import ReportBase
-        report = ReportBase.from_dict(report_data)
-        return report.verify(public_key)
+        report = report_cls.from_dict(data)
+        if report.verify(agent_key.key_bytes):
+            return (True, True)
+        logger.warning("Report from agent %r rejected: signature verification failed", agent_id)
+        return (False, False)
     except Exception:
-        return False
+        logger.warning("Report from agent %r rejected: deserialization/verification error", agent_id, exc_info=True)
+        return (False, False)

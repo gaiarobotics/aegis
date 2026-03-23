@@ -578,3 +578,99 @@ class TestSessionSecretWarning:
         with caplog.at_level(logging.WARNING):
             _ensure_session_secret(cfg)
         assert "session_secret not configured" not in caplog.text
+
+
+from monitor.auth import verify_report_signature
+from aegis.identity.attestation import generate_keypair
+from aegis.monitoring.reports import CompromiseReport, TrustReport, ThreatEventReport, AgentHeartbeat
+
+
+class TestReportSignatureVerification:
+    def _make_config_with_key(self, agent_id, keypair):
+        from monitor.config import AgentKey
+        return MonitorConfig(
+            agent_public_keys={
+                agent_id: AgentKey(key_type=keypair.key_type, key_bytes=keypair.public_key),
+            },
+        )
+
+    def test_open_mode_accepts_unverified(self):
+        cfg = MonitorConfig()
+        accepted, verified = verify_report_signature({"agent_id": "a"}, cfg)
+        assert accepted is True
+        assert verified is False
+
+    def test_unknown_agent_accepted_unverified(self):
+        from monitor.config import AgentKey
+        cfg = MonitorConfig(agent_public_keys={
+            "other-agent": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
+        })
+        accepted, verified = verify_report_signature({"agent_id": "unknown"}, cfg)
+        assert accepted is True
+        assert verified is False
+
+    def test_known_agent_valid_signature_accepted(self):
+        kp = generate_keypair("hmac-sha256")
+        report = CompromiseReport(
+            agent_id="agent-1",
+            compromised_agent_id="agent-2",
+            source="test",
+        )
+        report.sign(kp)
+        data = report.to_dict()
+        cfg = self._make_config_with_key("agent-1", kp)
+        accepted, verified = verify_report_signature(data, cfg)
+        assert accepted is True
+        assert verified is True
+
+    def test_known_agent_invalid_signature_rejected(self):
+        kp = generate_keypair("hmac-sha256")
+        report = CompromiseReport(
+            agent_id="agent-1",
+            compromised_agent_id="agent-2",
+        )
+        report.sign(kp)
+        data = report.to_dict()
+        data["source"] = "tampered"
+        cfg = self._make_config_with_key("agent-1", kp)
+        accepted, verified = verify_report_signature(data, cfg)
+        assert accepted is False
+        assert verified is False
+
+    def test_known_agent_missing_signature_rejected(self):
+        from monitor.config import AgentKey
+        cfg = MonitorConfig(agent_public_keys={
+            "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
+        })
+        data = {"agent_id": "agent-1", "report_type": "compromise", "signature": ""}
+        accepted, verified = verify_report_signature(data, cfg)
+        assert accepted is False
+        assert verified is False
+
+    def test_key_type_mismatch_rejected(self):
+        kp = generate_keypair("hmac-sha256")
+        report = CompromiseReport(agent_id="agent-1")
+        report.sign(kp)
+        data = report.to_dict()
+        from monitor.config import AgentKey
+        cfg = MonitorConfig(agent_public_keys={
+            "agent-1": AgentKey(key_type="ed25519", key_bytes=kp.public_key),
+        })
+        accepted, verified = verify_report_signature(data, cfg)
+        assert accepted is False
+        assert verified is False
+
+    def test_heartbeat_report_verified(self):
+        kp = generate_keypair("hmac-sha256")
+        report = AgentHeartbeat(
+            agent_id="agent-1",
+            trust_tier=2,
+            trust_score=55.0,
+            edges=[],
+        )
+        report.sign(kp)
+        data = report.to_dict()
+        cfg = self._make_config_with_key("agent-1", kp)
+        accepted, verified = verify_report_signature(data, cfg)
+        assert accepted is True
+        assert verified is True

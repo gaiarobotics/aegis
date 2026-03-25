@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS Monitor — Authenticate</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:           #0a0f14;
+            --bg-card:      #111920;
+            --bg-input:     #0d1219;
+            --border:       #1e2d3d;
+            --border-focus: #2a9d8f;
+            --accent:       #2a9d8f;
+            --accent-glow:  rgba(42, 157, 143, 0.15);
+            --text:         #d4dce6;
+            --text-muted:   #5a6a7a;
+            --red:          #e74c3c;
+            --red-muted:    rgba(231, 76, 60, 0.12);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* Subtle animated grid background */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(var(--border) 1px, transparent 1px),
+                linear-gradient(90deg, var(--border) 1px, transparent 1px);
+            background-size: 60px 60px;
+            opacity: 0.12;
+            mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
+            -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
+        }
+
+        /* Floating glow behind the card */
+        body::after {
+            content: '';
+            position: fixed;
+            width: 500px;
+            height: 500px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .login-card {
+            position: relative;
+            z-index: 1;
+            width: 380px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 48px 36px 40px;
+            animation: card-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        @keyframes card-in {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.97);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        /* Shield icon */
+        .shield {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+            animation: shield-pulse 3s ease-in-out infinite;
+        }
+
+        .shield svg {
+            width: 22px;
+            height: 22px;
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        @keyframes shield-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+            50% { box-shadow: 0 0 20px 4px var(--accent-glow); }
+        }
+
+        .title {
+            font-family: 'DM Mono', monospace;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .subtitle {
+            font-size: 22px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 32px;
+            letter-spacing: -0.3px;
+        }
+
+        .field {
+            margin-bottom: 20px;
+        }
+
+        .field label {
+            display: block;
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            font-weight: 400;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .field input {
+            width: 100%;
+            padding: 12px 14px;
+            font-family: 'DM Mono', monospace;
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .field input::placeholder {
+            color: var(--text-muted);
+            opacity: 0.5;
+        }
+
+        .field input:focus {
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .field input.error {
+            border-color: var(--red);
+            box-shadow: 0 0 0 3px var(--red-muted);
+        }
+
+        .error-msg {
+            font-size: 12px;
+            color: var(--red);
+            margin-top: 8px;
+            min-height: 18px;
+            font-family: 'DM Mono', monospace;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 13px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            color: #fff;
+            background: var(--accent);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s, transform 0.1s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .submit-btn:hover {
+            background: #239083;
+        }
+
+        .submit-btn:active {
+            transform: scale(0.985);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .submit-btn .spinner {
+            display: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            margin-top: -8px;
+        }
+
+        .submit-btn.loading .spinner { display: block; }
+        .submit-btn.loading { padding-right: 42px; }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .footer {
+            margin-top: 28px;
+            text-align: center;
+            font-family: 'DM Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="shield">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 2l7 4v5c0 5.25-3.5 9.74-7 11-3.5-1.26-7-5.75-7-11V6l7-4z"/>
+                <polyline points="9 12 11 14 15 10"/>
+            </svg>
+        </div>
+        <div class="title">aegis monitor</div>
+        <div class="subtitle">Authenticate</div>
+        <form id="login-form" autocomplete="off">
+            <div class="field">
+                <label for="api-key">API Key</label>
+                <input
+                    type="password"
+                    id="api-key"
+                    name="api_key"
+                    placeholder="sk-..."
+                    spellcheck="false"
+                    autofocus
+                    required
+                >
+                <div class="error-msg" id="error-msg"></div>
+            </div>
+            <button type="submit" class="submit-btn" id="submit-btn">
+                Authenticate
+                <span class="spinner"></span>
+            </button>
+        </form>
+        <div class="footer">Gaia Robotics &middot; Agent Immune System</div>
+    </div>
+
+    <script>
+    (function() {
+        var form = document.getElementById('login-form');
+        var input = document.getElementById('api-key');
+        var btn = document.getElementById('submit-btn');
+        var errorEl = document.getElementById('error-msg');
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var key = input.value.trim();
+            if (!key) return;
+
+            btn.classList.add('loading');
+            btn.disabled = true;
+            errorEl.textContent = '';
+            input.classList.remove('error');
+
+            fetch('/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ api_key: key })
+            })
+            .then(function(resp) {
+                if (resp.ok) {
+                    // Session cookie is set — reload to get the dashboard
+                    window.location.reload();
+                    return;
+                }
+                return resp.json().then(function(data) {
+                    if (resp.status === 429) {
+                        throw new Error('Too many attempts. Wait a moment.');
+                    }
+                    throw new Error(data.detail || 'Authentication failed');
+                });
+            })
+            .catch(function(err) {
+                errorEl.textContent = err.message;
+                input.classList.add('error');
+                btn.classList.remove('loading');
+                btn.disabled = false;
+                input.select();
+            });
+        });
+    })();
+    </script>
+</body>
+</html>

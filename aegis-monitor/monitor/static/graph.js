@@ -7,6 +7,16 @@
 (function () {
     "use strict";
 
+    // ---- Auth-aware fetch wrapper ----
+    async function authFetch(url, opts) {
+        var resp = await fetch(url, opts);
+        if (resp.status === 401 || resp.status === 403) {
+            window.location.href = "/";
+            throw new Error("Session expired");
+        }
+        return resp;
+    }
+
     // ---- State ----
     let sigmaInstance = null;
     let graphInstance = null;
@@ -127,7 +137,7 @@
     // ---- Fetch & render graph ----
     async function fetchGraph() {
         try {
-            const resp = await fetch("/api/v1/graph");
+            const resp = await authFetch("/api/v1/graph");
             const data = await resp.json();
             renderGraph(data);
         } catch (err) {
@@ -217,7 +227,7 @@
     // ---- Metrics ----
     async function fetchMetrics() {
         try {
-            const resp = await fetch("/api/v1/metrics");
+            const resp = await authFetch("/api/v1/metrics");
             const data = await resp.json();
             updateMetrics(data);
         } catch (err) {
@@ -255,7 +265,7 @@
     // ---- Agent popup ----
     async function showAgentPopup(nodeId) {
         try {
-            const resp = await fetch("/api/v1/trust/" + encodeURIComponent(nodeId));
+            const resp = await authFetch("/api/v1/trust/" + encodeURIComponent(nodeId));
             const data = await resp.json();
             setText("popup-agent-id", nodeId);
             setText("popup-tier", data.trust_tier !== undefined ? "Tier " + data.trust_tier : "—");
@@ -307,9 +317,14 @@
             } catch (e) { }
         };
 
-        ws.onclose = function () {
+        ws.onclose = function (event) {
             document.getElementById("ws-status").classList.remove("connected");
             document.getElementById("ws-status").classList.add("disconnected");
+            // 4003 = auth required/forbidden — redirect to login
+            if (event.code === 4003) {
+                window.location.href = "/";
+                return;
+            }
             reconnectTimer = setTimeout(connectWS, RECONNECT_MS);
         };
 
@@ -367,7 +382,7 @@
     // ---- Killswitch ----
     async function fetchKillswitchRules() {
         try {
-            var resp = await fetch("/api/v1/killswitch/rules");
+            var resp = await authFetch("/api/v1/killswitch/rules");
             var data = await resp.json();
             var rules = data.rules || [];
             var statusEl = document.getElementById("ks-status");
@@ -406,7 +421,7 @@
 
     window.ksBlockSwarm = async function () {
         try {
-            await fetch("/api/v1/killswitch/rules", {
+            await authFetch("/api/v1/killswitch/rules", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -423,11 +438,11 @@
 
     window.ksUnblockSwarm = async function () {
         try {
-            var resp = await fetch("/api/v1/killswitch/rules");
+            var resp = await authFetch("/api/v1/killswitch/rules");
             var data = await resp.json();
             var swarmRules = (data.rules || []).filter(function (r) { return r.scope === "swarm"; });
             for (var i = 0; i < swarmRules.length; i++) {
-                await fetch("/api/v1/killswitch/rules/" + swarmRules[i].rule_id, { method: "DELETE" });
+                await authFetch("/api/v1/killswitch/rules/" + swarmRules[i].rule_id, { method: "DELETE" });
             }
             fetchKillswitchRules();
         } catch (err) {
@@ -437,7 +452,7 @@
 
     window.ksBlockAgent = async function (agentId) {
         try {
-            await fetch("/api/v1/killswitch/rules", {
+            await authFetch("/api/v1/killswitch/rules", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -455,13 +470,13 @@
 
     window.ksUnblockAgent = async function (agentId) {
         try {
-            var resp = await fetch("/api/v1/killswitch/rules");
+            var resp = await authFetch("/api/v1/killswitch/rules");
             var data = await resp.json();
             var agentRules = (data.rules || []).filter(function (r) {
                 return r.scope === "agent" && r.target === agentId;
             });
             for (var i = 0; i < agentRules.length; i++) {
-                await fetch("/api/v1/killswitch/rules/" + agentRules[i].rule_id, { method: "DELETE" });
+                await authFetch("/api/v1/killswitch/rules/" + agentRules[i].rule_id, { method: "DELETE" });
             }
             fetchKillswitchRules();
         } catch (err) {
@@ -471,7 +486,7 @@
 
     window.ksDeleteRule = async function (ruleId) {
         try {
-            await fetch("/api/v1/killswitch/rules/" + ruleId, { method: "DELETE" });
+            await authFetch("/api/v1/killswitch/rules/" + ruleId, { method: "DELETE" });
             fetchKillswitchRules();
         } catch (err) {
             logEvent("system", "Failed to delete rule: " + err.message);
@@ -481,7 +496,7 @@
     // ---- Topic Clusters ----
     async function fetchTopicClusters() {
         try {
-            var resp = await fetch("/api/v1/topic-clusters");
+            var resp = await authFetch("/api/v1/topic-clusters");
             var data = await resp.json();
             renderCentroidCards(data || []);
         } catch (err) {
@@ -559,7 +574,7 @@
     // ---- Dendrogram ----
     async function fetchDendrogram() {
         try {
-            var resp = await fetch("/api/v1/dendrogram");
+            var resp = await authFetch("/api/v1/dendrogram");
             var data = await resp.json();
             if (data && data.linkage && data.linkage.length > 0) {
                 renderDendrogram(data);

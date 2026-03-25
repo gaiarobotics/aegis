@@ -93,7 +93,7 @@ class ContentHashConfig(BaseModel):
 - `embedding_model`: Selects the provider. Default preserves current behavior.
 - `embedding_api_base_url`: Optional override for self-hosted or proxy endpoints (follows `LLMScreenConfig.base_url` pattern).
 
-Environment variable override: `AEGIS_EMBEDDING_MODEL` maps to `behavior.content_hash.embedding_model`. Read once at config load time — no mid-process changes.
+Environment variable override: `AEGIS_EMBEDDING_MODEL` maps to `behavior.content_hash.embedding_model`. Read once at config load time — no mid-process changes. The existing `_ENV_OVERRIDES` mechanism only supports two-level nesting (`section.key`), so this requires extending it to support three-level paths (`behavior.content_hash.embedding_model`) or adding a dedicated entry that drills into the nested config.
 
 Supported `embedding_model` values:
 - `all-MiniLM-L6-v2` (local, default)
@@ -151,13 +151,31 @@ Both SQLite and PostgreSQL backends receive this migration.
 - `check()` / `check_with_velocity()` gain a `model: str` parameter; only compare against same-model hashes.
 
 **`RemoteThreatIntel`:**
-- Threat-intel API response includes model name per hash entry.
-- `check_hash()` gains a `model: str` parameter; filters by model before Hamming comparison.
-- `get_compromised_hashes()` returns model-tagged data.
+- `_compromised_hashes` changes from `set[int]` to `dict[str, set[int]]` — `{model: {hash_ints}}`.
+- `check_hash(hash_hex, model, threshold)` filters to the matching model's hash set before Hamming comparison.
+- `get_compromised_hashes(model: str | None = None) -> set[int]` returns hashes for a specific model, or all if `None`.
+- `_poll()` parses the new wire format (see below).
 
 **Monitor API (`/api/v1/threat-intel`):**
-- Queries `compromises` table with `embedding_model` filter.
-- Response payload includes model info.
+- Queries `compromises` table grouped by `embedding_model`.
+- Response wire format changes from a flat list to model-keyed structure:
+
+```json
+{
+  "compromised_agents": ["agent-1", "agent-2"],
+  "compromised_hashes": {
+    "all-MiniLM-L6-v2": ["a1b2c3...", "d4e5f6..."],
+    "gemini-embedding-2-preview": ["f7e8d9..."]
+  },
+  "quarantined_agents": ["agent-3"],
+  "generated_at": 1711324800
+}
+```
+
+Legacy monitors that don't understand model-keyed hashes will see a dict where they expected a list — this is a breaking change to the wire format. Version the endpoint or document the migration.
+
+**`IntentDivergenceDetector` and compromised hashes:**
+- `check()` accepts `compromised_hashes: set[int] | None` (unchanged type). The caller is responsible for passing only same-model hashes by calling `RemoteThreatIntel.get_compromised_hashes(model=hasher.model_name)`. This keeps the detector simple — it doesn't need to know about multi-model concerns.
 
 ### 6. Dependencies
 
@@ -191,3 +209,6 @@ No end-to-end tests against live APIs — those belong in a manual test suite.
 3. Legacy hashes (empty `embedding_model`) form their own cohort.
 4. The 128-bit SimHash output is constant regardless of input embedding dimensionality.
 5. All new hash writes include the model name, even when using the default model.
+6. Different `dims` values with the same projection seed (42) produce entirely different projection matrices — hashes from different models are incomparable at both the embedding and projection levels.
+7. `embedding_api_base_url` applies to the single active provider. Since only one model is active per process, a single URL field is sufficient.
+8. Provider failures (rate limits, timeouts, network errors) follow the existing graceful degradation pattern: `ContentHashTracker.update()` catches exceptions and becomes a no-op, same as when `sentence-transformers` is unavailable today.

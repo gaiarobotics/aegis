@@ -1,18 +1,22 @@
 """Privacy-preserving Locality-Sensitive Hashing for content fingerprinting.
 
-Uses SimHash from sentence-transformer embeddings (384-dim) to produce 128-bit
-content hashes displayed as 32-char hex strings.  A rolling majority-vote window
-smooths per-message noise into a stable "topic fingerprint."
+Uses SimHash from embedding-provider vectors to produce 128-bit content hashes
+displayed as 32-char hex strings.  A rolling majority-vote window smooths
+per-message noise into a stable "topic fingerprint."
 
-Requires ``aegis-shield[embeddings]`` (``sentence-transformers``).  When the
-package is not installed, ``ContentHashTracker.update()`` is a no-op.
+The embedding backend is pluggable via ``EmbeddingProvider``.  When no provider
+is given, ``ContentHashTracker`` defaults to ``SentenceTransformerProvider``
+(requires ``aegis-shield[embeddings]``).  When the required SDK is not
+installed, ``ContentHashTracker.update()`` is a no-op.
 """
 
 from __future__ import annotations
 
+import asyncio
 import random
-import threading
 from collections import deque
+
+from aegis.behavior.embedding_providers import EmbeddingProvider
 
 
 def _projection_matrix(rows: int, cols: int, seed: int = 42) -> list[list[float]]:
@@ -60,65 +64,34 @@ def _simhash(matrix: list[list[float]], vec: list[float]) -> int:
 
 
 class SemanticHasher:
-    """SimHash from sentence-transformer embeddings.
+    """SimHash from an ``EmbeddingProvider``.
 
-    Lazy-loads ``sentence_transformers.SentenceTransformer("all-MiniLM-L6-v2")``
-    on first call.  If the package is missing, ``hash()`` raises ``ImportError``
-    with a helpful message.
+    The provider supplies the embedding vector; this class projects it down
+    to a 128-bit SimHash via a random projection matrix.
     """
 
     _BITS = 128
-    _DIMS = 384  # all-MiniLM-L6-v2 output dimensionality
 
-    def __init__(self) -> None:
-        self._matrix = _projection_matrix(self._BITS, self._DIMS, seed=42)
-        self._model = None
-        self._available: bool | None = None
+    def __init__(self, provider: EmbeddingProvider) -> None:
+        self._provider = provider
+        self._matrix = _projection_matrix(self._BITS, provider.dims, seed=42)
 
-    def _ensure_model(self) -> None:
-        """Lazy-load the sentence-transformer model.
+    @property
+    def model_name(self) -> str:
+        """Canonical model identifier, delegated to the provider."""
+        return self._provider.model_name
 
-        Raises:
-            ImportError: If ``sentence-transformers`` is not installed.
-        """
-        if self._available is False:
-            raise ImportError(
-                "SemanticHasher requires sentence-transformers. "
-                "Install with: pip install 'aegis-shield[embeddings]'"
-            )
-        if self._model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer("all-MiniLM-L6-v2")
-                self._available = True
-            except ImportError:
-                self._available = False
-                raise ImportError(
-                    "SemanticHasher requires sentence-transformers. "
-                    "Install with: pip install 'aegis-shield[embeddings]'"
-                )
-
-    def embed(self, text: str) -> list[float]:
-        """Return raw 384-dim embedding vector for *text*.
-
-        Raises:
-            ImportError: If ``sentence-transformers`` is not installed.
-        """
-        self._ensure_model()
-        embedding = self._model.encode(text, convert_to_numpy=True)
-        return embedding.tolist()
+    async def embed(self, text: str) -> list[float]:
+        """Return raw embedding vector for *text* via the provider."""
+        return await self._provider.embed(text)
 
     def hash_from_embedding(self, vec: list[float]) -> int:
         """Compute 128-bit SimHash from a pre-computed embedding vector."""
         return _simhash(self._matrix, vec)
 
-    def hash(self, text: str) -> int:
-        """Return a 128-bit SimHash integer for *text*.
-
-        Raises:
-            ImportError: If ``sentence-transformers`` is not installed.
-        """
-        vec = self.embed(text)
+    async def hash(self, text: str) -> int:
+        """Return a 128-bit SimHash integer for *text*."""
+        vec = await self.embed(text)
         return self.hash_from_embedding(vec)
 
 
@@ -135,13 +108,15 @@ class ContentHashTracker:
     gradually (low velocity); a prompt injection snaps the topic instantly
     (high velocity spike).
 
-    If ``sentence-transformers`` is not installed, ``update()`` is a no-op
+    If the embedding provider's SDK is not installed, ``update()`` is a no-op
     (graceful degradation).
 
     Args:
         window_size: Number of per-message hashes to keep for majority vote.
         velocity_window: Number of consecutive step-distances to average
             for the velocity calculation.
+        provider: Optional ``EmbeddingProvider``.  Defaults to
+            ``SentenceTransformerProvider()`` when not supplied.
     """
 
     _BITS = 128
@@ -150,16 +125,24 @@ class ContentHashTracker:
         self,
         window_size: int = 20,
         velocity_window: int = 10,
+        provider: EmbeddingProvider | None = None,
     ) -> None:
-        self._semantic_hasher = SemanticHasher()
         self._semantic_available = False
 
-        # Probe availability without requiring actual text
-        try:
-            import sentence_transformers  # noqa: F401
+        if provider is not None:
+            self._semantic_hasher = SemanticHasher(provider)
             self._semantic_available = True
-        except ImportError:
-            self._semantic_available = False
+        else:
+            # Default: SentenceTransformerProvider (graceful degradation)
+            try:
+                import sentence_transformers  # noqa: F401
+                from aegis.behavior.embedding_providers import SentenceTransformerProvider
+                self._semantic_hasher = SemanticHasher(SentenceTransformerProvider())
+                self._semantic_available = True
+            except ImportError:
+                # Create a dummy hasher — it will never be called
+                self._semantic_hasher = None  # type: ignore[assignment]
+                self._semantic_available = False
 
         self._content_window: deque[int] = deque(maxlen=window_size)
 
@@ -167,12 +150,12 @@ class ContentHashTracker:
         self._prev_hash: int | None = None
         self._velocity_window: deque[int] = deque(maxlen=velocity_window)
 
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
 
-    def update(self, text: str) -> None:
+    async def update(self, text: str) -> None:
         """Compute semantic hash for a message and append to the rolling window.
 
-        No-op if ``sentence-transformers`` is not installed.
+        No-op if the embedding provider's SDK is not installed.
 
         Args:
             text: The message text.
@@ -182,12 +165,12 @@ class ContentHashTracker:
 
         content_hash: int | None = None
         try:
-            content_hash = self._semantic_hasher.hash(text)
+            content_hash = await self._semantic_hasher.hash(text)
         except (ImportError, Exception):
             self._semantic_available = False
             return
 
-        with self._lock:
+        async with self._lock:
             if content_hash is not None:
                 # Track step-distance for velocity
                 if self._prev_hash is not None:
@@ -205,16 +188,20 @@ class ContentHashTracker:
             - ``topic_velocity``: float in [0.0, 1.0] — mean Hamming distance
               between consecutive raw hashes, normalized by bit count.
               0.0 = topic unchanged, 1.0 = every bit flipped each step.
+            - ``embedding_model``: model name string (when semantic hashing
+              is available)
         """
         result: dict[str, str | float] = {}
 
-        with self._lock:
-            if self._content_window:
-                agg = self._majority_vote(list(self._content_window))
-                result["content_hash"] = f"{agg:032x}"
-            if self._velocity_window:
-                mean_dist = sum(self._velocity_window) / len(self._velocity_window)
-                result["topic_velocity"] = mean_dist / self._BITS
+        if self._content_window:
+            agg = self._majority_vote(list(self._content_window))
+            result["content_hash"] = f"{agg:032x}"
+        if self._velocity_window:
+            mean_dist = sum(self._velocity_window) / len(self._velocity_window)
+            result["topic_velocity"] = mean_dist / self._BITS
+
+        if self._semantic_available and self._semantic_hasher is not None:
+            result["embedding_model"] = self._semantic_hasher.model_name
 
         return result
 

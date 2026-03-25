@@ -27,6 +27,8 @@ postgres = [
 ]
 ml = [
     "sentence-transformers>=2.6",
+    "google-genai>=1.0",
+    "openai>=1.0",
     "umap-learn>=0.5",
     "hdbscan>=0.8",
     "scikit-learn>=1.3",

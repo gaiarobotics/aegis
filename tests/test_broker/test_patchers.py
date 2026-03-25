@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 from aegis.broker.actions import ActionDecision, ActionResponse
 from aegis.broker.broker import Broker
-from aegis.broker.manifests import ToolManifest
 from aegis.broker.patchers import (
     _originals,
     patch_filesystem,
@@ -149,13 +148,13 @@ class TestPatchFilesystem:
         patch_filesystem(broker)
         try:
             # Read mode should pass through without calling broker
-            import tempfile
             import os
+            import tempfile
 
             fd, path = tempfile.mkstemp()
             os.close(fd)
             try:
-                with open(path, "r") as f:
+                with open(path) as f:
                     pass
                 broker.evaluate.assert_not_called()
             finally:
@@ -170,8 +169,8 @@ class TestPatchFilesystem:
 
         patch_filesystem(broker)
         try:
-            import tempfile
             import os
+            import tempfile
 
             fd, path = tempfile.mkstemp()
             os.close(fd)
@@ -191,8 +190,8 @@ class TestPatchFilesystem:
 
         patch_filesystem(broker)
         try:
-            import tempfile
             import os
+            import tempfile
 
             fd, path = tempfile.mkstemp()
             os.close(fd)

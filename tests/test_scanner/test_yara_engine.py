@@ -8,18 +8,13 @@ from __future__ import annotations
 import re
 import sys
 import types
-from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from aegis.scanner.signatures import Signature
 from aegis.scanner.yara_engine import (
     YaraEngine,
-    YaraMatch,
     is_yara_available,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

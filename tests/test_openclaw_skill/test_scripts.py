@@ -7,8 +7,6 @@ import os
 import subprocess
 import sys
 
-import pytest
-
 PYTHON = sys.executable
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

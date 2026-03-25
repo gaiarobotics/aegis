@@ -8,17 +8,13 @@ from __future__ import annotations
 import sys
 import types
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
-
-from aegis.core.config import IsolationForestConfig
 from aegis.behavior.isolation_forest import (
     IsolationForestDetector,
-    IsolationForestResult,
     is_sklearn_available,
 )
-
+from aegis.core.config import IsolationForestConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -239,7 +235,6 @@ class TestGracefulDegradation:
     def test_config_parameters_passed(self, monkeypatch):
         mock_model = _install_fake_sklearn(monkeypatch)
 
-        import sklearn.ensemble
         mock_cls = sys.modules["sklearn.ensemble"].IsolationForest
 
         detector = IsolationForestDetector(

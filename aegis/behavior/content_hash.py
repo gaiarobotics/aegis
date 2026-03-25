@@ -136,6 +136,7 @@ class ContentHashTracker:
             # Default: SentenceTransformerProvider (graceful degradation)
             try:
                 import sentence_transformers  # noqa: F401
+
                 from aegis.behavior.embedding_providers import SentenceTransformerProvider
                 self._semantic_hasher = SemanticHasher(SentenceTransformerProvider())
                 self._semantic_available = True

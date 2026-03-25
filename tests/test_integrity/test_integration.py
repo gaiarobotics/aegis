@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from aegis.core.config import AegisConfig, IntegrityConfig
+from aegis.core.config import AegisConfig
 from aegis.integrity.monitor import (
     IntegrityMonitor,
     ModelFileRecord,
@@ -16,7 +16,6 @@ from aegis.integrity.monitor import (
     StatSnapshot,
 )
 from aegis.shield import Shield
-
 
 # ---------------------------------------------------------------------------
 # Shield integration tests

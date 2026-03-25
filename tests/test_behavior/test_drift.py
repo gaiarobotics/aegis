@@ -3,7 +3,7 @@
 import time
 
 from aegis.behavior.drift import DriftDetector, DriftResult
-from aegis.behavior.tracker import BehaviorEvent, BehaviorFingerprint, BehaviorTracker
+from aegis.behavior.tracker import BehaviorEvent, BehaviorTracker
 from aegis.core.config import BehaviorConfig
 
 

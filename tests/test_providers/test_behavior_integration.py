@@ -1,10 +1,9 @@
 """Integration tests for behavior recording wired through provider wrappers."""
 
 from aegis.providers.anthropic import AnthropicWrapper
-from aegis.providers.openai import OpenAIWrapper
 from aegis.providers.generic import GenericWrapper
+from aegis.providers.openai import OpenAIWrapper
 from aegis.shield import Shield
-
 
 # --- Mock Clients ---
 

@@ -8,7 +8,6 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,7 +23,6 @@ from aegis_proxy.handlers import (
     handle_messages,
 )
 from aegis_proxy.server import create_server
-
 
 # ---------------------------------------------------------------------------
 # Extraction tests

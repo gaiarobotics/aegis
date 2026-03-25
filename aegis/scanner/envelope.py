@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from typing import Any, Optional
+from typing import Any
 
 from aegis.core.config import ScannerConfig
-
 
 # Provenance tags
 TRUSTED_SYSTEM = "[TRUSTED.SYSTEM]"
@@ -60,7 +59,7 @@ class PromptEnvelope:
             wrapping is disabled and messages pass through unchanged.
     """
 
-    def __init__(self, config: Optional[ScannerConfig] = None) -> None:
+    def __init__(self, config: ScannerConfig | None = None) -> None:
         self._enabled = True
         if config is not None:
             self._enabled = bool(config.prompt_envelope)
@@ -72,7 +71,7 @@ class PromptEnvelope:
     def wrap_messages(
         self,
         messages: list[dict[str, Any]],
-        provenance_map: Optional[dict[int | str, str]] = None,
+        provenance_map: dict[int | str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Wrap messages with provenance tags.
 
@@ -129,7 +128,7 @@ class PromptEnvelope:
         self,
         index: int,
         role: str,
-        provenance_map: Optional[dict[int | str, str]],
+        provenance_map: dict[int | str, str] | None,
     ) -> str:
         """Resolve the provenance tag for a message."""
         if provenance_map is not None:

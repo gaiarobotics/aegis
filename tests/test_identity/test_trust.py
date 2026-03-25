@@ -1,7 +1,6 @@
 """Tests for aegis.identity.trust module."""
 
 import json
-import math
 import os
 import tempfile
 import time
@@ -13,7 +12,6 @@ from aegis.identity.trust import (
     MAX_DELEGATION_BONUS,
     MAX_VOUCHES_PER_VOUCHER,
     TrustManager,
-    TrustRecord,
 )
 
 

@@ -18,11 +18,10 @@ import hmac
 import json
 import logging
 import os
-import struct
 import subprocess
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -266,7 +265,7 @@ class StateLog:
         events: list[StateEvent] = []
         expected_chain = _sha256_hex(_GENESIS_CHAIN)
 
-        with open(self._path, "r", encoding="utf-8") as f:
+        with open(self._path, encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
@@ -385,7 +384,7 @@ class StateLog:
             return None
 
         try:
-            with open(checkpoint_path, "r", encoding="utf-8") as f:
+            with open(checkpoint_path, encoding="utf-8") as f:
                 envelope = json.load(f)
         except (json.JSONDecodeError, OSError):
             logger.warning("Checkpoint file unreadable: %s", checkpoint_path)

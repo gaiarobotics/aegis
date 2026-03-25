@@ -112,7 +112,7 @@ class ReportBase:
     _VALID_KEY_TYPES = {"hmac-sha256", "ed25519"}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ReportBase":
+    def from_dict(cls, data: dict[str, Any]) -> ReportBase:
         """Deserialize from a dictionary.
 
         Raises:

@@ -8,7 +8,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from aegis.providers.base import BaseWrapper, WrappedClient, _extract_user_text, _record_trust_for_messages
+from aegis.providers.base import (
+    BaseWrapper,
+    WrappedClient,
+    _extract_user_text,
+    _record_trust_for_messages,
+)
 
 
 class OllamaWrapper(BaseWrapper):

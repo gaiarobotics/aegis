@@ -12,7 +12,7 @@ import pytest
 
 from aegis.shield import Shield
 from aegis_proxy.config import ProxyConfig
-from aegis_proxy.server import AegisRequestHandler, create_server
+from aegis_proxy.server import create_server
 
 
 @pytest.fixture()

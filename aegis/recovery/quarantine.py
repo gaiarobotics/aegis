@@ -2,10 +2,9 @@
 
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from aegis.core.config import RecoveryConfig
-
 
 # Severity tiers for recovery quarantine
 # - "high": hostile NK verdict — requires manual release
@@ -35,17 +34,17 @@ class RecoveryQuarantine:
     def __init__(
         self,
         config: RecoveryConfig | None = None,
-        exit_token: Optional[str] = None,
+        exit_token: str | None = None,
     ) -> None:
         self._config = config or RecoveryConfig()
-        self._exit_token: Optional[str] = exit_token
+        self._exit_token: str | None = exit_token
         self._quarantined = False
-        self._reason: Optional[str] = None
+        self._reason: str | None = None
         self._read_only = False
         self._severity: str = "high"
         self._quarantine_time: float | None = None
         self._escalated: bool = False
-        self._escalation_reason: Optional[str] = None
+        self._escalation_reason: str | None = None
         self._lock = threading.Lock()
 
     def escalate(self, reason: str) -> None:
@@ -80,7 +79,7 @@ class RecoveryQuarantine:
             self._severity = _classify_severity(reason)
             self._quarantine_time = time.monotonic()
 
-    def exit(self, token: Optional[str] = None) -> None:
+    def exit(self, token: str | None = None) -> None:
         """Deactivate quarantine.
 
         Args:
@@ -125,7 +124,7 @@ class RecoveryQuarantine:
                     return False
             return self._quarantined
 
-    def get_reason(self) -> Optional[str]:
+    def get_reason(self) -> str | None:
         """Get the reason for quarantine.
 
         Returns:

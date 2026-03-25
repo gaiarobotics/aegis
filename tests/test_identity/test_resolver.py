@@ -4,8 +4,6 @@ import sys
 import types
 from unittest.mock import MagicMock
 
-import pytest
-
 from aegis.identity.resolver import IdentityResolver, _edit_distance_one
 
 

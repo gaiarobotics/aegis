@@ -3,21 +3,19 @@
 import json
 import os
 import time
-from pathlib import Path
 
 import pytest
 
 from aegis.core.state_log import (
+    _GENESIS_CHAIN,
     StateEvent,
     StateLog,
     TamperDetectedError,
-    _GENESIS_CHAIN,
     _hmac_sign,
     _hmac_verify,
     _sha256_hex,
     resolve_state_key,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

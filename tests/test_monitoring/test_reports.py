@@ -1,5 +1,6 @@
 """Tests for monitoring report data structures."""
 
+from aegis.identity.attestation import generate_keypair
 from aegis.monitoring.reports import (
     AgentHeartbeat,
     CompromiseReport,
@@ -7,7 +8,6 @@ from aegis.monitoring.reports import (
     ThreatEventReport,
     TrustReport,
 )
-from aegis.identity.attestation import generate_keypair
 
 
 class TestReportBase:

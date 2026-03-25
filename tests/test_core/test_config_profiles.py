@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from aegis.core.config import AegisConfig, load_config, _deep_merge
+from aegis.core.config import AegisConfig, _deep_merge, load_config
 
 
 class TestDeepMerge:
@@ -60,7 +60,7 @@ class TestProfileLoading:
 
     def test_load_profile_helper(self):
         """Verify _load_profile loads from the profiles directory."""
-        from aegis.core.config import _load_profile, _PROFILES_DIR
+        from aegis.core.config import _load_profile
         # This test will pass once the moltbook.yaml file exists (Task 2)
         # For now, just verify the function raises on missing profiles
         with pytest.raises(FileNotFoundError):

@@ -27,7 +27,7 @@ _BUNDLED_PATH = Path(__file__).parent / "default.yaml"
 
 def load_signatures(
     use_bundled: bool = True,
-    additional_files: Optional[list[str | Path]] = None,
+    additional_files: list[str | Path] | None = None,
 ) -> list[Signature]:
     """Load threat signatures from YAML files.
 

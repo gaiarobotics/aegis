@@ -1,7 +1,8 @@
 """Tests for async OpenAI provider wrapper."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from aegis.providers.openai import OpenAIWrapper
 from aegis.shield import Shield

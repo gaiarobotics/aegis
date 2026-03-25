@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aegis.behavior.content_hash import ContentHashTracker, SemanticHasher, _simhash, _projection_matrix
+from aegis.behavior.content_hash import (
+    ContentHashTracker,
+    SemanticHasher,
+    _projection_matrix,
+    _simhash,
+)
 from aegis.behavior.embedding_providers import EmbeddingProvider
 
 

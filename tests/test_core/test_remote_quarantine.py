@@ -9,7 +9,6 @@ import pytest
 
 from aegis.core.remote_quarantine import RemoteQuarantine
 
-
 # ---------------------------------------------------------------------------
 # Helpers — lightweight HTTP server for integration tests
 # ---------------------------------------------------------------------------

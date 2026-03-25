@@ -1,9 +1,6 @@
 """Tests for self-integrity monitoring."""
 
-import os
-import threading
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -204,7 +201,7 @@ class TestShieldIntegration:
     def test_shield_block_on_tamper(self, package_dir):
         """Verify _on_self_tamper with on_tamper='block' sets flag."""
         from aegis.core.config import AegisConfig
-        from aegis.shield import Shield, InferenceBlockedError
+        from aegis.shield import InferenceBlockedError, Shield
 
         config = AegisConfig(
             self_integrity=SelfIntegrityConfig(enabled=False),

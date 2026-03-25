@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-
-import pytest
 
 from aegis.integrity.discovery import (
     _get_hf_cache_path,
@@ -15,7 +12,6 @@ from aegis.integrity.discovery import (
     discover_ollama_files,
     discover_vllm_files,
 )
-
 
 # ---------------------------------------------------------------------------
 # Ollama name parsing

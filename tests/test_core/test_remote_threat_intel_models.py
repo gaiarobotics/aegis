@@ -2,6 +2,7 @@
 
 import json
 from unittest.mock import MagicMock, patch
+
 from aegis.core.remote_threat_intel import RemoteThreatIntel
 
 

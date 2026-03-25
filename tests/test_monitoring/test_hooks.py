@@ -1,6 +1,6 @@
 """Tests for monitoring hooks in trust.py and shield.py."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from aegis.core.config import AegisConfig
 from aegis.identity.trust import TrustManager

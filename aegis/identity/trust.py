@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 
 from aegis.core.config import TrustConfig
 
-
 # Tier constants
 TIER_UNKNOWN = 0
 TIER_ATTESTED = 1

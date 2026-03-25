@@ -1,6 +1,6 @@
 """Tests for embedding model configuration."""
 
-from aegis.core.config import ContentHashConfig, AegisConfig, load_config
+from aegis.core.config import AegisConfig, ContentHashConfig, load_config
 
 
 class TestContentHashConfigFields:

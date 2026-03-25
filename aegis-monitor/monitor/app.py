@@ -141,9 +141,13 @@ async def lifespan(app: FastAPI):  # noqa: C901
 
     # Warm threat-intel cache
     _ti_graph_state = app.state.graph.get_graph_state()
+    _compromised_by_model: dict[str, list[str]] = {}
+    for _agent_id, (_model, _hash_int) in app.state.contagion_detector._compromised.items():
+        _model_key = _model or ""
+        _compromised_by_model.setdefault(_model_key, []).append(f"{_hash_int:032x}")
     _ti_result = {
         "compromised_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_compromised"]],
-        "compromised_hashes": [f"{h:032x}" for h in app.state.contagion_detector._compromised.values()],
+        "compromised_hashes_by_model": _compromised_by_model,
         "quarantined_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_quarantined"]],
         "generated_at": time.time(),
     }
@@ -707,12 +711,13 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     contagion_detector: ContagionDetector = app.state.contagion_detector
     hash_for_analysis = content_hash
+    embedding_model = data.get("embedding_model", "")
     topic_velocity = data.get("topic_velocity", 0.0)
     if hash_for_analysis:
-        topic_clusterer.update(agent_id, hash_for_analysis)
+        topic_clusterer.update(agent_id, hash_for_analysis, model=embedding_model)
 
         score = contagion_detector.check_with_velocity(
-            agent_id, hash_for_analysis, topic_velocity=topic_velocity,
+            agent_id, hash_for_analysis, model=embedding_model, topic_velocity=topic_velocity,
         )
         if score >= contagion_detector._alert_threshold:
             contagion_event = StoredEvent(

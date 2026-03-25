@@ -1,6 +1,5 @@
 """Tests for AEGIS speaker/agent classifier."""
 
-import pytest
 
 from aegis.identity.speaker import (
     ExtractionResult,

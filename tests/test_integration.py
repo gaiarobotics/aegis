@@ -258,6 +258,7 @@ class TestIdentityBehaviorIntegration:
     def test_behavior_tracker_standalone(self):
         """Behavior tracker works independently for profiling."""
         import time
+
         from aegis.behavior import BehaviorEvent, BehaviorTracker, DriftDetector
 
         tracker = BehaviorTracker()
@@ -309,6 +310,7 @@ class TestIdentityBehaviorIntegration:
     def test_memory_guard_integration(self):
         """Memory guard validates writes using category lists."""
         import time
+
         from aegis.memory import MemoryEntry, MemoryGuard
 
         guard = MemoryGuard()
@@ -340,7 +342,6 @@ class TestIdentityBehaviorIntegration:
     def test_skills_loader_integration(self):
         """Skills loader validates and loads skill code safely."""
         import hashlib
-        import os
         import tempfile
 
         from aegis.skills import SkillLoader, SkillManifest

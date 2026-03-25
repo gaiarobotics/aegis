@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from aegis.core.config import ScannerConfig
 
@@ -87,7 +87,7 @@ class OutboundSanitizer:
             sanitization is disabled and text passes through unchanged.
     """
 
-    def __init__(self, config: Optional[ScannerConfig] = None) -> None:
+    def __init__(self, config: ScannerConfig | None = None) -> None:
         self._enabled = True
         if config is not None:
             self._enabled = bool(config.outbound_sanitizer)

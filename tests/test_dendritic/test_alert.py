@@ -4,9 +4,7 @@ import os
 
 from aegis.dendritic.alert import (
     DangerSignal,
-    DendriticAlert,
     build_alert,
-    sign_alert,
     verify_alert,
 )
 

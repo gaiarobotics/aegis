@@ -16,7 +16,6 @@ from aegis.scanner.intent_divergence import (
     _hamming_distance,
 )
 
-
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
@@ -46,7 +45,7 @@ def _unit_vec(dim: int, index: int, length: int = 384) -> list[float]:
 
 def _patch_hasher_embed(detector: IntentDivergenceDetector, embed_fn):
     """Replace the detector's hasher with a mock that uses embed_fn (async)."""
-    from aegis.behavior.content_hash import SemanticHasher, _projection_matrix
+    from aegis.behavior.content_hash import SemanticHasher
     from aegis.behavior.embedding_providers import EmbeddingProvider
 
     class _FakeProvider(EmbeddingProvider):

@@ -7,7 +7,7 @@ import json
 import math
 import threading
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from aegis.core.config import BehaviorConfig

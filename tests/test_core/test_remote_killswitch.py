@@ -4,13 +4,11 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import patch
 
 import pytest
 
 from aegis.core.config import KillswitchConfig
-from aegis.core.remote_killswitch import RemoteKillswitch, _AEGIS_CENTRAL_URL
-
+from aegis.core.remote_killswitch import _AEGIS_CENTRAL_URL, RemoteKillswitch
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight HTTP server for integration tests

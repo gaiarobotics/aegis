@@ -2,7 +2,6 @@
 
 import re
 import time
-import unicodedata
 
 from aegis.scanner.pattern_matcher import PatternMatcher, ThreatMatch
 from aegis.scanner.signatures import load_signatures
@@ -263,7 +262,6 @@ class TestDetectChainPropagation:
 class TestMatchedTextTruncation:
     def test_long_match_truncated(self):
         """matched_text should be capped at 200 characters."""
-        import re
         from aegis.scanner.signatures import Signature
 
         # Create a signature with a greedy pattern that matches a long string

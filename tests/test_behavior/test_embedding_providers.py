@@ -83,33 +83,6 @@ class TestSentenceTransformerProvider:
         fake_model.encode.assert_called_once_with("hello world", convert_to_numpy=True)
 
     @pytest.mark.asyncio
-    async def test_embed_uses_executor(self):
-        """embed() runs CPU-bound inference in run_in_executor."""
-        provider = SentenceTransformerProvider()
-
-        fake_embedding = MagicMock()
-        fake_embedding.tolist.return_value = [0.5] * 384
-
-        fake_model = MagicMock()
-        fake_model.encode.return_value = fake_embedding
-        provider._model = fake_model
-
-        with patch.object(
-            asyncio.get_event_loop(),
-            "run_in_executor",
-            new_callable=lambda: MagicMock(
-                side_effect=lambda ex, fn: asyncio.coroutine(lambda: fn())()
-            ),
-        ) as mock_executor:
-            # Instead of patching executor, just verify it works via the real path
-            pass
-
-        # Simpler: just run it and verify it returns correct result
-        provider._model = fake_model
-        result = await provider.embed("test")
-        assert len(result) == 384
-
-    @pytest.mark.asyncio
     async def test_import_error_when_missing(self):
         """Raises ImportError with install instructions when sentence-transformers missing."""
         provider = SentenceTransformerProvider()
@@ -315,6 +288,6 @@ class TestCreateProvider:
             create_provider("nonexistent-model-xyz")
 
     def test_sentence_transformer_custom(self):
-        """Any model name starting with 'all-' or containing 'MiniLM' maps to ST."""
+        """Known sentence-transformer model all-mpnet-base-v2 maps to ST provider."""
         provider = create_provider("all-mpnet-base-v2")
         assert isinstance(provider, SentenceTransformerProvider)

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import abc
 import asyncio
-from typing import TYPE_CHECKING
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +264,6 @@ def create_provider(model: str, base_url: str = "") -> EmbeddingProvider:
         ValueError: If the model name is not recognized.
     """
     provider_cls = _KNOWN_MODELS.get(model)
-
-    # Also accept any model whose name suggests sentence-transformers
-    if provider_cls is None and (model.startswith("all-") or "MiniLM" in model):
-        provider_cls = SentenceTransformerProvider
 
     if provider_cls is None:
         raise ValueError(

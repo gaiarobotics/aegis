@@ -63,11 +63,13 @@ class SimulationEngine:
         self._semantic_hasher: Any = None
         try:
             from aegis.behavior.content_hash import SemanticHasher
+            from aegis.behavior.embedding_providers import SentenceTransformerProvider
 
-            self._semantic_hasher = SemanticHasher()
+            _provider = SentenceTransformerProvider()
+            self._semantic_hasher = SemanticHasher(_provider)
             # Eagerly verify that sentence-transformers is importable so we
             # don't silently produce empty hashes for the entire simulation.
-            self._semantic_hasher._ensure_model()
+            _provider._ensure_model()
             self._hash_available = True
         except ImportError as exc:
             import warnings
@@ -1030,7 +1032,8 @@ class SimulationEngine:
         if not self._hash_available:
             return None
         try:
-            hash_int = self._semantic_hasher.hash(text)
+            import asyncio
+            hash_int = asyncio.run(self._semantic_hasher.hash(text))
             return f"{hash_int:032x}"
         except Exception:
             return None

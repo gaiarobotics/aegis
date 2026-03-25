@@ -748,9 +748,16 @@ class Shield:
         _per_msg_hash_hex = ""
         if self._content_hash_tracker is not None:
             try:
-                from aegis.behavior.content_hash import SemanticHasher
-                _hasher = SemanticHasher()
-                _per_msg_hash_hex = f"{_hasher.hash(text):032x}"
+                import asyncio
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    _loop = None
+                if not _loop:
+                    from aegis.behavior.content_hash import SemanticHasher
+                    from aegis.behavior.embedding_providers import SentenceTransformerProvider
+                    _hasher = SemanticHasher(SentenceTransformerProvider())
+                    _per_msg_hash_hex = f"{asyncio.run(_hasher.hash(text)):032x}"
             except Exception:
                 logger.debug("Per-message hash computation failed", exc_info=True)
 
@@ -783,7 +790,13 @@ class Shield:
         # Content hash update
         if self._content_hash_tracker is not None:
             try:
-                self._content_hash_tracker.update(text)
+                import asyncio
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    _loop = None
+                if not _loop:
+                    asyncio.run(self._content_hash_tracker.update(text))
             except Exception:
                 logger.debug("Content hash update failed", exc_info=True)
 
@@ -977,8 +990,9 @@ class Shield:
         if self._content_hash_tracker is not None:
             try:
                 from aegis.behavior.content_hash import SemanticHasher
-                _hasher = SemanticHasher()
-                _per_msg_hash_hex = f"{_hasher.hash(text):032x}"
+                from aegis.behavior.embedding_providers import SentenceTransformerProvider
+                _hasher = SemanticHasher(SentenceTransformerProvider())
+                _per_msg_hash_hex = f"{await _hasher.hash(text):032x}"
             except Exception:
                 logger.debug("Per-message hash computation failed", exc_info=True)
 
@@ -1010,7 +1024,7 @@ class Shield:
         # Content hash update
         if self._content_hash_tracker is not None:
             try:
-                self._content_hash_tracker.update(text)
+                await self._content_hash_tracker.update(text)
             except Exception:
                 logger.debug("Content hash update failed", exc_info=True)
 

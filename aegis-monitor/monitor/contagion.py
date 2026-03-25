@@ -96,30 +96,58 @@ class TopicClusterer:
     def __init__(self, threshold: int = 16, min_samples: int = 3) -> None:
         self._threshold = threshold
         self._min_samples = min_samples
-        self._hashes: dict[str, int] = {}  # agent_id -> latest hash int
+        self._hashes: dict[str, tuple[str, int]] = {}  # agent_id -> (model, hash_int)
         self._next_stable_cluster_id: int = 0
         self._stable_clusters: dict[int, dict] = {}
         self._update_counter: int = 0
 
-    def update(self, agent_id: str, hash_hex: str) -> None:
+    def update(self, agent_id: str, hash_hex: str, model: str = "") -> None:
         """Store the latest hash for an agent."""
         if not hash_hex:
             return
-        self._hashes[agent_id] = hex_to_int(hash_hex)
+        self._hashes[agent_id] = (model, hex_to_int(hash_hex))
+
+    def _get_hash_int(self, agent_id: str) -> int:
+        """Return the hash integer for an agent, unpacking the (model, hash_int) tuple."""
+        return self._hashes[agent_id][1]
+
+    def _get_model(self, agent_id: str) -> str:
+        """Return the model string for an agent."""
+        return self._hashes[agent_id][0]
 
     def cluster(self) -> dict[str, int]:
         """Return ``{agent_id: cluster_id}``.
 
+        Partitions agents by model and clusters each partition independently.
         Tries DBSCAN first; falls back to union-find if sklearn is missing.
         """
         agents = list(self._hashes.keys())
         if not agents:
             return {}
 
-        result = self._cluster_dbscan(agents)
-        if result is not None:
-            return result
-        return self._cluster_union_find(agents)
+        # Partition agents by model
+        model_groups: dict[str, list[str]] = {}
+        for aid in agents:
+            m = self._get_model(aid)
+            model_groups.setdefault(m, []).append(aid)
+
+        merged: dict[str, int] = {}
+        next_global_id = 0
+
+        for _model, group_agents in model_groups.items():
+            result = self._cluster_dbscan(group_agents)
+            if result is None:
+                result = self._cluster_union_find(group_agents)
+
+            # Remap local cluster IDs to globally unique IDs
+            local_to_global: dict[int, int] = {}
+            for aid, local_id in result.items():
+                if local_id not in local_to_global:
+                    local_to_global[local_id] = next_global_id
+                    next_global_id += 1
+                merged[aid] = local_to_global[local_id]
+
+        return merged
 
     # -- DBSCAN backend (preferred) ------------------------------------------
 
@@ -137,7 +165,7 @@ class TopicClusterer:
         dist = np.zeros((n, n), dtype=np.float64)
         for i in range(n):
             for j in range(i + 1, n):
-                d = hamming_distance(self._hashes[agents[i]], self._hashes[agents[j]])
+                d = hamming_distance(self._get_hash_int(agents[i]), self._get_hash_int(agents[j]))
                 dist[i, j] = d
                 dist[j, i] = d
 
@@ -172,7 +200,7 @@ class TopicClusterer:
         for i in range(len(agents)):
             uf.find(agents[i])  # ensure registered
             for j in range(i + 1, len(agents)):
-                if hamming_distance(self._hashes[agents[i]], self._hashes[agents[j]]) <= self._threshold:
+                if hamming_distance(self._get_hash_int(agents[i]), self._get_hash_int(agents[j])) <= self._threshold:
                     uf.union(agents[i], agents[j])
 
         root_to_id: dict[str, int] = {}
@@ -273,7 +301,7 @@ class TopicClusterer:
             member_hashes: list[tuple[str, int]] = []
             for aid in raw_members:
                 if aid in self._hashes:
-                    member_hashes.append((aid, self._hashes[aid]))
+                    member_hashes.append((aid, self._get_hash_int(aid)))
 
             centroid_agent_id: str | None = None
             if member_hashes:
@@ -370,7 +398,7 @@ class TopicClusterer:
             return None
 
         ids = list(self._hashes.keys())
-        hash_ints = [self._hashes[aid] for aid in ids]
+        hash_ints = [self._get_hash_int(aid) for aid in ids]
         n = len(ids)
         if n < 2:
             return None
@@ -503,12 +531,16 @@ class TopicClusterer:
 
         entries: list[dict[str, Any]] = []
         for aid in agents:
-            h = self._hashes[aid]
+            h = self._get_hash_int(aid)
+            aid_model = self._get_model(aid)
             distances: list[tuple[str, int]] = []
             for other_id in agents:
                 if other_id == aid:
                     continue
-                d = hamming_distance(h, self._hashes[other_id])
+                # Only consider neighbors with the same model
+                if self._get_model(other_id) != aid_model:
+                    continue
+                d = hamming_distance(h, self._get_hash_int(other_id))
                 distances.append((other_id, d))
 
             distances.sort(key=lambda x: x[1])
@@ -516,7 +548,7 @@ class TopicClusterer:
                 {
                     "agent_id": other_id,
                     "distance": dist,
-                    "hash": f"{self._hashes[other_id]:032x}"[:12] + "...",
+                    "hash": f"{self._get_hash_int(other_id):032x}"[:12] + "...",
                 }
                 for other_id, dist in distances[:top_k]
             ]
@@ -557,30 +589,38 @@ class ContagionDetector:
     ) -> None:
         self._alert_threshold = alert_threshold
         self._velocity_weight = velocity_weight
-        self._compromised: dict[str, int] = {}  # agent_id -> hash int
+        self._compromised: dict[str, tuple[str, int]] = {}  # agent_id -> (model, hash_int)
         self._bits = 128
 
-    def mark_compromised(self, agent_id: str, hash_hex: str) -> None:
+    def mark_compromised(self, agent_id: str, hash_hex: str, model: str = "") -> None:
         """Record the hash of a known-compromised agent."""
         if not hash_hex:
             return
-        self._compromised[agent_id] = hex_to_int(hash_hex)
+        self._compromised[agent_id] = (model, hex_to_int(hash_hex))
 
-    def check(self, agent_id: str, hash_hex: str) -> float:
+    def check(self, agent_id: str, hash_hex: str, model: str = "") -> float:
         """Return the similarity score to the nearest compromised hash.
 
+        Only compares against compromised hashes from the same embedding model.
         Score is ``1.0 - (hamming_distance / 128)``.  Returns 0.0 if there
-        are no compromised hashes on file.
+        are no matching compromised hashes on file.
         """
         if not self._compromised or not hash_hex:
             return 0.0
 
         h = hex_to_int(hash_hex)
         min_dist = self._bits
-        for comp_hash in self._compromised.values():
+        found = False
+        for comp_model, comp_hash in self._compromised.values():
+            if comp_model != model:
+                continue
+            found = True
             d = hamming_distance(h, comp_hash)
             if d < min_dist:
                 min_dist = d
+
+        if not found:
+            return 0.0
 
         return 1.0 - (min_dist / self._bits)
 
@@ -588,6 +628,7 @@ class ContagionDetector:
         self,
         agent_id: str,
         hash_hex: str,
+        model: str = "",
         topic_velocity: float = 0.0,
     ) -> float:
         """Return a composite contagion score that factors in topic velocity.
@@ -603,12 +644,13 @@ class ContagionDetector:
         Args:
             agent_id: The agent being checked.
             hash_hex: The agent's current content hash (32-char hex).
+            model: Embedding model name; only same-model hashes are compared.
             topic_velocity: Rate of topic change in [0.0, 1.0].
 
         Returns:
             Composite contagion score in [0.0, 1.0].
         """
-        proximity = self.check(agent_id, hash_hex)
+        proximity = self.check(agent_id, hash_hex, model=model)
         if proximity == 0.0:
             return 0.0
         composite = proximity * (1.0 + self._velocity_weight * topic_velocity)

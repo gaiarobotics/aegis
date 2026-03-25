@@ -16,7 +16,7 @@ from typing import Any
 import hashlib
 import hmac as _hmac
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from monitor.auth import (
@@ -355,11 +355,41 @@ def register_routes(app: FastAPI) -> None:
     # ------------------------------------------------------------------
 
     @app.get("/simulator", response_class=HTMLResponse)
-    async def simulator_page():
-        html_path = _STATIC_DIR / "simulator.html"
-        if not html_path.is_file():
-            raise HTTPException(status_code=404, detail="simulator.html not found")
-        return HTMLResponse(html_path.read_text())
+    async def simulator_page(request: Request):
+        from monitor.auth import _SESSION_COOKIE_NAME, verify_session_token
+
+        config = app.state.config
+
+        # Open mode: serve directly
+        if not config.api_keys:
+            html_path = _STATIC_DIR / "simulator.html"
+            if not html_path.is_file():
+                raise HTTPException(status_code=404, detail="simulator.html not found")
+            return HTMLResponse(html_path.read_text())
+
+        # Check session — operator only
+        cookie = request.cookies.get(_SESSION_COOKIE_NAME)
+        authenticated = False
+        if cookie and config.session_secret:
+            payload = verify_session_token(
+                cookie, config.session_secret, ttl=config.session_ttl_seconds,
+            )
+            if payload and payload.get("role") in ("operator", "open"):
+                key_hash = payload.get("key_hash", "")
+                for k in config.api_keys:
+                    if hashlib.sha256(k.encode()).hexdigest() == key_hash:
+                        authenticated = True
+                        break
+
+        if authenticated:
+            html_path = _STATIC_DIR / "simulator.html"
+            if not html_path.is_file():
+                raise HTTPException(status_code=404, detail="simulator.html not found")
+            return HTMLResponse(html_path.read_text())
+
+        # Not authenticated — redirect to login
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(url="/", status_code=303)
 
 
 # ------------------------------------------------------------------

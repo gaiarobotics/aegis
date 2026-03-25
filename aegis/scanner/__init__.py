@@ -88,8 +88,19 @@ class Scanner:
         # Init intent divergence detector (optional indirect injection detection)
         self._intent_divergence: Optional[IntentDivergenceDetector] = None
         if scanner_cfg.intent_divergence.enabled:
+            from aegis.behavior.embedding_providers import create_provider
+            from aegis.behavior.content_hash import SemanticHasher
+            try:
+                provider = create_provider(
+                    model=config.behavior.content_hash.embedding_model,
+                    base_url=config.behavior.content_hash.embedding_api_base_url,
+                )
+                hasher = SemanticHasher(provider)
+            except (ImportError, ValueError):
+                hasher = None
             self._intent_divergence = IntentDivergenceDetector(
                 config=scanner_cfg.intent_divergence,
+                hasher=hasher,
             )
 
         # Threat threshold from config
@@ -145,12 +156,28 @@ class Scanner:
         if self._pii_detector is not None:
             pii_result = self._pii_detector.detect(text)
 
-        # Intent divergence detection (indirect injection)
+        # Intent divergence detection (indirect injection) — now async
         intent_divergence_result: Optional[IntentDivergenceResult] = None
         if self._intent_divergence is not None and context:
-            intent_divergence_result = self._intent_divergence.check(
-                text, context, compromised_hashes,
-            )
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                # Already in an async context — caller should use ascan_input
+                import warnings
+                warnings.warn(
+                    "scan_input() called from async context; "
+                    "use ascan_input() for intent divergence support",
+                    stacklevel=2,
+                )
+            else:
+                intent_divergence_result = asyncio.run(
+                    self._intent_divergence.check(
+                        text, context, compromised_hashes,
+                    )
+                )
 
         # Compute combined threat score
         threat_score = self._compute_threat_score(
@@ -213,10 +240,10 @@ class Scanner:
         if self._pii_detector is not None:
             pii_result = self._pii_detector.detect(text)
 
-        # Intent divergence detection (CPU-bound)
+        # Intent divergence detection (now async — embedding may be I/O-bound)
         intent_divergence_result: Optional[IntentDivergenceResult] = None
         if self._intent_divergence is not None and context:
-            intent_divergence_result = self._intent_divergence.check(
+            intent_divergence_result = await self._intent_divergence.check(
                 text, context, compromised_hashes,
             )
 

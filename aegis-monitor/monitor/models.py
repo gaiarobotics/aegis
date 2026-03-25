@@ -57,6 +57,7 @@ class CompromiseRecord:
     nk_verdict: str = ""
     recommended_action: str = "quarantine"
     content_hash_hex: str = ""
+    embedding_model: str = ""
     timestamp: float = field(default_factory=time.time)
     verified: bool = False
 

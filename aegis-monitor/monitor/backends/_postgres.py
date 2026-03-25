@@ -57,6 +57,7 @@ _SCHEMA_STATEMENTS = [
         nk_verdict           TEXT NOT NULL DEFAULT '',
         recommended_action   TEXT NOT NULL DEFAULT 'quarantine',
         content_hash_hex     TEXT NOT NULL DEFAULT '',
+        embedding_model      TEXT NOT NULL DEFAULT '',
         timestamp            DOUBLE PRECISION NOT NULL
     )
     """,
@@ -66,6 +67,7 @@ _SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_compromises_compromised ON compromises(compromised_agent_id)",
     "CREATE INDEX IF NOT EXISTS idx_compromises_ts ON compromises(timestamp)",
     "ALTER TABLE compromises ADD COLUMN IF NOT EXISTS verified INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE compromises ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT ''",
     """
     CREATE TABLE IF NOT EXISTS killswitch_rules (
         rule_id    TEXT PRIMARY KEY,

@@ -172,7 +172,7 @@ Both SQLite and PostgreSQL backends receive this migration.
 }
 ```
 
-Legacy monitors that don't understand model-keyed hashes will see a dict where they expected a list — this is a breaking change to the wire format. Version the endpoint or document the migration.
+This is a breaking change to the wire format. No backward compatibility is needed — there are no monitors running in production yet.
 
 **`IntentDivergenceDetector` and compromised hashes:**
 - `check()` accepts `compromised_hashes: set[int] | None` (unchanged type). The caller is responsible for passing only same-model hashes by calling `RemoteThreatIntel.get_compromised_hashes(model=hasher.model_name)`. This keeps the detector simple — it doesn't need to know about multi-model concerns.

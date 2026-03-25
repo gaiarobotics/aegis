@@ -1437,8 +1437,39 @@ async def ws_dashboard(ws: WebSocket):
 # ------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard():
-    index = STATIC_DIR / "index.html"
-    if index.is_file():
-        return HTMLResponse(content=index.read_text())
-    return HTMLResponse(content="<h1>AEGIS Monitor</h1><p>Dashboard not found.</p>")
+async def dashboard(request: Request):
+    config: MonitorConfig = request.app.state.config
+
+    # Open mode: no keys configured — serve dashboard directly
+    if not config.api_keys:
+        index = STATIC_DIR / "index.html"
+        if index.is_file():
+            return HTMLResponse(content=index.read_text())
+        return HTMLResponse(content="<h1>AEGIS Monitor</h1><p>Dashboard not found.</p>")
+
+    # Check for valid session cookie with viewer or operator role
+    cookie = request.cookies.get(_SESSION_COOKIE_NAME)
+    authenticated = False
+    if cookie:
+        secret = config.session_secret or "ephemeral"
+        payload = verify_session_token(cookie, secret, ttl=config.session_ttl_seconds)
+        if payload and payload.get("role") in ("viewer", "operator", "open"):
+            # Verify the key still exists
+            import hashlib as _hashlib
+            key_hash = payload.get("key_hash", "")
+            for k in config.api_keys:
+                if _hashlib.sha256(k.encode()).hexdigest() == key_hash:
+                    authenticated = True
+                    break
+
+    if authenticated:
+        index = STATIC_DIR / "index.html"
+        if index.is_file():
+            return HTMLResponse(content=index.read_text())
+        return HTMLResponse(content="<h1>AEGIS Monitor</h1><p>Dashboard not found.</p>")
+
+    # Not authenticated — serve login page
+    login = STATIC_DIR / "login.html"
+    if login.is_file():
+        return HTMLResponse(content=login.read_text())
+    return HTMLResponse(content="<h1>AEGIS Monitor</h1><p>Please authenticate.</p>")

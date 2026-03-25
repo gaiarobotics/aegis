@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from aegis.core.config import AegisConfig
 from aegis.scanner.envelope import PromptEnvelope
@@ -22,11 +22,11 @@ class ScanResult:
     """Result of a combined input scan."""
 
     matches: list[ThreatMatch] = field(default_factory=list)
-    semantic_result: Optional[SemanticResult] = None
-    llm_guard_result: Optional[LLMGuardResult] = None
-    llm_screen_result: Optional[LLMScreenResult] = None
-    pii_result: Optional[PiiResult] = None
-    intent_divergence_result: Optional[IntentDivergenceResult] = None
+    semantic_result: SemanticResult | None = None
+    llm_guard_result: LLMGuardResult | None = None
+    llm_screen_result: LLMScreenResult | None = None
+    pii_result: PiiResult | None = None
+    intent_divergence_result: IntentDivergenceResult | None = None
     threat_score: float = 0.0
     is_threat: bool = False
 
@@ -39,7 +39,7 @@ class Scanner:
         config: Optional AegisConfig. If not provided, defaults are used.
     """
 
-    def __init__(self, config: Optional[AegisConfig] = None, http_pool: Any = None) -> None:
+    def __init__(self, config: AegisConfig | None = None, http_pool: Any = None) -> None:
         if config is None:
             config = AegisConfig()
 
@@ -52,7 +52,7 @@ class Scanner:
             use_bundled=scanner_cfg.signatures.use_bundled,
             additional_files=scanner_cfg.signatures.additional_files or None,
         )
-        self._pattern_matcher: Optional[PatternMatcher] = None
+        self._pattern_matcher: PatternMatcher | None = None
         if scanner_cfg.pattern_matching:
             self._pattern_matcher = PatternMatcher(
                 signatures=signatures,
@@ -60,7 +60,7 @@ class Scanner:
             )
 
         # Init semantic analyzer
-        self._semantic_analyzer: Optional[SemanticAnalyzer] = None
+        self._semantic_analyzer: SemanticAnalyzer | None = None
         if scanner_cfg.semantic_analysis:
             self._semantic_analyzer = SemanticAnalyzer()
 
@@ -71,25 +71,25 @@ class Scanner:
         self._sanitizer = OutboundSanitizer(config=scanner_cfg)
 
         # Init LLM Guard adapter (optional ML-based scanning)
-        self._llm_guard: Optional[LLMGuardAdapter] = None
+        self._llm_guard: LLMGuardAdapter | None = None
         if scanner_cfg.llm_guard.enabled:
             self._llm_guard = LLMGuardAdapter(config=scanner_cfg.llm_guard)
 
         # Init LLM screen adapter (optional secondary LLM classifier)
-        self._llm_screen: Optional[LLMScreenAdapter] = None
+        self._llm_screen: LLMScreenAdapter | None = None
         if scanner_cfg.llm_screen.enabled:
             self._llm_screen = LLMScreenAdapter(config=scanner_cfg.llm_screen, http_pool=http_pool)
 
         # Init PII detector (optional Presidio-based)
-        self._pii_detector: Optional[PiiDetector] = None
+        self._pii_detector: PiiDetector | None = None
         if scanner_cfg.pii.enabled:
             self._pii_detector = PiiDetector(config=scanner_cfg.pii)
 
         # Init intent divergence detector (optional indirect injection detection)
-        self._intent_divergence: Optional[IntentDivergenceDetector] = None
+        self._intent_divergence: IntentDivergenceDetector | None = None
         if scanner_cfg.intent_divergence.enabled:
-            from aegis.behavior.embedding_providers import create_provider
             from aegis.behavior.content_hash import SemanticHasher
+            from aegis.behavior.embedding_providers import create_provider
             try:
                 provider = create_provider(
                     model=config.behavior.content_hash.embedding_model,
@@ -125,8 +125,8 @@ class Scanner:
             ScanResult with combined findings.
         """
         matches: list[ThreatMatch] = []
-        semantic_result: Optional[SemanticResult] = None
-        llm_guard_result: Optional[LLMGuardResult] = None
+        semantic_result: SemanticResult | None = None
+        llm_guard_result: LLMGuardResult | None = None
 
         # Pattern matching
         if self._pattern_matcher is not None:
@@ -141,7 +141,7 @@ class Scanner:
             llm_guard_result = self._llm_guard.scan(text)
 
         # LLM screen (optional secondary LLM classifier)
-        llm_screen_result: Optional[LLMScreenResult] = None
+        llm_screen_result: LLMScreenResult | None = None
         if self._llm_screen is not None:
             # Determine if pattern matching already flagged a threat
             pattern_hit = bool(matches) and max(
@@ -152,12 +152,12 @@ class Scanner:
             )
 
         # PII detection (input awareness)
-        pii_result: Optional[PiiResult] = None
+        pii_result: PiiResult | None = None
         if self._pii_detector is not None:
             pii_result = self._pii_detector.detect(text)
 
         # Intent divergence detection (indirect injection) — now async
-        intent_divergence_result: Optional[IntentDivergenceResult] = None
+        intent_divergence_result: IntentDivergenceResult | None = None
         if self._intent_divergence is not None and context:
             import asyncio
             try:
@@ -210,8 +210,8 @@ class Scanner:
         awaited asynchronously.
         """
         matches: list[ThreatMatch] = []
-        semantic_result: Optional[SemanticResult] = None
-        llm_guard_result: Optional[LLMGuardResult] = None
+        semantic_result: SemanticResult | None = None
+        llm_guard_result: LLMGuardResult | None = None
 
         # Pattern matching (CPU-bound)
         if self._pattern_matcher is not None:
@@ -226,7 +226,7 @@ class Scanner:
             llm_guard_result = self._llm_guard.scan(text)
 
         # LLM screen — async I/O-bound
-        llm_screen_result: Optional[LLMScreenResult] = None
+        llm_screen_result: LLMScreenResult | None = None
         if self._llm_screen is not None:
             pattern_hit = bool(matches) and max(
                 (m.confidence for m in matches), default=0.0,
@@ -236,12 +236,12 @@ class Scanner:
             )
 
         # PII detection (CPU-bound)
-        pii_result: Optional[PiiResult] = None
+        pii_result: PiiResult | None = None
         if self._pii_detector is not None:
             pii_result = self._pii_detector.detect(text)
 
         # Intent divergence detection (now async — embedding may be I/O-bound)
-        intent_divergence_result: Optional[IntentDivergenceResult] = None
+        intent_divergence_result: IntentDivergenceResult | None = None
         if self._intent_divergence is not None and context:
             intent_divergence_result = await self._intent_divergence.check(
                 text, context, compromised_hashes,
@@ -268,7 +268,7 @@ class Scanner:
     def wrap_messages(
         self,
         messages: list[dict[str, Any]],
-        provenance_map: Optional[dict[int | str, str]] = None,
+        provenance_map: dict[int | str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Wrap messages with provenance tags.
 
@@ -303,10 +303,10 @@ class Scanner:
     def _compute_threat_score(
         self,
         matches: list[ThreatMatch],
-        semantic_result: Optional[SemanticResult],
-        llm_guard_result: Optional[LLMGuardResult] = None,
-        llm_screen_result: Optional[LLMScreenResult] = None,
-        intent_divergence_result: Optional[IntentDivergenceResult] = None,
+        semantic_result: SemanticResult | None,
+        llm_guard_result: LLMGuardResult | None = None,
+        llm_screen_result: LLMScreenResult | None = None,
+        intent_divergence_result: IntentDivergenceResult | None = None,
     ) -> float:
         """Compute a combined threat score from all detection tiers.
 

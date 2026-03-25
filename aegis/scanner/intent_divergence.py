@@ -13,8 +13,12 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from aegis.core.config import IntentDivergenceConfig
+
+if TYPE_CHECKING:
+    from aegis.behavior.content_hash import SemanticHasher
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,7 @@ class IntentDivergenceDetector:
     def __init__(
         self,
         config: IntentDivergenceConfig,
-        hasher: "SemanticHasher | None" = None,
+        hasher: SemanticHasher | None = None,
     ) -> None:
         self._config = config
         self._hasher = hasher

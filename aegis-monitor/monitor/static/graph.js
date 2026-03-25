@@ -325,6 +325,7 @@
         ws.onopen = function () {
             document.getElementById("ws-status").classList.remove("disconnected");
             document.getElementById("ws-status").classList.add("connected");
+            document.getElementById("ws-status-label").textContent = "Connected";
             logEvent("system", "WebSocket connected");
         };
 
@@ -338,6 +339,7 @@
         ws.onclose = function (event) {
             document.getElementById("ws-status").classList.remove("connected");
             document.getElementById("ws-status").classList.add("disconnected");
+            document.getElementById("ws-status-label").textContent = "Disconnected";
             // 4003 = auth required/forbidden — redirect to login
             if (event.code === 4003) {
                 window.location.href = "/";

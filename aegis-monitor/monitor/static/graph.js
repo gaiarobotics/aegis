@@ -255,6 +255,67 @@
                 }).join("");
             }
         }
+
+        // Clio: update threat hierarchy (fetched separately)
+        fetchThreatHierarchy();
+
+        // Clio: update coordination alerts
+        updateCoordinationAlerts(data.coordination_alerts || []);
+    }
+
+    async function fetchThreatHierarchy() {
+        try {
+            var resp = await authFetch("/api/v1/threat-hierarchy");
+            var hierarchy = await resp.json();
+            var container = document.getElementById("threat-hierarchy");
+            if (!container) return;
+
+            if (!hierarchy || hierarchy.length === 0) {
+                container.innerHTML = '<p style="color: var(--text-muted); font-size: 12px;">No hierarchy data</p>';
+                return;
+            }
+
+            var html = "";
+            hierarchy.forEach(function (cat) {
+                var severityClass = cat.severity_mean >= 0.6 ? "high" : cat.severity_mean >= 0.3 ? "medium" : "low";
+                html += '<details class="hierarchy-category">';
+                html += '<summary><span class="severity-badge ' + severityClass + '">' +
+                    cat.event_count + '</span> ' + cat.label + '</summary>';
+                if (cat.variants && cat.variants.length > 0) {
+                    html += '<ul class="hierarchy-variants">';
+                    cat.variants.forEach(function (v) {
+                        html += '<li>' + v.label + ' <span style="color:var(--text-muted)">(' + v.event_count + ')</span></li>';
+                    });
+                    html += '</ul>';
+                }
+                html += '</details>';
+            });
+            container.innerHTML = html;
+        } catch (err) {
+            // silent
+        }
+    }
+
+    function updateCoordinationAlerts(alerts) {
+        var container = document.getElementById("coordination-alerts");
+        if (!container) return;
+
+        if (!alerts || alerts.length === 0) {
+            container.innerHTML = '<p style="color: var(--text-muted); font-size: 12px;">No coordinated activity</p>';
+            return;
+        }
+
+        var html = alerts.slice(0, 10).map(function (a) {
+            var typeIcon = a.alert_type === "synchronized_drift" ? "&#x26A0;" :
+                a.alert_type === "content_convergence" ? "&#x1F517;" : "&#x1F465;";
+            return '<div class="coord-alert">' +
+                '<span class="coord-icon">' + typeIcon + '</span> ' +
+                '<span class="coord-desc">' + a.description + '</span>' +
+                '<span class="coord-confidence" title="Confidence">' +
+                (a.confidence * 100).toFixed(0) + '%</span>' +
+                '</div>';
+        }).join("");
+        container.innerHTML = html;
     }
 
     function setText(id, value) {
@@ -356,6 +417,17 @@
                 fetchTopicClusters();
                 if (activeTopicTab === "dendrogram") fetchDendrogram();
             }
+        } else if (type === "coordination_alert") {
+            logEvent("coordination", "COORDINATION: " + data.alert_type +
+                " (" + data.agent_ids.length + " agents, " +
+                (data.confidence * 100).toFixed(0) + "% confidence)");
+        } else if (type === "distribution_shift") {
+            logEvent("distribution", "DISTRIBUTION SHIFT: divergence=" +
+                (data.divergence || 0).toFixed(3) +
+                (data.new_categories && data.new_categories.length > 0 ?
+                    " new: " + data.new_categories.join(", ") : "") +
+                (data.spiking_categories && data.spiking_categories.length > 0 ?
+                    " spiking: " + data.spiking_categories.join(", ") : ""));
         }
 
         // Refresh graph and metrics

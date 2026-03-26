@@ -28,7 +28,15 @@ from monitor.auth import (
     verify_report_signature,
     verify_session_token,
 )
-from monitor.clustering import ThreatClusterer
+from monitor.clustering import (
+    ClusterSummarizer,
+    HierarchicalThreatClusterer,
+    PrivacyThresholds,
+    ThreatClusterer,
+    extract_facets,
+)
+from monitor.coordination import CoordinationConfig, CoordinationDetector
+from monitor.distribution import AttackDistributionTracker, DistributionConfig
 from monitor.config import MonitorConfig
 from monitor.contagion import ContagionDetector, TopicClusterer as TopicHashClusterer
 from monitor.db import Database
@@ -78,6 +86,28 @@ async def _periodic_background(app_state, interval: float = 30.0):
                 "active_cluster_count": active_count,
             })
 
+            # 1b. Clio: coordination detection + distribution shift check
+            coord = app_state.coordination_detector
+            if coord is not None:
+                coord_alerts = coord.detect_coordination()
+                for alert in coord_alerts:
+                    await _broadcast(app_state, {
+                        "type": "coordination_alert",
+                        **alert.to_dict(),
+                    })
+
+            dist_tracker = app_state.distribution_tracker
+            if dist_tracker is not None:
+                shift = dist_tracker.check_shift()
+                if shift is not None:
+                    await _broadcast(app_state, {
+                        "type": "distribution_shift",
+                        **shift.to_dict(),
+                    })
+
+            # 1c. Clio: refit hierarchical clusterer
+            app_state.hierarchical_clusterer.refit()
+
             # 2. R0 computation + caching
             cfg = app_state.config
             app_state.cached_r0 = app_state.r0.estimate_r0(cfg.r0_window_hours)
@@ -108,6 +138,34 @@ async def lifespan(app: FastAPI):  # noqa: C901
     app.state.graph = AgentGraph()
     app.state.r0 = R0Estimator()
     app.state.clusterer = ThreatClusterer()
+    # Clio-inspired hierarchical clustering, coordination, and distribution
+    clio = cfg.clio
+    summarizer = ClusterSummarizer(
+        strategy=clio.cluster_summarizer,
+        llm_endpoint=clio.llm_endpoint,
+        llm_model=clio.llm_model,
+    )
+    privacy = PrivacyThresholds(
+        min_events_per_cluster=clio.min_events_per_cluster,
+        min_agents_per_cluster=clio.min_agents_per_cluster,
+        redact_agent_ids_below=clio.redact_agent_ids_below,
+    )
+    app.state.hierarchical_clusterer = HierarchicalThreatClusterer(
+        summarizer=summarizer, privacy=privacy,
+    )
+    app.state.coordination_detector = CoordinationDetector(
+        config=CoordinationConfig(
+            min_agents=clio.coordination_min_agents,
+            drift_window_seconds=clio.coordination_drift_window_seconds,
+            drift_threshold=clio.coordination_drift_threshold,
+        ),
+    ) if clio.coordination_enabled else None
+    app.state.distribution_tracker = AttackDistributionTracker(
+        config=DistributionConfig(
+            window_minutes=clio.distribution_window_minutes,
+            shift_threshold=clio.distribution_shift_threshold,
+        ),
+    ) if clio.distribution_enabled else None
     app.state.ws_clients: set[WebSocket] = set()
     app.state.topic_clusterer = TopicHashClusterer()
     app.state.contagion_detector = ContagionDetector()
@@ -578,7 +636,17 @@ async def receive_threat(request: Request, data: dict, _role: str = Depends(requ
         f"nk:{data.get('nk_verdict', '')}",
         f"agent:{data.get('agent_id', '')}",
     ]
-    clusterer.add_event(event_id, " ".join(meta_parts))
+    metadata_text = " ".join(meta_parts)
+    clusterer.add_event(event_id, metadata_text)
+
+    # Clio: extract facets and feed hierarchical clusterer + distribution tracker
+    facets = extract_facets(data)
+    app.state.hierarchical_clusterer.add_event(
+        event_id, facets=facets, metadata_text=metadata_text,
+    )
+    if app.state.distribution_tracker is not None:
+        app.state.distribution_tracker.record_event(facets.attack_category)
+
     await app.state.cache.invalidate("metrics")
 
     await _broadcast(app.state, {
@@ -810,6 +878,16 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
                 "source": "contagion_detector",
             })
 
+    # Clio: feed coordination detector with behavioral snapshot
+    coord = app.state.coordination_detector
+    if coord is not None:
+        coord.record_heartbeat(
+            agent_id=agent_id,
+            fingerprint_hash=data.get("fingerprint_hash", ""),
+            drift_score=data.get("drift_score", 0.0),
+            content_hash=content_hash,
+        )
+
     await _broadcast(app.state, {"type": "heartbeat", "agent_id": agent_id})
 
     return {"status": "ok"}
@@ -853,6 +931,10 @@ async def get_metrics(_role: str = Depends(require_role("viewer", "operator"))):
     cluster_info = clusterer.get_cluster_info()
     real_clusters = [c for c in cluster_info if c["cluster_id"] >= 0]
 
+    # Clio: use hierarchical clusterer for enriched cluster info
+    hier_clusterer: HierarchicalThreatClusterer = app.state.hierarchical_clusterer
+    enriched_cluster_info = hier_clusterer.get_cluster_info()
+
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     topic_centroids = topic_clusterer.get_cluster_centroids()
     topic_cluster_count = sum(1 for c in topic_centroids if c["active"])
@@ -861,6 +943,15 @@ async def get_metrics(_role: str = Depends(require_role("viewer", "operator"))):
                                   since=time.time() - 3600)
 
     counts = app.state.agent_counts
+
+    # Clio: coordination alerts and distribution data
+    coord = app.state.coordination_detector
+    coordination_alerts = coord.get_recent_alerts() if coord is not None else []
+
+    dist = app.state.distribution_tracker
+    distribution_history = dist.get_distribution_history() if dist is not None else []
+    distribution_alerts = dist.get_recent_alerts() if dist is not None else []
+
     result = {
         "r0": app.state.cached_r0,
         "r0_trend": app.state.cached_r0_trend,
@@ -870,8 +961,12 @@ async def get_metrics(_role: str = Depends(require_role("viewer", "operator"))):
         "quarantined_agents": counts["quarantined"],
         "killswitched_agents": counts["killswitched"],
         "cluster_count": len(real_clusters),
-        "clusters": cluster_info,
+        "clusters": enriched_cluster_info,
         "topic_cluster_count": topic_cluster_count,
+        # Clio-inspired additions
+        "coordination_alerts": coordination_alerts,
+        "distribution_history": distribution_history,
+        "distribution_alerts": distribution_alerts,
     }
     await cache.set("metrics", json.dumps(result).encode())
     return result
@@ -938,6 +1033,43 @@ async def get_dendrogram(_role: str = Depends(require_role("viewer", "operator")
             agent_statuses[n["id"]] = "active"
 
     return topic_clusterer.get_dendrogram_data(agent_statuses, compromised_agents)
+
+
+# ------------------------------------------------------------------
+# Clio-inspired endpoints
+# ------------------------------------------------------------------
+
+
+@app.get("/api/v1/threat-hierarchy")
+async def get_threat_hierarchy(_role: str = Depends(require_role("viewer", "operator"))):
+    """Return hierarchical threat clustering (Clio-inspired).
+
+    Returns attack categories with sub-clustered variants, semantic labels,
+    and privacy-filtered results.
+    """
+    hier: HierarchicalThreatClusterer = app.state.hierarchical_clusterer
+    return hier.get_hierarchy()
+
+
+@app.get("/api/v1/coordination-alerts")
+async def get_coordination_alerts(_role: str = Depends(require_role("viewer", "operator"))):
+    """Return recent cross-agent coordination alerts (Clio-inspired)."""
+    coord = app.state.coordination_detector
+    if coord is None:
+        return []
+    return coord.get_recent_alerts()
+
+
+@app.get("/api/v1/distribution")
+async def get_distribution(_role: str = Depends(require_role("viewer", "operator"))):
+    """Return attack-type distribution history and shift alerts (Clio-inspired)."""
+    dist = app.state.distribution_tracker
+    if dist is None:
+        return {"history": [], "alerts": []}
+    return {
+        "history": dist.get_distribution_history(),
+        "alerts": dist.get_recent_alerts(),
+    }
 
 
 @app.get("/api/v1/trust/{agent_id}")

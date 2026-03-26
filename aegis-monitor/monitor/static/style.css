@@ -254,6 +254,42 @@ body {
 .event-log .event.compromise { color: var(--red); font-weight: 600; }
 .event-log .event.heartbeat { color: var(--gray); }
 .event-log .event.killswitch { color: var(--yellow); font-weight: 600; }
+.event-log .event.coordination { color: #e67e22; font-weight: 600; }
+.event-log .event.distribution { color: #9b59b6; font-weight: 600; }
+
+/* Clio: Threat hierarchy */
+.hierarchy-category { margin-bottom: 4px; }
+.hierarchy-category summary {
+    cursor: pointer; font-size: 12px; padding: 2px 0;
+    list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.hierarchy-category summary::-webkit-details-marker { display: none; }
+.hierarchy-category summary::before { content: "▸"; font-size: 10px; }
+.hierarchy-category[open] summary::before { content: "▾"; }
+.severity-badge {
+    display: inline-block; min-width: 20px; text-align: center;
+    padding: 1px 5px; border-radius: 8px; font-size: 10px; font-weight: 600;
+}
+.severity-badge.high { background: var(--red); color: #fff; }
+.severity-badge.medium { background: var(--yellow); color: #000; }
+.severity-badge.low { background: var(--gray); color: #fff; }
+.hierarchy-variants {
+    margin: 2px 0 4px 16px; padding: 0; list-style: none; font-size: 11px;
+    color: var(--text-muted);
+}
+.hierarchy-variants li { padding: 1px 0; }
+
+/* Clio: Coordination alerts */
+.coord-alert {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; padding: 3px 0; border-bottom: 1px solid var(--border);
+}
+.coord-icon { font-size: 14px; }
+.coord-desc { flex: 1; color: var(--text); }
+.coord-confidence {
+    font-size: 10px; font-weight: 600; color: var(--yellow);
+    white-space: nowrap;
+}
 
 /* Killswitch panel */
 .killswitch-panel { border-top: 1px solid var(--border); padding-top: 12px; }

@@ -22,6 +22,25 @@ _KEY_TYPE_MAP = {"hmac": "hmac-sha256", "ed25519": "ed25519"}
 
 
 @dataclass
+class ClusteringConfig:
+    """Clio-inspired clustering and summarization configuration."""
+
+    cluster_summarizer: str = "template"  # "template", "keybert", or "llm"
+    llm_endpoint: str = ""  # Ollama/vLLM endpoint for LLM summarizer
+    llm_model: str = ""  # Model name for LLM summarizer
+    min_events_per_cluster: int = 3  # Privacy: min events to surface a cluster
+    min_agents_per_cluster: int = 2  # Privacy: min unique agents per cluster
+    redact_agent_ids_below: int = 5  # Privacy: redact IDs in small clusters
+    coordination_enabled: bool = True
+    coordination_min_agents: int = 3
+    coordination_drift_window_seconds: float = 300.0
+    coordination_drift_threshold: float = 0.5
+    distribution_enabled: bool = True
+    distribution_window_minutes: int = 60
+    distribution_shift_threshold: float = 0.3
+
+
+@dataclass
 class MonitorConfig:
     """Monitor service configuration."""
 
@@ -34,6 +53,7 @@ class MonitorConfig:
     session_ttl_seconds: int = 28800
     agent_public_keys: dict[str, AgentKey] = field(default_factory=dict)
     clustering_enabled: bool = False
+    clio: ClusteringConfig = field(default_factory=ClusteringConfig)
     r0_window_hours: int = 24
     compromise_rate_limit: int = 5
     compromise_rate_window: int = 3600
@@ -71,6 +91,26 @@ class MonitorConfig:
             for agent_id, key_str in raw_pubkeys.items():
                 parsed_pubkeys[agent_id] = cls._parse_agent_key(key_str)
 
+        # Parse Clio clustering config
+        raw_clio = raw.get("clio", {})
+        if not isinstance(raw_clio, dict):
+            raw_clio = {}
+        clio_cfg = ClusteringConfig(
+            cluster_summarizer=str(raw_clio.get("cluster_summarizer", "template")),
+            llm_endpoint=str(raw_clio.get("llm_endpoint", "")),
+            llm_model=str(raw_clio.get("llm_model", "")),
+            min_events_per_cluster=int(raw_clio.get("min_events_per_cluster", 3)),
+            min_agents_per_cluster=int(raw_clio.get("min_agents_per_cluster", 2)),
+            redact_agent_ids_below=int(raw_clio.get("redact_agent_ids_below", 5)),
+            coordination_enabled=bool(raw_clio.get("coordination_enabled", True)),
+            coordination_min_agents=int(raw_clio.get("coordination_min_agents", 3)),
+            coordination_drift_window_seconds=float(raw_clio.get("coordination_drift_window_seconds", 300.0)),
+            coordination_drift_threshold=float(raw_clio.get("coordination_drift_threshold", 0.5)),
+            distribution_enabled=bool(raw_clio.get("distribution_enabled", True)),
+            distribution_window_minutes=int(raw_clio.get("distribution_window_minutes", 60)),
+            distribution_shift_threshold=float(raw_clio.get("distribution_shift_threshold", 0.3)),
+        )
+
         cfg = cls(
             host=raw.get("host", "0.0.0.0"),
             port=int(raw.get("port", 8080)),
@@ -81,6 +121,7 @@ class MonitorConfig:
             session_ttl_seconds=int(raw.get("session_ttl_seconds", 28800)),
             agent_public_keys=parsed_pubkeys,
             clustering_enabled=bool(raw.get("clustering_enabled", False)),
+            clio=clio_cfg,
             r0_window_hours=int(raw.get("r0_window_hours", 24)),
             compromise_rate_limit=int(raw.get("compromise_rate_limit", 5)),
             compromise_rate_window=int(raw.get("compromise_rate_window", 3600)),

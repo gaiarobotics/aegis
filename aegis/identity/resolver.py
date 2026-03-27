@@ -18,10 +18,6 @@ Resolution strategy (applied in order):
 
 from __future__ import annotations
 
-import re
-from typing import Any
-
-
 # ---------------------------------------------------------------------------
 # Optional rapidfuzz integration
 # ---------------------------------------------------------------------------

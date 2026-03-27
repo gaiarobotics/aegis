@@ -1,8 +1,8 @@
 """Taint tracking — marks memory entries with provenance and taint status."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from aegis.memory.guard import MemoryEntry
 

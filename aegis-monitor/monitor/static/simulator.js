@@ -28,13 +28,41 @@
         return document.getElementById(id);
     }
 
+    // ---- Auth / CSRF ----
+    var _csrfToken = "";
+
+    async function fetchCsrfToken() {
+        try {
+            var resp = await fetch("/auth/me");
+            if (resp.ok) {
+                var data = await resp.json();
+                _csrfToken = data.csrf_token || "";
+            }
+        } catch (e) { /* open mode — no CSRF needed */ }
+    }
+
+    function _checkAuth(resp) {
+        if (resp.status === 401 || resp.status === 403) {
+            // Could be expired session or missing CSRF — distinguish
+            // CSRF errors contain "CSRF" in detail; auth errors don't
+            // For auth failures, redirect to login
+            if (resp.status === 401) {
+                window.location.href = "/";
+                throw new Error("Session expired");
+            }
+        }
+    }
+
     // ---- API helpers ----
     async function apiPost(path, body) {
+        var headers = { "Content-Type": "application/json" };
+        if (_csrfToken) headers["X-CSRF-Token"] = _csrfToken;
         var resp = await fetch(path, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: headers,
             body: body !== undefined ? JSON.stringify(body) : undefined,
         });
+        _checkAuth(resp);
         if (!resp.ok) {
             var text = await resp.text();
             throw new Error("API error " + resp.status + ": " + text);
@@ -44,6 +72,7 @@
 
     async function apiGet(path) {
         var resp = await fetch(path);
+        _checkAuth(resp);
         if (!resp.ok) {
             var text = await resp.text();
             throw new Error("API error " + resp.status + ": " + text);
@@ -52,7 +81,10 @@
     }
 
     async function apiDelete(path) {
-        var resp = await fetch(path, { method: "DELETE" });
+        var headers = {};
+        if (_csrfToken) headers["X-CSRF-Token"] = _csrfToken;
+        var resp = await fetch(path, { method: "DELETE", headers: headers });
+        _checkAuth(resp);
         if (!resp.ok) {
             var text = await resp.text();
             throw new Error("API error " + resp.status + ": " + text);
@@ -1616,6 +1648,7 @@
 
     // ---- Boot ----
     document.addEventListener("DOMContentLoaded", function () {
+        fetchCsrfToken();
         initGraph();
         initChart();
         setupPanels();

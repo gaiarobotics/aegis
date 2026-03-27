@@ -1,7 +1,8 @@
 """Tests for async Anthropic provider wrapper."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from aegis.providers.anthropic import AnthropicWrapper
 from aegis.shield import Shield

@@ -1,9 +1,8 @@
 """Tests for AEGIS Scanner module integration."""
 
 from aegis.core.config import AegisConfig
-from aegis.scanner import ScanResult, Scanner
+from aegis.scanner import Scanner, ScanResult
 from aegis.scanner.envelope import INSTRUCTION_HIERARCHY, SOCIAL_CONTENT, TRUSTED_SYSTEM
-from aegis.scanner.pattern_matcher import ThreatMatch
 from aegis.scanner.sanitizer import SanitizeResult
 from aegis.scanner.semantic import SemanticResult
 

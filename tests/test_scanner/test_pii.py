@@ -8,18 +8,14 @@ from __future__ import annotations
 import sys
 import types
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from aegis.core.config import PiiConfig
 from aegis.scanner.pii import (
     PiiDetector,
     PiiEntity,
-    PiiResult,
     is_presidio_available,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers: fake presidio modules

@@ -1,6 +1,6 @@
 """Tests for AEGIS base provider wrapper."""
 
-from aegis.providers.base import BaseWrapper, WrappedClient, _InterceptProxy, _extract_user_text
+from aegis.providers.base import BaseWrapper, WrappedClient, _extract_user_text, _InterceptProxy
 from aegis.shield import Shield
 
 
@@ -178,6 +178,7 @@ class TestTrustRecordingLogging:
     def test_trust_recording_failure_logged(self):
         """When _record_trust_for_messages fails, it logs via logger.debug."""
         import logging
+
         from aegis.providers.base import _record_trust_for_messages
 
         shield = Shield(modules=[])

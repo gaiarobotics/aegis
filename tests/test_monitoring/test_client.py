@@ -1,13 +1,11 @@
 """Tests for the monitoring client."""
 
-import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import MagicMock, patch
 
 from aegis.core.config import MonitoringConfig
-from aegis.monitoring.client import MonitoringClient
 from aegis.identity.attestation import generate_keypair
+from aegis.monitoring.client import MonitoringClient
 
 
 def _disabled_config():

@@ -13,8 +13,12 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from aegis.core.config import IntentDivergenceConfig
+
+if TYPE_CHECKING:
+    from aegis.behavior.content_hash import SemanticHasher
 
 logger = logging.getLogger(__name__)
 
@@ -56,30 +60,40 @@ class IntentDivergenceDetector:
 
     Args:
         config: IntentDivergenceConfig with thresholds and amplification params.
+        hasher: Optional pre-configured ``SemanticHasher``.  When provided the
+            detector uses it directly; when ``None`` a hasher is lazy-created
+            (backward compat, requires ``sentence-transformers``).
     """
 
-    def __init__(self, config: IntentDivergenceConfig) -> None:
+    def __init__(
+        self,
+        config: IntentDivergenceConfig,
+        hasher: SemanticHasher | None = None,
+    ) -> None:
         self._config = config
-        self._hasher = None  # lazy
-        self._available: bool | None = None
+        self._hasher = hasher
+        self._available: bool | None = True if hasher is not None else None
 
     def _ensure_hasher(self) -> bool:
         """Lazy-init SemanticHasher. Returns True if available."""
         if self._available is False:
             return False
-        if self._hasher is None:
-            try:
-                from aegis.behavior.content_hash import SemanticHasher
-                self._hasher = SemanticHasher()
-                # Probe availability
-                import sentence_transformers  # noqa: F401
-                self._available = True
-            except ImportError:
-                self._available = False
-                return False
+        if self._hasher is not None:
+            return True
+        # Legacy path: create a default hasher (requires sentence-transformers)
+        try:
+            from aegis.behavior.content_hash import SemanticHasher
+            from aegis.behavior.embedding_providers import SentenceTransformerProvider
+            self._hasher = SemanticHasher(SentenceTransformerProvider())
+            # Probe availability
+            import sentence_transformers  # noqa: F401
+            self._available = True
+        except ImportError:
+            self._available = False
+            return False
         return True
 
-    def check(
+    async def check(
         self,
         intent_text: str,
         context_texts: list[str],
@@ -106,7 +120,7 @@ class IntentDivergenceDetector:
             return IntentDivergenceResult(skipped=True)
 
         try:
-            intent_emb = self._hasher.embed(intent_text)
+            intent_emb = await self._hasher.embed(intent_text)
         except Exception:
             logger.debug("Intent embedding failed", exc_info=True)
             return IntentDivergenceResult(skipped=True)
@@ -116,7 +130,7 @@ class IntentDivergenceDetector:
 
         for ctx_text in context_texts:
             try:
-                ctx_emb = self._hasher.embed(ctx_text)
+                ctx_emb = await self._hasher.embed(ctx_text)
             except Exception:
                 logger.debug("Context embedding failed", exc_info=True)
                 continue

@@ -228,8 +228,8 @@ class HttpPool:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> HttpResponse:
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         req = urllib.request.Request(url, method="GET", headers=headers or {})
         try:
@@ -254,8 +254,8 @@ class HttpPool:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> HttpResponse:
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         hdrs = dict(headers or {})
         if json_body is not None:

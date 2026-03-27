@@ -120,6 +120,7 @@ class TestObserveMode:
 class TestEnforceMode:
     def test_enforce_mode_blocks(self):
         import time
+
         from aegis.broker import ActionRequest
         shield = Shield(mode="enforce")
 
@@ -201,7 +202,7 @@ class TestShieldWrapWithTools:
 
 class TestWrapMessagesProvenance:
     def test_provenance_map_applied(self):
-        from aegis.scanner.envelope import TRUSTED_OPERATOR, INSTRUCTION_HIERARCHY
+        from aegis.scanner.envelope import INSTRUCTION_HIERARCHY, TRUSTED_OPERATOR
         shield = Shield(modules=["scanner"])
         messages = [{"role": "user", "content": "Hello from operator"}]
         wrapped = shield.wrap_messages(messages, provenance_map={"user": TRUSTED_OPERATOR})
@@ -237,6 +238,7 @@ class TestShieldNKCellIntegration:
 class TestShieldTrustTierInEvaluation:
     def test_trust_tier_used_in_evaluation(self):
         import time
+
         from aegis.broker import ActionRequest
         shield = Shield(mode="enforce", modules=["broker", "identity"])
         req = ActionRequest(
@@ -329,7 +331,8 @@ class TestShieldWrapDispatch:
 
     def test_wrap_anthropic_client(self):
         """Client with 'anthropic' in module name should use AnthropicWrapper."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from aegis.providers.base import WrappedClient
 
         shield = Shield(modules=["scanner"])
@@ -349,7 +352,8 @@ class TestShieldWrapDispatch:
 
     def test_wrap_openai_client(self):
         """Client with 'openai' in module name should use OpenAIWrapper."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from aegis.providers.base import WrappedClient
 
         shield = Shield(modules=["scanner"])
@@ -368,6 +372,7 @@ class TestShieldWrapDispatch:
     def test_wrap_generic_client(self):
         """Client without known module should use GenericWrapper."""
         from unittest.mock import patch
+
         from aegis.providers.base import WrappedClient
 
         shield = Shield(modules=["scanner"])
@@ -385,6 +390,7 @@ class TestQuarantineBlocksInference:
     def test_quarantine_blocks_inference(self):
         """When RemoteQuarantine reports quarantined, check_killswitch raises."""
         from unittest.mock import MagicMock
+
         from aegis.shield import InferenceBlockedError
 
         config = AegisConfig(
@@ -436,6 +442,7 @@ class TestPreEmptiveContagionAvoidance:
     def test_compromised_sender_enforce_blocks(self):
         """Enforce mode blocks input from a compromised sender."""
         from unittest.mock import MagicMock
+
         from aegis.shield import ThreatBlockedError
 
         shield = self._make_shield(mode="enforce")
@@ -467,6 +474,7 @@ class TestPreEmptiveContagionAvoidance:
     def test_quarantined_sender_enforce_blocks(self):
         """Enforce mode blocks input from a quarantined sender."""
         from unittest.mock import MagicMock
+
         from aegis.shield import ThreatBlockedError
 
         shield = self._make_shield(mode="enforce")
@@ -482,6 +490,7 @@ class TestPreEmptiveContagionAvoidance:
     def test_suspicious_hash_enforce_blocks(self):
         """Enforce mode blocks input with a suspicious content hash."""
         from unittest.mock import MagicMock
+
         from aegis.shield import ThreatBlockedError
 
         shield = self._make_shield(mode="enforce")

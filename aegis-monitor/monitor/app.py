@@ -141,9 +141,13 @@ async def lifespan(app: FastAPI):  # noqa: C901
 
     # Warm threat-intel cache
     _ti_graph_state = app.state.graph.get_graph_state()
+    _compromised_by_model: dict[str, list[str]] = {}
+    for _agent_id, (_model, _hash_int) in app.state.contagion_detector._compromised.items():
+        _model_key = _model or ""
+        _compromised_by_model.setdefault(_model_key, []).append(f"{_hash_int:032x}")
     _ti_result = {
         "compromised_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_compromised"]],
-        "compromised_hashes": [f"{h:032x}" for h in app.state.contagion_detector._compromised.values()],
+        "compromised_hashes_by_model": _compromised_by_model,
         "quarantined_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_quarantined"]],
         "generated_at": time.time(),
     }
@@ -300,6 +304,7 @@ async def receive_compromise(request: Request, data: dict, _role: str = Depends(
         nk_verdict=data.get("nk_verdict", ""),
         recommended_action=data.get("recommended_action", "quarantine"),
         content_hash_hex=data.get("content_hash_hex", ""),
+        embedding_model=data.get("embedding_model", ""),
         timestamp=data.get("timestamp", time.time()),
         verified=verified,
     )
@@ -424,6 +429,7 @@ async def receive_compromise(request: Request, data: dict, _role: str = Depends(
     contagion_detector: ContagionDetector = app.state.contagion_detector
     validator: ReportValidator = app.state.report_validator
     comp_hash = data.get("content_hash_hex", "")
+    embedding_model = data.get("embedding_model", "")
 
     reporter_trust_tier = reporter_node.trust_tier if reporter_node else 0
     reporter_is_quarantined = reporter_node.is_quarantined if reporter_node else False
@@ -447,13 +453,13 @@ async def receive_compromise(request: Request, data: dict, _role: str = Depends(
 
     # Only add to contagion cloud if hash was confirmed by validation
     if vr.hash_confirmed and comp_hash:
-        contagion_detector.mark_compromised(record.compromised_agent_id, comp_hash)
+        contagion_detector.mark_compromised(record.compromised_agent_id, comp_hash, model=embedding_model)
     elif not comp_hash:
         # Fallback path: no hash provided, use graph node hash (unchanged behaviour)
         node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
         fallback_hash = node_attrs.get("content_hash", "")
         if fallback_hash:
-            contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash)
+            contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash, model=embedding_model)
         validation_status = "confirmed"
 
     await app.state.cache.invalidate("threat-intel")
@@ -705,12 +711,13 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
     topic_clusterer: TopicHashClusterer = app.state.topic_clusterer
     contagion_detector: ContagionDetector = app.state.contagion_detector
     hash_for_analysis = content_hash
+    embedding_model = data.get("embedding_model", "")
     topic_velocity = data.get("topic_velocity", 0.0)
     if hash_for_analysis:
-        topic_clusterer.update(agent_id, hash_for_analysis)
+        topic_clusterer.update(agent_id, hash_for_analysis, model=embedding_model)
 
         score = contagion_detector.check_with_velocity(
-            agent_id, hash_for_analysis, topic_velocity=topic_velocity,
+            agent_id, hash_for_analysis, model=embedding_model, topic_velocity=topic_velocity,
         )
         if score >= contagion_detector._alert_threshold:
             contagion_event = StoredEvent(
@@ -891,13 +898,14 @@ async def get_threat_intel(_role: str = Depends(require_role("viewer", "operator
     graph_state = graph.get_graph_state()
     compromised_agents = [n["id"] for n in graph_state["nodes"] if n["is_compromised"]]
     quarantined_agents = [n["id"] for n in graph_state["nodes"] if n["is_quarantined"]]
-    compromised_hashes = [
-        f"{h:032x}" for h in contagion_detector._compromised.values()
-    ]
+    compromised_hashes_by_model: dict[str, list[str]] = {}
+    for agent_id, (model, hash_int) in contagion_detector._compromised.items():
+        model_key = model or ""
+        compromised_hashes_by_model.setdefault(model_key, []).append(f"{hash_int:032x}")
 
     result = {
         "compromised_agents": compromised_agents,
-        "compromised_hashes": compromised_hashes,
+        "compromised_hashes": compromised_hashes_by_model,
         "quarantined_agents": quarantined_agents,
         "generated_at": time.time(),
     }

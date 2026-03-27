@@ -1,6 +1,5 @@
 """Tests for skill loader."""
 
-import json
 
 from aegis.core.config import SkillsConfig
 from aegis.skills.loader import LoadResult, SkillLoader

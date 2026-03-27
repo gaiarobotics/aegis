@@ -6,10 +6,10 @@ import time
 import pytest
 
 from aegis.identity.attestation import (
+    MAX_TTL_SECONDS,
     Attestation,
     AttestationVerifier,
     KeyPair,
-    MAX_TTL_SECONDS,
     create_attestation,
     generate_keypair,
     verify_attestation,

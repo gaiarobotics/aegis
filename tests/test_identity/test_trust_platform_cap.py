@@ -1,7 +1,6 @@
 """Tests for trust tier capping by platform."""
 
 import time
-import pytest
 
 from aegis.core.config import TrustConfig
 from aegis.identity.trust import TrustManager

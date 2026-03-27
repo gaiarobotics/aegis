@@ -1,11 +1,10 @@
 """Integration tests for the Moltbook profile end-to-end."""
 
-import yaml
-import pytest
-from pathlib import Path
 
-from aegis.core.config import load_config
-from aegis.shield import Shield, ScanResult
+import pytest
+import yaml
+
+from aegis.shield import Shield
 
 
 class TestMoltbookProfileIntegration:

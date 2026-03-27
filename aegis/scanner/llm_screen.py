@@ -16,7 +16,7 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from aegis.core.config import LLMScreenConfig
@@ -336,8 +336,8 @@ class LLMScreenAdapter:
             pass
 
         # Fallback: urllib
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         data = json.dumps(body).encode()
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")

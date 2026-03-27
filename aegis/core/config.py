@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -244,6 +243,8 @@ class ContentHashConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     enabled: bool = True
     window_size: int = 20
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_api_base_url: str = ""
 
 
 class BehaviorConfig(BaseModel):
@@ -463,6 +464,10 @@ _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
     ("AEGIS_INTEGRITY_REHASH_INTERVAL", "integrity", "rehash_interval_seconds", int),
 ]
 
+_ENV_OVERRIDES_NESTED: list[tuple[str, str, str, str, type]] = [
+    ("AEGIS_EMBEDDING_MODEL", "behavior", "content_hash", "embedding_model", str),
+]
+
 
 def _apply_env_overrides(data: dict) -> dict:
     """Apply AEGIS_* environment variable overrides."""
@@ -477,6 +482,12 @@ def _apply_env_overrides(data: dict) -> dict:
             if section not in data:
                 data[section] = {}
             data[section][key] = converted
+    for env_var, section, subsection, key, converter in _ENV_OVERRIDES_NESTED:
+        value = os.environ.get(env_var)
+        if value is None:
+            continue
+        converted = converter(value)
+        data.setdefault(section, {}).setdefault(subsection, {})[key] = converted
     return data
 
 

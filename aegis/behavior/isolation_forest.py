@@ -162,8 +162,8 @@ class IsolationForestDetector:
         while holding self._lock.
         """
         try:
-            from sklearn.ensemble import IsolationForest
             import numpy as np
+            from sklearn.ensemble import IsolationForest
 
             X = np.array(self._training_buffer)
             self._model = IsolationForest(

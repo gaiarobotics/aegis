@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS compromises (
     nk_verdict           TEXT NOT NULL DEFAULT '',
     recommended_action   TEXT NOT NULL DEFAULT 'quarantine',
     content_hash_hex     TEXT NOT NULL DEFAULT '',
+    embedding_model      TEXT NOT NULL DEFAULT '',
     timestamp            REAL NOT NULL,
     verified             INTEGER NOT NULL DEFAULT 0
 );
@@ -139,6 +140,10 @@ class SqliteBackend:
         # Migrate: add verified column if missing (existing databases)
         try:
             conn.execute("ALTER TABLE compromises ADD COLUMN verified INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        try:
+            conn.execute("ALTER TABLE compromises ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''")
         except sqlite3.OperationalError:
             pass  # Column already exists
         conn.commit()

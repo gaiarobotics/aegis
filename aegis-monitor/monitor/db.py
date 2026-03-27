@@ -20,8 +20,12 @@ class Database:
     ``postgresql://`` URL for Postgres.
     """
 
-    def __init__(self, url: str = "monitor.db") -> None:
-        self._backend = create_backend(url)
+    def __init__(self, url: "str | Any" = "monitor.db") -> None:
+        if isinstance(url, str):
+            self._backend = create_backend(url)
+        else:
+            # Accept a pre-constructed backend instance directly
+            self._backend = url
 
     def transaction(self):
         """Return a context manager yielding a transaction handle.
@@ -184,8 +188,8 @@ class Database:
             """INSERT INTO compromises
                    (record_id, reporter_agent_id, compromised_agent_id,
                     source, nk_score, nk_verdict, recommended_action,
-                    content_hash_hex, timestamp, verified)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_hash_hex, embedding_model, timestamp, verified)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(record_id) DO UPDATE SET
                    reporter_agent_id    = excluded.reporter_agent_id,
                    compromised_agent_id = excluded.compromised_agent_id,
@@ -194,6 +198,7 @@ class Database:
                    nk_verdict           = excluded.nk_verdict,
                    recommended_action   = excluded.recommended_action,
                    content_hash_hex     = excluded.content_hash_hex,
+                   embedding_model      = excluded.embedding_model,
                    timestamp            = excluded.timestamp,
                    verified             = excluded.verified
             """,
@@ -206,6 +211,7 @@ class Database:
                 record.nk_verdict,
                 record.recommended_action,
                 record.content_hash_hex,
+                record.embedding_model,
                 record.timestamp,
                 int(record.verified),
             ),
@@ -235,6 +241,7 @@ class Database:
                 nk_verdict=r["nk_verdict"],
                 recommended_action=r["recommended_action"],
                 content_hash_hex=r.get("content_hash_hex", ""),
+                embedding_model=r.get("embedding_model", ""),
                 timestamp=r["timestamp"],
                 verified=bool(r.get("verified", 0)),
             )

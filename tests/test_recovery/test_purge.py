@@ -2,8 +2,6 @@
 
 import time
 
-import pytest
-
 from aegis.recovery.purge import MemoryPurge, PurgeResult
 
 

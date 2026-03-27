@@ -7,10 +7,28 @@
 (function () {
     "use strict";
 
-    // ---- Auth-aware fetch wrapper ----
+    // ---- Auth / CSRF ----
+    var _csrfToken = "";
+
+    async function fetchCsrfToken() {
+        try {
+            var resp = await fetch("/auth/me");
+            if (resp.ok) {
+                var data = await resp.json();
+                _csrfToken = data.csrf_token || "";
+            }
+        } catch (e) { /* open mode */ }
+    }
+
     async function authFetch(url, opts) {
+        opts = opts || {};
+        // Inject CSRF token on mutation requests
+        if (opts.method && opts.method !== "GET" && _csrfToken) {
+            opts.headers = opts.headers || {};
+            opts.headers["X-CSRF-Token"] = _csrfToken;
+        }
         var resp = await fetch(url, opts);
-        if (resp.status === 401 || resp.status === 403) {
+        if (resp.status === 401) {
             window.location.href = "/";
             throw new Error("Session expired");
         }
@@ -307,6 +325,7 @@
         ws.onopen = function () {
             document.getElementById("ws-status").classList.remove("disconnected");
             document.getElementById("ws-status").classList.add("connected");
+            document.getElementById("ws-status-label").textContent = "Connected";
             logEvent("system", "WebSocket connected");
         };
 
@@ -320,6 +339,7 @@
         ws.onclose = function (event) {
             document.getElementById("ws-status").classList.remove("connected");
             document.getElementById("ws-status").classList.add("disconnected");
+            document.getElementById("ws-status-label").textContent = "Disconnected";
             // 4003 = auth required/forbidden — redirect to login
             if (event.code === 4003) {
                 window.location.href = "/";
@@ -880,6 +900,7 @@
 
     // ---- Boot ----
     document.addEventListener("DOMContentLoaded", function () {
+        fetchCsrfToken();
         initGraph();
         setupFilters();
         setupTopicToggle();

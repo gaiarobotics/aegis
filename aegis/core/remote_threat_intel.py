@@ -54,7 +54,7 @@ class RemoteThreatIntel:
 
         self._compromised_agents: set[str] = set()
         self._quarantined_agents: set[str] = set()
-        self._compromised_hashes: set[int] = set()
+        self._compromised_hashes: dict[str, set[int]] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -73,15 +73,25 @@ class RemoteThreatIntel:
         with self._lock:
             return agent_id in self._quarantined_agents
 
-    def get_compromised_hashes(self) -> set[int]:
-        """Return a snapshot of cached compromised content hashes."""
+    def get_compromised_hashes(self, model: str | None = None) -> set[int]:
+        """Return a snapshot of cached compromised content hashes.
+
+        If ``model`` is provided, return hashes for that model only.
+        If ``model`` is ``None``, return the union of all model hash sets
+        (backward-compatible fallback).
+        """
         with self._lock:
-            return set(self._compromised_hashes)
+            if model is not None:
+                return set(self._compromised_hashes.get(model, set()))
+            result: set[int] = set()
+            for hashes in self._compromised_hashes.values():
+                result |= hashes
+            return result
 
     def check_hash(
-        self, hash_hex: str, threshold: float = 0.85,
+        self, hash_hex: str, model: str = "", threshold: float = 0.85,
     ) -> tuple[bool, float]:
-        """Check a content hash against known-compromised hashes.
+        """Check a content hash against known-compromised hashes for a model.
 
         Returns ``(is_suspicious, max_similarity)`` where similarity
         is ``1.0 - hamming_distance / 128``.
@@ -90,9 +100,10 @@ class RemoteThreatIntel:
             return False, 0.0
 
         with self._lock:
-            if not self._compromised_hashes:
+            model_hashes = self._compromised_hashes.get(model, set())
+            if not model_hashes:
                 return False, 0.0
-            hashes = list(self._compromised_hashes)
+            hashes = list(model_hashes)
 
         h = _hex_to_int(hash_hex)
         max_sim = 0.0
@@ -149,12 +160,27 @@ class RemoteThreatIntel:
 
             compromised_agents = set(data.get("compromised_agents", []))
             quarantined_agents = set(data.get("quarantined_agents", []))
-            compromised_hashes: set[int] = set()
-            for h in data.get("compromised_hashes", []):
-                try:
-                    compromised_hashes.add(_hex_to_int(h))
-                except (ValueError, TypeError):
-                    pass
+            raw_hashes = data.get("compromised_hashes", {})
+            compromised_hashes: dict[str, set[int]] = {}
+            if isinstance(raw_hashes, dict):
+                for model_key, hex_list in raw_hashes.items():
+                    model_set: set[int] = set()
+                    for h in hex_list:
+                        try:
+                            model_set.add(_hex_to_int(h))
+                        except (ValueError, TypeError):
+                            pass
+                    compromised_hashes[model_key] = model_set
+            else:
+                # Legacy flat list — store under empty-string key for compat
+                legacy_set: set[int] = set()
+                for h in raw_hashes:
+                    try:
+                        legacy_set.add(_hex_to_int(h))
+                    except (ValueError, TypeError):
+                        pass
+                if legacy_set:
+                    compromised_hashes[""] = legacy_set
 
             with self._lock:
                 self._compromised_agents = compromised_agents

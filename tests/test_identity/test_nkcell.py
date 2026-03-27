@@ -1,6 +1,5 @@
 """Tests for aegis.identity.nkcell module."""
 
-import pytest
 
 from aegis.identity.nkcell import AgentContext, NKCell, NKVerdict
 

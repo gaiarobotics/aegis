@@ -6,7 +6,7 @@ import base64
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -42,7 +42,7 @@ class SemanticAnalyzer:
         "chain_propagation",
     ]
 
-    def __init__(self, config: Optional[dict] = None) -> None:
+    def __init__(self, config: dict | None = None) -> None:
         self._enabled: dict[str, bool] = {name: True for name in self._MODULE_NAMES}
         if config:
             for name in self._MODULE_NAMES:

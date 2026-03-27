@@ -7,7 +7,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from aegis.core.config import AegisConfig, load_config
 from aegis.core.telemetry import TelemetryLogger
@@ -248,7 +248,16 @@ class Shield:
                     from aegis.behavior.content_hash import ContentHashTracker
                     ch_cfg = self._config.behavior.content_hash
                     if ch_cfg.enabled:
+                        from aegis.behavior.embedding_providers import create_provider
+                        try:
+                            provider = create_provider(
+                                model=ch_cfg.embedding_model,
+                                base_url=ch_cfg.embedding_api_base_url,
+                            )
+                        except (ImportError, ValueError):
+                            provider = None
                         self._content_hash_tracker = ContentHashTracker(
+                            provider=provider,
                             window_size=ch_cfg.window_size,
                         )
                 except Exception:
@@ -346,8 +355,8 @@ class Shield:
         if not mon_cfg.enabled:
             return
         try:
-            from aegis.monitoring.client import MonitoringClient
             from aegis.identity.attestation import generate_keypair
+            from aegis.monitoring.client import MonitoringClient
 
             key_type = self._config.identity.attestation.key_type
             keypair = generate_keypair(key_type)
@@ -431,8 +440,8 @@ class Shield:
         if not si_cfg.enabled:
             return
         try:
-            from aegis.core.self_integrity import SelfIntegrityWatcher
             import aegis
+            from aegis.core.self_integrity import SelfIntegrityWatcher
             package_dir = Path(aegis.__file__).parent
             self._self_integrity = SelfIntegrityWatcher(
                 config=si_cfg,
@@ -458,7 +467,7 @@ class Shield:
     def _on_platform_activated(self, platform: str) -> None:
         """Callback when a platform is auto-detected at runtime."""
         try:
-            from aegis.core.config import _load_profile, _deep_merge
+            from aegis.core.config import _deep_merge, _load_profile
             profile_data = _load_profile(platform)
             # Profile overlays defaults — since the operator didn't explicitly
             # list this profile, the profile's values should take effect
@@ -642,7 +651,9 @@ class Shield:
         compromised_hashes: set[int] | None = None
         if self._remote_threat_intel is not None and context:
             try:
-                compromised_hashes = self._remote_threat_intel.get_compromised_hashes()
+                compromised_hashes = self._remote_threat_intel.get_compromised_hashes(
+                    model=self._config.behavior.content_hash.embedding_model,
+                )
                 if not compromised_hashes:
                     compromised_hashes = None
             except Exception:
@@ -748,9 +759,15 @@ class Shield:
         _per_msg_hash_hex = ""
         if self._content_hash_tracker is not None:
             try:
-                from aegis.behavior.content_hash import SemanticHasher
-                _hasher = SemanticHasher()
-                _per_msg_hash_hex = f"{_hasher.hash(text):032x}"
+                import asyncio
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    _loop = None
+                if not _loop:
+                    _hasher = self._content_hash_tracker._semantic_hasher
+                    if _hasher is not None:
+                        _per_msg_hash_hex = f"{asyncio.run(_hasher.hash(text)):032x}"
             except Exception:
                 logger.debug("Per-message hash computation failed", exc_info=True)
 
@@ -783,7 +800,13 @@ class Shield:
         # Content hash update
         if self._content_hash_tracker is not None:
             try:
-                self._content_hash_tracker.update(text)
+                import asyncio
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    _loop = None
+                if not _loop:
+                    asyncio.run(self._content_hash_tracker.update(text))
             except Exception:
                 logger.debug("Content hash update failed", exc_info=True)
 
@@ -813,6 +836,7 @@ class Shield:
                         threshold = self._config.monitoring.contagion_similarity_threshold
                         suspicious, sim_score = self._remote_threat_intel.check_hash(
                             check_hash, threshold=threshold,
+                            model=hashes.get("embedding_model", ""),
                         )
                         if suspicious:
                             contagion_hit = True
@@ -872,7 +896,9 @@ class Shield:
         compromised_hashes: set[int] | None = None
         if self._remote_threat_intel is not None and context:
             try:
-                compromised_hashes = self._remote_threat_intel.get_compromised_hashes()
+                compromised_hashes = self._remote_threat_intel.get_compromised_hashes(
+                    model=self._config.behavior.content_hash.embedding_model,
+                )
                 if not compromised_hashes:
                     compromised_hashes = None
             except Exception:
@@ -976,9 +1002,9 @@ class Shield:
         _per_msg_hash_hex = ""
         if self._content_hash_tracker is not None:
             try:
-                from aegis.behavior.content_hash import SemanticHasher
-                _hasher = SemanticHasher()
-                _per_msg_hash_hex = f"{_hasher.hash(text):032x}"
+                _hasher = self._content_hash_tracker._semantic_hasher
+                if _hasher is not None:
+                    _per_msg_hash_hex = f"{await _hasher.hash(text):032x}"
             except Exception:
                 logger.debug("Per-message hash computation failed", exc_info=True)
 
@@ -1010,7 +1036,7 @@ class Shield:
         # Content hash update
         if self._content_hash_tracker is not None:
             try:
-                self._content_hash_tracker.update(text)
+                await self._content_hash_tracker.update(text)
             except Exception:
                 logger.debug("Content hash update failed", exc_info=True)
 
@@ -1038,6 +1064,7 @@ class Shield:
                         threshold = self._config.monitoring.contagion_similarity_threshold
                         suspicious, sim_score = self._remote_threat_intel.check_hash(
                             check_hash, threshold=threshold,
+                            model=hashes.get("embedding_model", ""),
                         )
                         if suspicious:
                             contagion_hit = True
@@ -1297,13 +1324,14 @@ class Shield:
 
         try:
             import time
+
+            from aegis.behavior.tracker import BehaviorEvent
             from aegis.providers.base import (
                 _classify_content_type,
                 _extract_response_text,
                 _extract_response_text_length,
                 _extract_tool_calls,
             )
-            from aegis.behavior.tracker import BehaviorEvent
 
             output_length = _extract_response_text_length(response, provider)
             tool_calls = _extract_tool_calls(response, provider)

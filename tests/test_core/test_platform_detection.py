@@ -1,7 +1,6 @@
 """Tests for platform auto-detection."""
 
 import threading
-import pytest
 
 from aegis.core.platform_detection import PlatformDetector
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from aegis.dendritic.alert import DangerSignal, DendriticAlert, build_alert
 
@@ -31,7 +31,7 @@ class DendriticResult:
     # True when the cleaned output still triggers the scanner, so content
     # was dropped entirely to prevent amplification.
     content_dropped: bool = False
-    rescan_score: Optional[float] = None
+    rescan_score: float | None = None
 
 
 class DendriticProcessor:
@@ -65,8 +65,8 @@ class DendriticProcessor:
         content_gate: Any = None,
         sanitizer: Any = None,
         scanner: Any = None,
-        threat_score_thresholds: Optional[dict[float, DangerSignal]] = None,
-        rescan_ratio: Optional[float] = None,
+        threat_score_thresholds: dict[float, DangerSignal] | None = None,
+        rescan_ratio: float | None = None,
     ) -> None:
         self._content_gate = content_gate
         self._sanitizer = sanitizer
@@ -129,7 +129,7 @@ class DendriticProcessor:
         # If the output still triggers the scanner above the rescan threshold,
         # drop the content entirely to prevent amplification.
         content_dropped = False
-        rescan_score: Optional[float] = None
+        rescan_score: float | None = None
 
         if self._scanner is not None and cleaned.strip():
             try:
@@ -165,7 +165,7 @@ class DendriticProcessor:
         danger_signal = self._resolve_danger_signal(threat_score)
 
         # Step 5: Tag with dendritic provenance (only if content survived)
-        from aegis.scanner.envelope import DENDRITIC_PROCESSED, DANGER_SIGNAL_TAG
+        from aegis.scanner.envelope import DANGER_SIGNAL_TAG, DENDRITIC_PROCESSED
         if content_dropped:
             cleaned = f"{DENDRITIC_PROCESSED} {DANGER_SIGNAL_TAG} [CONTENT DROPPED — residual injection detected]"
         else:

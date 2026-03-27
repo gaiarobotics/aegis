@@ -1,22 +1,15 @@
 """Tests for the tamper-proof state store."""
 
 import json
-import math
 import os
 import time
-from pathlib import Path
 
 import pytest
 
 from aegis.core.state_log import TamperDetectedError
 from aegis.core.state_store import (
-    BehaviorBaseline,
-    BudgetState,
-    QuarantineState,
     StateStore,
-    TrustState,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

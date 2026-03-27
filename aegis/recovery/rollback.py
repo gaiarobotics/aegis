@@ -4,7 +4,6 @@ import copy
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -27,7 +26,7 @@ class ContextRollback:
     def save_snapshot(
         self,
         context: dict,
-        snapshot_id: Optional[str] = None,
+        snapshot_id: str | None = None,
         description: str = "",
     ) -> str:
         """Save a deep copy of the context as a snapshot.

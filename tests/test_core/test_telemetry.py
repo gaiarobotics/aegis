@@ -1,6 +1,4 @@
 import json
-import os
-from pathlib import Path
 
 from aegis.core.telemetry import TelemetryLogger, redact
 

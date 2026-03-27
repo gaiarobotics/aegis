@@ -412,3 +412,66 @@ class TestContagionAlertCreatesQuarantineRule:
         agent = db.get_agent("victim-agent")
         assert agent is not None
         assert agent.is_quarantined is True
+
+
+# ------------------------------------------------------------------
+# TopicClusterer — model-aware operations
+# ------------------------------------------------------------------
+
+class TestTopicClustererModelAware:
+    def test_same_model_clusters_together(self):
+        tc = TopicClusterer(threshold=16)
+        tc.update("agent-1", "a" * 32, model="model-a")
+        tc.update("agent-2", "a" * 32, model="model-a")
+        clusters = tc.cluster()
+        assert clusters["agent-1"] == clusters["agent-2"]
+
+    def test_different_models_never_cluster(self):
+        tc = TopicClusterer(threshold=16)
+        tc.update("agent-1", "a" * 32, model="model-a")
+        tc.update("agent-2", "a" * 32, model="model-b")
+        clusters = tc.cluster()
+        assert clusters["agent-1"] != clusters["agent-2"]
+
+    def test_mixed_models_partition_correctly(self):
+        tc = TopicClusterer(threshold=16)
+        tc.update("a1", "a" * 32, model="model-a")
+        tc.update("a2", "a" * 32, model="model-a")
+        tc.update("b1", "a" * 32, model="model-b")
+        clusters = tc.cluster()
+        assert clusters["a1"] == clusters["a2"]
+        assert clusters["a1"] != clusters["b1"]
+
+    def test_nearest_neighbors_filtered_by_model(self):
+        tc = TopicClusterer(threshold=16)
+        tc.update("a1", "a" * 32, model="model-a")
+        tc.update("a2", "a" * 32, model="model-a")
+        tc.update("b1", "a" * 32, model="model-b")
+        nn = tc.get_nearest_neighbors()
+        a1_entry = [e for e in nn["entries"] if e["agent_id"] == "a1"][0]
+        neighbor_ids = [n["agent_id"] for n in a1_entry["neighbors"]]
+        assert "b1" not in neighbor_ids
+
+
+# ------------------------------------------------------------------
+# ContagionDetector — model-aware operations
+# ------------------------------------------------------------------
+
+class TestContagionDetectorModelAware:
+    def test_same_model_detects_similarity(self):
+        cd = ContagionDetector()
+        cd.mark_compromised("bad-1", "a" * 32, model="model-a")
+        score = cd.check("agent-1", "a" * 32, model="model-a")
+        assert score == 1.0
+
+    def test_different_model_returns_zero(self):
+        cd = ContagionDetector()
+        cd.mark_compromised("bad-1", "a" * 32, model="model-a")
+        score = cd.check("agent-1", "a" * 32, model="model-b")
+        assert score == 0.0
+
+    def test_check_with_velocity_model_aware(self):
+        cd = ContagionDetector()
+        cd.mark_compromised("bad-1", "a" * 32, model="model-a")
+        score = cd.check_with_velocity("agent-1", "a" * 32, model="model-b", topic_velocity=1.0)
+        assert score == 0.0

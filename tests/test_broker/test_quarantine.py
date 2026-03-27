@@ -1,11 +1,10 @@
 """Tests for broker quarantine mode."""
 
-import time
 from unittest.mock import patch
 
 import pytest
 
-from aegis.broker.quarantine import QuarantineManager, _COOLDOWN_SECONDS
+from aegis.broker.quarantine import _COOLDOWN_SECONDS, QuarantineManager
 from aegis.core.config import AegisConfig
 
 

@@ -1,7 +1,6 @@
 """Memory Guard — validates writes to agent memory stores."""
 from __future__ import annotations
 
-import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any

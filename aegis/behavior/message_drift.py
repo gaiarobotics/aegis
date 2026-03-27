@@ -12,7 +12,6 @@ import re
 import threading
 from collections import Counter, deque
 from dataclasses import dataclass
-from typing import Any
 
 from aegis.core.config import MessageDriftConfig
 

@@ -1,12 +1,10 @@
 """Tests for AEGIS dendritic processor."""
 
 from dataclasses import dataclass
-from typing import Optional
 
 from aegis.dendritic.alert import DangerSignal
 from aegis.dendritic.processor import DendriticProcessor, DendriticResult
 from aegis.scanner.sanitizer import OutboundSanitizer
-
 
 # ---------------------------------------------------------------------------
 # Fake scanner for re-scan gate tests
@@ -24,7 +22,7 @@ class _FakeScanner:
     def __init__(self, is_threat: bool = False, threat_score: float = 0.0) -> None:
         self._is_threat = is_threat
         self._threat_score = threat_score
-        self.last_scanned: Optional[str] = None
+        self.last_scanned: str | None = None
 
     def scan_input(self, text: str, **kwargs):
         self.last_scanned = text

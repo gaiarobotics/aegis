@@ -7,7 +7,6 @@ import time
 
 from aegis.core.config import AegisConfig
 
-
 # Severity tiers determine cooldown behavior:
 # - "low": auto-release after short cooldown (e.g., denied writes from tool discovery)
 # - "medium": auto-release after longer cooldown (e.g., new domain burst)

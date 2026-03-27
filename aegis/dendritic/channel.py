@@ -11,7 +11,7 @@ Analogous to dendritic cell migration to lymph nodes for antigen presentation.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from aegis.dendritic.alert import DendriticAlert, verify_alert
 
@@ -33,7 +33,7 @@ class AlertChannel:
     def __init__(
         self,
         monitoring_client: Any = None,
-        sentinel_public_key: Optional[bytes] = None,
+        sentinel_public_key: bytes | None = None,
         key_type: str = "hmac-sha256",
     ) -> None:
         self._monitoring_client = monitoring_client

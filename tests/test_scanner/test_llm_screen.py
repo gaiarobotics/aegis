@@ -6,19 +6,15 @@ raw HTTP calls.
 
 from __future__ import annotations
 
-import json
 import threading
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from aegis.core.config import AegisConfig, LLMScreenConfig
 from aegis.scanner.llm_screen import (
+    _DEFAULT_SYSTEM_PROMPT,
     LLMScreenAdapter,
     LLMScreenResult,
-    _DEFAULT_SYSTEM_PROMPT,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -424,7 +420,7 @@ class TestThreadSafety:
 
 class TestScannerIntegration:
     def test_llm_screen_result_in_scan_result(self):
-        from aegis.scanner import Scanner, ScanResult
+        from aegis.scanner import Scanner
 
         cfg = AegisConfig(scanner={
             "llm_screen": LLMScreenConfig(enabled=True, api_key="sk-test"),

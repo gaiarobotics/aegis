@@ -1,7 +1,4 @@
 import json
-import os
-import tempfile
-from pathlib import Path
 
 from aegis.core.config import AegisConfig, load_config
 

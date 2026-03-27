@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-import threading
 import time
 
 import pytest
@@ -18,7 +15,6 @@ from aegis.integrity.monitor import (
     StatSnapshot,
     _compute_sha256,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

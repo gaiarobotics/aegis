@@ -76,8 +76,22 @@ body {
     margin-left: 8px;
 }
 
+.ws-status-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+
 .status-dot.connected { background: var(--green); }
 .status-dot.disconnected { background: var(--red); }
+
+.status-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
 
 /* Main layout */
 .main-layout {

@@ -170,7 +170,7 @@ class TestThreatIntel:
         assert resp.status_code == 200
         data = resp.json()
         assert data["compromised_agents"] == []
-        assert data["compromised_hashes"] == []
+        assert data["compromised_hashes"] == {}
         assert data["quarantined_agents"] == []
         assert "generated_at" in data
 
@@ -215,7 +215,8 @@ class TestThreatIntel:
         })
         resp = client.get("/api/v1/threat-intel")
         data = resp.json()
-        assert hash_hex in data["compromised_hashes"]
+        all_hashes = [h for hashes in data["compromised_hashes"].values() for h in hashes]
+        assert hash_hex in all_hashes
 
     def test_fallback_to_graph_node_hash(self, client):
         """When report has no hash, falls back to graph node's content_hash."""
@@ -263,7 +264,8 @@ class TestHashCloudGrowth:
             })
         resp = client.get("/api/v1/threat-intel")
         data = resp.json()
-        assert len(data["compromised_hashes"]) >= 3
+        all_hashes = [h for hashes in data["compromised_hashes"].values() for h in hashes]
+        assert len(all_hashes) >= 3
 
     def test_similar_hash_scores_high_contagion(self, client):
         """A hash similar to a compromised variant scores high contagion."""
@@ -341,7 +343,8 @@ class TestValidationIntegration:
 
         # Hash should NOT appear in threat-intel
         intel = client.get("/api/v1/threat-intel").json()
-        assert hash_hex not in intel["compromised_hashes"]
+        all_hashes = [h for hashes in intel["compromised_hashes"].values() for h in hashes]
+        assert hash_hex not in all_hashes
 
     def test_quorum_flow(self, client):
         """First report → pending_quorum, second from different agent → confirmed."""
@@ -370,7 +373,8 @@ class TestValidationIntegration:
 
         # Hash should NOT be in threat-intel yet
         intel = client.get("/api/v1/threat-intel").json()
-        assert hash_hex not in intel["compromised_hashes"]
+        all_hashes = [h for hashes in intel["compromised_hashes"].values() for h in hashes]
+        assert hash_hex not in all_hashes
 
         # Second report from different agent
         resp2 = client.post("/api/v1/reports/compromise", json={
@@ -382,7 +386,8 @@ class TestValidationIntegration:
 
         # Hash should now appear in threat-intel
         intel = client.get("/api/v1/threat-intel").json()
-        assert hash_hex in intel["compromised_hashes"]
+        all_hashes = [h for hashes in intel["compromised_hashes"].values() for h in hashes]
+        assert hash_hex in all_hashes
 
     def test_backwards_compat_quorum_one(self, client):
         """With quorum=1, single report confirms hash immediately."""
@@ -400,7 +405,8 @@ class TestValidationIntegration:
         assert resp.json()["validation"] == "confirmed"
 
         intel = client.get("/api/v1/threat-intel").json()
-        assert hash_hex in intel["compromised_hashes"]
+        all_hashes = [h for hashes in intel["compromised_hashes"].values() for h in hashes]
+        assert hash_hex in all_hashes
 
     def test_validation_key_present_in_response(self, client):
         """Compromise response always includes a validation key."""
@@ -409,3 +415,25 @@ class TestValidationIntegration:
             "compromised_agent_id": "victim",
         })
         assert "validation" in resp.json()
+
+
+class TestThreatIntelModelKeyed:
+    def test_compromised_hashes_keyed_by_model(self, client):
+        """Threat-intel response has model-keyed compromised_hashes."""
+        client.post("/api/v1/reports/compromise", json={
+            "reporter_agent_id": "scanner-1",
+            "agent_id": "scanner-1",
+            "compromised_agent_id": "bad-1",
+            "nk_score": 0.9,
+            "content_hash_hex": "a" * 32,
+            "embedding_model": "all-MiniLM-L6-v2",
+        })
+
+        resp = client.get("/api/v1/threat-intel")
+        data = resp.json()
+
+        assert isinstance(data["compromised_hashes"], dict)
+        if data["compromised_hashes"]:
+            for model, hashes in data["compromised_hashes"].items():
+                assert isinstance(model, str)
+                assert isinstance(hashes, list)

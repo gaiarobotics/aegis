@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aegis.core.config import RecoveryConfig
-from aegis.recovery.quarantine import RecoveryQuarantine, _COOLDOWN_SECONDS
+from aegis.recovery.quarantine import _COOLDOWN_SECONDS, RecoveryQuarantine
 
 
 class TestRecoveryQuarantine:

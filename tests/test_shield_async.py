@@ -2,7 +2,6 @@
 
 import pytest
 
-from aegis.core.config import AegisConfig
 from aegis.core.http import HttpPool
 from aegis.shield import ScanResult, Shield
 

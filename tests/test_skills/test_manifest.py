@@ -1,8 +1,6 @@
 """Tests for skill manifest loading and validation."""
 
 import json
-import tempfile
-from pathlib import Path
 
 from aegis.skills.manifest import (
     SkillManifest,

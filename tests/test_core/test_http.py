@@ -3,13 +3,10 @@
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from aegis.core.http import HttpPool, HttpResponse
-
 
 # ---------------------------------------------------------------------------
 # HttpResponse
@@ -53,7 +50,7 @@ class TestHttpResponse:
         assert r.text == "hello world"
 
     def test_text_utf8(self):
-        r = HttpResponse(200, "héllo".encode("utf-8"))
+        r = HttpResponse(200, "héllo".encode())
         assert r.text == "héllo"
 
     def test_json(self):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Callable, Optional
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,8 @@ class PlatformDetector:
 
     def __init__(
         self,
-        on_activate: Optional[Callable[[str], None]] = None,
-        explicit_profiles: Optional[set[str]] = None,
+        on_activate: Callable[[str], None] | None = None,
+        explicit_profiles: set[str] | None = None,
     ) -> None:
         self._active: set[str] = set()
         self._on_activate = on_activate

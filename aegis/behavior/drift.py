@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
-from aegis.core.config import BehaviorConfig
 from aegis.behavior.tracker import BehaviorEvent, BehaviorFingerprint
+from aegis.core.config import BehaviorConfig
 
 
 @dataclass

@@ -6,7 +6,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from aegis.core.config import ContentGateConfig
 
@@ -46,7 +46,7 @@ class ContentGate:
         config: ContentGateConfig controlling activation and behavior.
     """
 
-    def __init__(self, config: Optional[ContentGateConfig] = None, scanner: Any = None) -> None:
+    def __init__(self, config: ContentGateConfig | None = None, scanner: Any = None) -> None:
         self._config = config or ContentGateConfig()
         self._scanner = scanner
         self._ml_summarizer = None
@@ -66,8 +66,8 @@ class ContentGate:
     def process(
         self,
         text: str,
-        platform: Optional[str] = None,
-    ) -> Optional[GatedResult]:
+        platform: str | None = None,
+    ) -> GatedResult | None:
         """Process text through the content gate.
 
         Returns None if gating is not active for this platform/config.
@@ -144,7 +144,7 @@ class ContentGate:
             return ""
         return " ".join(clean)
 
-    def _should_gate(self, platform: Optional[str]) -> bool:
+    def _should_gate(self, platform: str | None) -> bool:
         """Check if content should be gated for this platform."""
         if not self._config.enabled:
             return False

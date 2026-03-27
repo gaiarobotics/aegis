@@ -8,18 +8,16 @@ from __future__ import annotations
 import sys
 import threading
 import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from aegis.core.config import LLMGuardConfig, LLMGuardScannerConfig, BanTopicsConfig
+from aegis.core.config import BanTopicsConfig, LLMGuardConfig, LLMGuardScannerConfig
 from aegis.scanner.llm_guard import (
     LLMGuardAdapter,
     LLMGuardResult,
     LLMGuardScannerResult,
-    is_llm_guard_available,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers: fake llm_guard modules for import mocking

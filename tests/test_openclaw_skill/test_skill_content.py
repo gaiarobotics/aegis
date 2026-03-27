@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 SKILL_PATH = Path(__file__).resolve().parent.parent.parent / "aegis-openclaw" / "SKILL.md"
 
 

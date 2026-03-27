@@ -1,12 +1,10 @@
 """Tests for AEGIS threat signature loading."""
 
 import re
-from pathlib import Path
 
 import yaml
 
 from aegis.scanner.signatures import Signature, load_signatures
-
 
 EXPECTED_CATEGORIES = {
     "prompt_injection",

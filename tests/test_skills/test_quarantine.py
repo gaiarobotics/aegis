@@ -1,6 +1,6 @@
 """Tests for static code analysis / quarantine module."""
 
-from aegis.skills.quarantine import AnalysisFinding, AnalysisResult, analyze_code
+from aegis.skills.quarantine import AnalysisResult, analyze_code
 
 
 class TestDetectExecInCode:

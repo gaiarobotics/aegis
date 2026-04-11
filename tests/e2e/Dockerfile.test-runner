@@ -6,6 +6,6 @@ WORKDIR /app
 COPY . /app
 
 # Install aegis-shield with e2e deps
-RUN pip install --no-cache-dir -e ".[e2e]"
+RUN pip install --no-cache-dir ".[e2e]"
 
 CMD ["pytest", "tests/e2e/", "-v", "--tb=short"]

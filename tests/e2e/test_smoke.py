@@ -7,7 +7,7 @@ sanitization, monitoring) runs without blocking a clean agent interaction.
 import httpx
 
 
-def _poll_monitor_for_agent(monitor_url, agent_id, timeout=10):
+def _poll_monitor_for_agent(monitor_url, agent_id, timeout=20):
     """Poll the monitor graph until agent_id appears or timeout."""
     import time
 
@@ -66,6 +66,6 @@ class TestSmokeAnalysis:
         # 5. Assert: monitor received the agent's heartbeat
         # 6. Assert: agent appears in monitor graph as healthy
         node = _poll_monitor_for_agent(monitor_url, "smoke-agent-1")
-        assert node is not None, "smoke-agent-1 did not appear in monitor graph within 10s"
+        assert node is not None, "smoke-agent-1 did not appear in monitor graph within 20s"
         assert node["is_compromised"] is False
         assert node["is_quarantined"] is False

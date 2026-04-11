@@ -5,11 +5,11 @@ WORKDIR /app
 # Install aegis-shield from source first (aegis-monitor depends on it)
 COPY pyproject.toml README.md /app/
 COPY aegis/ /app/aegis/
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir .
 
 # Install aegis-monitor from source
 COPY aegis-monitor/ /app/aegis-monitor/
-RUN pip install --no-cache-dir -e /app/aegis-monitor/
+RUN pip install --no-cache-dir /app/aegis-monitor/
 
 EXPOSE 8080
 

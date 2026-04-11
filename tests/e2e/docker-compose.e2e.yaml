@@ -1,0 +1,63 @@
+# E2E test orchestration for AEGIS.
+#
+# Usage:
+#   docker compose -f tests/e2e/docker-compose.e2e.yaml up --build \
+#     --abort-on-container-exit --exit-code-from test-runner
+#
+#   docker compose -f tests/e2e/docker-compose.e2e.yaml down -v
+
+services:
+  mock-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-llm
+    ports:
+      - "9999:9999"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:9999/health')",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  monitor:
+    build:
+      context: ../..
+      dockerfile: aegis-monitor/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      MONITOR_DATABASE_PATH: ":memory:"
+      MONITOR_COMPROMISE_QUORUM: "1"
+      MONITOR_COMPROMISE_MIN_TRUST_TIER: "0"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/metrics')",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: tests/e2e/Dockerfile.test-runner
+    environment:
+      MONITOR_URL: http://monitor:8080
+      LLM_BASE_URL: http://mock-llm:9999/v1
+      LLM_API_KEY: mock-key
+      LLM_MODEL: mock-analyst
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+      monitor:
+        condition: service_healthy

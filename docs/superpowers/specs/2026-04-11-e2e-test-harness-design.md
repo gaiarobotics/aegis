@@ -30,7 +30,7 @@ Three containers orchestrated by `docker-compose.e2e.yaml`:
 **Flow:**
 1. docker-compose starts `mock-llm` and `monitor`, waits for health checks
 2. `test-runner` starts, pytest discovers e2e tests
-3. Each test creates a Shield with all modules enabled, monitoring pointed at `http://monitor:8080`
+3. Each test creates a Shield with all modules enabled, monitoring pointed at `http://monitor:8080/api/v1`
 4. The test wraps an OpenAI-compatible client pointed at `http://mock-llm:9999`
 5. The agent runs its task — AEGIS scans inputs, tags provenance, sanitizes outputs, reports to monitor
 6. Test asserts: task completed, no ThreatBlockedError, monitor received heartbeats/events
@@ -81,20 +81,46 @@ E2e configuration via environment variables:
 - Clustering disabled
 - `compromise_quorum: 1`, `compromise_min_trust_tier: 0`
 
-Health check: `GET /` returns 200, polled every 2s with 10 retries.
+The monitor's static frontend assets are not needed for e2e testing — the API endpoints work without them. The Dockerfile does not run `npm install` or build frontend assets.
+
+Health check: `GET /api/v1/metrics` returns 200, polled every 2s with 10 retries.
 
 ### Test Runner
 
 `Dockerfile.test-runner`:
 - Base: `python:3.12-slim`
-- Copies entire repo, installs `pip install -e ".[dev]"` plus `openai` and `httpx`
+- Copies entire repo, installs `pip install -e ".[e2e]"`
 - Entrypoint: `pytest tests/e2e/ -v`
+
+An `e2e` extra is added to `pyproject.toml` to keep e2e deps tracked in one place:
+```toml
+e2e = ["pytest>=7.0", "pytest-asyncio>=0.23", "httpx>=0.27", "openai>=1.0", "ruff>=0.4.0"]
+```
 
 ### Pytest Fixtures (`conftest.py`)
 
-- `monitor_url` (session-scoped) — resolves from `MONITOR_URL` env var, polls until monitor is ready (30s timeout)
-- `shield_factory` — factory function creating a Shield with all modules enabled and monitoring pointed at the test monitor. Accepts `agent_id` and `mode` parameters for multi-agent scenarios.
-- `llm_client` — OpenAI client pointed at `LLM_BASE_URL` (defaults to mock-llm)
+- `monitor_url` (session-scoped) — resolves from `MONITOR_URL` env var, polls `GET {url}/api/v1/metrics` every 1s until 200 or timeout (30s)
+- `shield_factory` — factory returning a configured Shield. Builds a full `AegisConfig`:
+
+```python
+def _make(agent_id="test-agent-1", mode="enforce"):
+    config = AegisConfig(
+        mode=mode,
+        agent_id=agent_id,
+        monitoring={
+            "enabled": True,
+            "service_url": f"{monitor_url}/api/v1",
+            "heartbeat_interval_seconds": 5,  # fast for testing
+        },
+    )
+    shield = Shield(config=config)
+    request.addfinalizer(shield.close)  # prevent thread leak on failure
+    return shield
+```
+
+Note: `Shield.__init__` does not accept `agent_id` directly — it must be set via `AegisConfig`. The `monitoring.service_url` must include the `/api/v1` path prefix since `MonitoringClient` appends endpoint paths directly (e.g., `/heartbeat`).
+
+- `llm_client` — OpenAI client pointed at `LLM_BASE_URL` (defaults to `http://mock-llm:9999/v1`)
 - `llm_model` — from `LLM_MODEL` env var (defaults to `mock-analyst`)
 - `analysis_document` — reads `fixtures/quarterly_report.md`
 
@@ -111,9 +137,11 @@ Steps:
 2. Wrap the OpenAI client with `shield.wrap(llm_client)`
 3. Send a chat completion request: system prompt ("You are a business analyst") + user message containing the quarterly report
 4. Assert response content is non-empty (agent was not blocked)
-5. Wait briefly for monitoring client to flush, then query `GET /api/v1/graph` on the monitor
-6. Assert `smoke-agent-1` appears in the monitor's graph
-7. Clean up with `shield.close()`
+5. Poll `GET {monitor_url}/api/v1/graph` every 1s for up to 10s until `smoke-agent-1` appears in the nodes list. The first heartbeat fires immediately on `MonitoringClient.start()` (the `_heartbeat_loop` sends before sleeping), but the HTTP POST is async so a brief poll is needed.
+6. Assert `smoke-agent-1` appears in the monitor's graph and is not marked compromised or quarantined
+7. Cleanup handled by `shield_factory` finalizer (`shield.close()`)
+
+Note: Direct HTTP queries to the monitor (step 5) rely on open auth mode. If a future scenario adds API keys, those queries must include the key.
 
 **What this validates:**
 - Shield initializes with all modules without error
@@ -141,7 +169,7 @@ The test-runner container accepts these env vars to swap providers:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MONITOR_URL` | `http://monitor:8080` | URL of the AEGIS monitor instance |
+| `MONITOR_URL` | `http://monitor:8080` | Base URL of the AEGIS monitor instance (no path suffix). The conftest appends `/api/v1` for the Shield's `monitoring.service_url` and uses the base URL for direct API queries. |
 | `LLM_BASE_URL` | `http://mock-llm:9999/v1` | OpenAI-compatible API base URL |
 | `LLM_API_KEY` | `mock-key` | API key for the LLM provider |
 | `LLM_MODEL` | `mock-analyst` | Model name to use in chat completions |
@@ -161,6 +189,13 @@ docker compose -f docker-compose.e2e.yaml run \
   -e LLM_MODEL=qwen2:0.5b \
   test-runner
 ```
+
+## Implementation Notes
+
+- The monitor health check uses `GET /api/v1/metrics` (not `GET /`) to avoid depending on static frontend assets.
+- The `shield_factory` fixture registers a `shield.close()` finalizer so the monitoring background thread is always stopped, even if assertions fail.
+- The `MonitoringClient._heartbeat_loop` sends a heartbeat at the top of the loop before sleeping, so the first heartbeat fires immediately on `start()`. The smoke test still polls because the HTTP POST is async.
+- All direct HTTP queries from the test-runner to the monitor rely on open auth mode (no API keys configured). Future scenarios that add API keys must also pass them in these direct queries.
 
 ## Future Scenarios (Out of Scope)
 

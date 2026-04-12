@@ -60,24 +60,33 @@ SEED_MESSAGE = "I've reviewed the quarterly report. Walk me through the key high
 def _extract_drift_score(shield) -> float:
     """Compute end-of-conversation drift score for a Shield's Agent B.
 
-    Uses `"self"` as the lookup key since the OpenAI wrapper records events
-    under the default agent_id without passing one explicitly.
+    Uses ``"self"`` as the lookup key because the OpenAI wrapper records events
+    under the default ``agent_id`` without passing one explicitly.
 
-    Returns 0.0 if the anchor was never established or drift detector is None.
+    The caller must ensure the anchor was established. This function raises
+    ``RuntimeError`` if tracker/detector/anchor are missing, rather than
+    returning a silent 0.0 that would make ordinal assertions vacuous.
     """
-    tracker = shield._behavior_tracker
-    detector = shield._drift_detector
-    if tracker is None or detector is None:
-        return 0.0
+    tracker = getattr(shield, "_behavior_tracker", None)
+    detector = getattr(shield, "_drift_detector", None)
+    if tracker is None:
+        raise RuntimeError("Shield has no _behavior_tracker — behavior module disabled?")
+    if detector is None:
+        raise RuntimeError("Shield has no _drift_detector — behavior module disabled?")
 
     fingerprint = tracker.get_fingerprint("self")
     anchor = tracker.get_anchor("self")
     if anchor is None:
-        return 0.0
+        raise RuntimeError(
+            "Anchor fingerprint never established — too few events recorded. "
+            "Check that behavior.anchor_window is small enough for the turn count."
+        )
 
     # Construct a synthetic event whose output_length equals the current
-    # fingerprint's mean output length. This makes check_drift's z-score
-    # reflect how far the current mean has moved from the baseline mean.
+    # fingerprint's mean output length. This produces a sensible mean-shift
+    # metric for the output_length dimension; content_ratios and
+    # tool_distribution are compared directly between fingerprint and anchor
+    # regardless of the event, so max_sigma reflects multi-dimensional drift.
     current_mean_len = fingerprint.dimensions.get("output_length", {}).get("mean", 0.0)
     synthetic_event = BehaviorEvent(
         agent_id="self",
@@ -93,19 +102,28 @@ def _extract_drift_score(shield) -> float:
 
 
 def _poll_monitor_for_agent(monitor_url, agent_id, timeout=20):
-    """Poll the monitor graph until agent_id appears or timeout."""
+    """Poll the monitor graph until agent_id appears or timeout.
+
+    Returns a tuple ``(node, last_error)`` where node is the graph node dict
+    if found, or ``None`` on timeout. ``last_error`` is the last HTTP exception
+    encountered (or ``None`` if all requests succeeded) — used to produce a
+    helpful assertion message when the agent never appears.
+    """
     deadline = time.monotonic() + timeout
+    last_err: Exception | None = None
     while time.monotonic() < deadline:
         try:
             resp = httpx.get(f"{monitor_url}/api/v1/graph", timeout=2)
             if resp.status_code == 200:
                 nodes = {n["id"]: n for n in resp.json().get("nodes", [])}
                 if agent_id in nodes:
-                    return nodes[agent_id]
-        except httpx.HTTPError:
-            pass
+                    return nodes[agent_id], None
+            else:
+                last_err = RuntimeError(f"HTTP {resp.status_code} from /api/v1/graph")
+        except httpx.HTTPError as exc:
+            last_err = exc
         time.sleep(1)
-    return None
+    return None, last_err
 
 
 class TestMultiTurnConversation:
@@ -174,8 +192,11 @@ class TestMultiTurnConversation:
 
         # Assert: all six agents appear in the monitor as healthy
         for agent_id in all_agent_ids:
-            node = _poll_monitor_for_agent(monitor_url, agent_id)
-            assert node is not None, f"{agent_id} not in monitor graph within 20s"
+            node, last_err = _poll_monitor_for_agent(monitor_url, agent_id)
+            assert node is not None, (
+                f"{agent_id} not in monitor graph within 20s"
+                f" (last error: {last_err})"
+            )
             assert node["is_compromised"] is False, f"{agent_id} marked compromised"
             assert node["is_quarantined"] is False, f"{agent_id} marked quarantined"
 

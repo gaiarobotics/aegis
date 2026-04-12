@@ -58,6 +58,11 @@ def shield_factory(monitor_url, request):
                 "heartbeat_interval_seconds": 5,
             },
         }
+        # Deep-merge monitoring so callers can override individual fields
+        # without clobbering the live-monitor service_url.
+        if "monitoring" in config_overrides:
+            merged = {**config_kwargs["monitoring"], **config_overrides.pop("monitoring")}
+            config_kwargs["monitoring"] = merged
         config_kwargs.update(config_overrides)
         config = AegisConfig(**config_kwargs)
         shield = Shield(config=config)

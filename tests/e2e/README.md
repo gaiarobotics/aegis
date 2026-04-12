@@ -66,3 +66,33 @@ A single AEGIS-wrapped agent analyzes a fixed business document. Validates:
 - Input scanning does not false-positive on legitimate content
 - Monitoring client reports heartbeat to live monitor
 - Agent appears in monitor graph as healthy (not compromised/quarantined)
+
+### Multi-Turn Conversation Tests (`test_multi_turn.py`)
+
+Two AEGIS-wrapped agents conduct a 12-turn dialogue in three style variants:
+`natural`, `provocative`, and `tangent`. These tests require a real LLM —
+they are automatically skipped when `LLM_BASE_URL` points at the mock server.
+
+Run with OpenAI:
+
+```bash
+docker compose -f tests/e2e/docker-compose.e2e.yaml run \
+  -e LLM_BASE_URL=https://api.openai.com/v1 \
+  -e LLM_API_KEY=sk-... \
+  -e LLM_MODEL=gpt-4o \
+  test-runner
+```
+
+Run with Ollama:
+
+```bash
+docker compose -f tests/e2e/docker-compose.e2e.yaml run \
+  -e LLM_BASE_URL=http://host.docker.internal:11434/v1 \
+  -e LLM_MODEL=qwen2:7b \
+  test-runner
+```
+
+Validates:
+- AEGIS does not block legitimate multi-turn conversations
+- Both agents in each conversation appear healthy in the monitor graph
+- Behavioral drift ordering matches expected: `natural <= provocative <= tangent`

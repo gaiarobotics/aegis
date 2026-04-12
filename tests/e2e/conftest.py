@@ -48,16 +48,18 @@ def shield_factory(monitor_url, request):
     Usage:
         shield = shield_factory(agent_id="my-agent")
     """
-    def _make(agent_id="test-agent-1", mode="enforce"):
-        config = AegisConfig(
-            mode=mode,
-            agent_id=agent_id,
-            monitoring={
+    def _make(agent_id="test-agent-1", mode="enforce", **config_overrides):
+        config_kwargs = {
+            "mode": mode,
+            "agent_id": agent_id,
+            "monitoring": {
                 "enabled": True,
                 "service_url": f"{monitor_url}/api/v1",
                 "heartbeat_interval_seconds": 5,
             },
-        )
+        }
+        config_kwargs.update(config_overrides)
+        config = AegisConfig(**config_kwargs)
         shield = Shield(config=config)
         request.addfinalizer(shield.close)
         return shield

@@ -82,7 +82,7 @@ A single test function `test_drift_ranking_across_conversation_styles` in class 
 
 1. Iterates over the three variants (`natural`, `provocative`, `tangent`)
 2. For each variant:
-   - Creates two Shields via `shield_factory` with distinct agent IDs (e.g., `natural-analyst`, `natural-exec`)
+   - Creates two Shields via `shield_factory` with distinct agent IDs (e.g., `natural-analyst`, `natural-exec`) and `behavior={"anchor_window": 3}`
    - Wraps two LLM clients
    - Runs 10-turn conversation via `run_conversation()`
    - Asserts: all 10 turns completed, response content non-empty on every turn
@@ -91,14 +91,20 @@ A single test function `test_drift_ranking_across_conversation_styles` in class 
    - Extracts drift scores from each variant's Agent B Shield
    - Asserts ordinal ranking: `drift_natural <= drift_provocative <= drift_tangent`
 
+### Behavior Config Override
+
+The default `BehaviorConfig.anchor_window` is 20 events. In a 10-turn conversation each agent speaks only 5 times, so the anchor fingerprint would never be frozen and drift scores would all be `0.0`. The `shield_factory` must be extended to accept additional config overrides, and the multi-turn tests must pass `behavior={"anchor_window": 3}` so the anchor is established after the first 3 events and subsequent turns produce meaningful drift.
+
 ### Drift Score Extraction
 
 After each conversation, the test extracts the behavioral drift metric from Agent B's Shield (Agent B is the one whose behavior varies across scenarios):
 
-1. Access `shield._behavior_tracker.get_fingerprint(agent_id)` — the rolling fingerprint after all turns
-2. Access `shield._behavior_tracker.get_anchor(agent_id)` — the frozen baseline from the first few events
-3. If both exist, call `shield._drift_detector.check_drift(fingerprint, last_event, baseline=anchor)` to get `DriftResult.max_sigma`
-4. If the anchor hasn't been established (not enough events), the drift score is `0.0`
+1. Access `shield._behavior_tracker.get_fingerprint("self")` — the rolling fingerprint after all turns
+2. Access `shield._behavior_tracker.get_anchor("self")` — the frozen baseline from the first few events
+3. If both exist and `shield._drift_detector` is not None, call `shield._drift_detector.check_drift(fingerprint, last_event, baseline=anchor)` to get `DriftResult.max_sigma`
+4. If the anchor hasn't been established or the drift detector is None, the drift score is `0.0`
+
+**Important:** The agent_id for fingerprint/anchor lookups must be `"self"`, not the Shield's configured `agent_id`. The OpenAI wrapper calls `shield.record_response_behavior()` without an explicit `agent_id`, which defaults to `"self"` (see `shield.py:1310`). All behavioral events are keyed under `"self"` regardless of the Shield's `agent_id` config.
 
 This uses private attributes (`_behavior_tracker`, `_drift_detector`) which is acceptable for e2e tests that validate internal behavior.
 
@@ -123,15 +129,19 @@ This uses private attributes (`_behavior_tracker`, `_drift_detector`) which is a
 |---|---|---|
 | `tests/e2e/conversation.py` | Create | Reusable `ConversationRunner` with `run_conversation()` |
 | `tests/e2e/test_multi_turn.py` | Create | Three-variant test with ordinal drift assertion |
+| `tests/e2e/conftest.py` | Modify | Extend `shield_factory` to accept arbitrary config overrides (e.g., `behavior={...}`) |
 | `tests/e2e/README.md` | Modify | Document real LLM requirement for multi-turn tests |
 
 ## Implementation Notes
 
 - The `ConversationRunner` builds the full message history for each turn. Each agent sees: its system prompt + all prior messages in the conversation. This mirrors how real multi-agent systems work.
+- Agent A's system prompt includes the quarterly report content inline (appended to the system message). The `analysis_document` fixture provides the text; the test concatenates it: `f"{system_a_base}\n\nHere is the quarterly report:\n\n{analysis_document}"`.
 - Agent IDs are prefixed with the variant name (e.g., `natural-analyst`, `provocative-exec`) so all six agents are distinct in the monitor graph.
 - The test runs all three variants sequentially in one function to enable the cross-variant drift comparison without test ordering dependencies.
+- The `shield_factory` fixture is extended to accept a `**config_overrides` dict that is merged into the `AegisConfig` constructor. Multi-turn tests pass `behavior={"anchor_window": 3}`.
 - The `shield_factory` fixture registers a finalizer for each Shield, so all six are cleaned up even if assertions fail.
-- The `analysis_document` fixture (existing) provides the quarterly report content that Agent A references.
+- Both agents share a single session-scoped `llm_client` instance. This is correct — `shield.wrap()` creates independent interceptor closures, so the two wrapped clients do not interfere.
+- The ordinal drift assertion uses `<=` (non-strict). Since real LLM outputs are non-deterministic, borderline cases may produce ties. If flakiness becomes an issue, the test can be relaxed with `pytest.mark.xfail(strict=False)`, but we start with a hard assertion to see how reliable the ordering is in practice.
 
 ## README Addition
 

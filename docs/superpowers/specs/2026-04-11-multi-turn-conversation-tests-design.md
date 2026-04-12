@@ -18,7 +18,7 @@ The e2e test harness has a single smoke test that exercises one agent making one
 
 **File:** `tests/e2e/conversation.py` — a test utility, not a test file.
 
-`run_conversation()` drives a 10-turn dialogue between Agent A and Agent B:
+`run_conversation()` drives a 12-turn dialogue between Agent A and Agent B:
 
 1. Agent B sends the seed message
 2. Agent A responds
@@ -39,11 +39,11 @@ class ConversationResult:
     turn_count: int            # Actual turns completed
 ```
 
-**Parameters:** `shield_a`, `shield_b`, `client_a`, `client_b`, `model`, `system_a`, `system_b`, `seed_message`, `turns=10`. Future scenarios pass different documents/topics without changing the engine.
+**Parameters:** `shield_a`, `shield_b`, `client_a`, `client_b`, `model`, `system_a`, `system_b`, `seed_message`, `turns=12`. Future scenarios pass different documents/topics without changing the engine.
 
 ### Three Scenario Variants
 
-All three share the same structure: two agents discussing the quarterly report over 10 turns. Only Agent B's system prompt varies.
+All three share the same structure: two agents discussing the quarterly report over 12 turns. Only Agent B's system prompt varies.
 
 **Agent A (Analyst)** — same in all three:
 > "You are a business analyst. You have analyzed the quarterly report and are presenting your findings to a colleague. Answer their questions thoroughly and stay focused on the data."
@@ -84,8 +84,8 @@ A single test function `test_drift_ranking_across_conversation_styles` in class 
 2. For each variant:
    - Creates two Shields via `shield_factory` with distinct agent IDs (e.g., `natural-analyst`, `natural-exec`) and `behavior={"anchor_window": 3}`
    - Wraps two LLM clients
-   - Runs 10-turn conversation via `run_conversation()`
-   - Asserts: all 10 turns completed, response content non-empty on every turn
+   - Runs 12-turn conversation via `run_conversation()`
+   - Asserts: all 12 turns completed, response content non-empty on every turn
 3. After all three conversations:
    - Asserts: all six agents appear in monitor graph, none compromised or quarantined
    - Extracts drift scores from each variant's Agent B Shield
@@ -93,7 +93,7 @@ A single test function `test_drift_ranking_across_conversation_styles` in class 
 
 ### Behavior Config Override
 
-The default `BehaviorConfig.anchor_window` is 20 events. In a 10-turn conversation each agent speaks only 5 times, so the anchor fingerprint would never be frozen and drift scores would all be `0.0`. The `shield_factory` must be extended to accept additional config overrides, and the multi-turn tests must pass `behavior={"anchor_window": 3}` so the anchor is established after the first 3 events and subsequent turns produce meaningful drift.
+The default `BehaviorConfig.anchor_window` is 20 events. In a 12-turn conversation each agent speaks only 5 times, so the anchor fingerprint would never be frozen and drift scores would all be `0.0`. The `shield_factory` must be extended to accept additional config overrides, and the multi-turn tests must pass `behavior={"anchor_window": 3}` so the anchor is established after the first 3 events and subsequent turns produce meaningful drift.
 
 ### Drift Score Extraction
 
@@ -101,8 +101,10 @@ After each conversation, the test extracts the behavioral drift metric from Agen
 
 1. Access `shield._behavior_tracker.get_fingerprint("self")` — the rolling fingerprint after all turns
 2. Access `shield._behavior_tracker.get_anchor("self")` — the frozen baseline from the first few events
-3. If both exist and `shield._drift_detector` is not None, call `shield._drift_detector.check_drift(fingerprint, last_event, baseline=anchor)` to get `DriftResult.max_sigma`
+3. If both exist and `shield._drift_detector` is not None, construct a synthetic `BehaviorEvent` whose `output_length` equals the current fingerprint's mean output length (`fingerprint.dimensions["output_length"]["mean"]`), and call `shield._drift_detector.check_drift(fingerprint, synthetic_event, baseline=anchor)` to get `DriftResult.max_sigma`
 4. If the anchor hasn't been established or the drift detector is None, the drift score is `0.0`
+
+**Why a synthetic event:** `DriftDetector.check_drift()` requires a `BehaviorEvent` parameter, but the `BehaviorTracker` does not expose a public API for retrieving the most recent recorded event. Rather than reaching into private `_events` deques, the test constructs a synthetic event whose `output_length` matches the current fingerprint's mean. This makes the z-score computation in `check_drift` reflect "how far has the mean output length moved from the baseline mean" — a sensible end-of-conversation drift metric. The content_ratios and tool_distribution dimensions compare fingerprints directly (not via the event), so the synthetic event does not affect those contributions to `max_sigma`.
 
 **Important:** The agent_id for fingerprint/anchor lookups must be `"self"`, not the Shield's configured `agent_id`. The OpenAI wrapper calls `shield.record_response_behavior()` without an explicit `agent_id`, which defaults to `"self"` (see `shield.py:1310`). All behavioral events are keyed under `"self"` regardless of the Shield's `agent_id` config.
 
@@ -111,7 +113,7 @@ This uses private attributes (`_behavior_tracker`, `_drift_detector`) which is a
 ### Assertions
 
 **Per-variant:**
-- All 10 turns completed (conversation result has `turn_count == 10`)
+- All 12 turns completed (conversation result has `turn_count == 12`)
 - Every response has non-empty content
 - No `ThreatBlockedError` raised (implicit — the conversation wouldn't complete otherwise)
 
@@ -150,7 +152,7 @@ Add a section to `tests/e2e/README.md`:
 ```markdown
 ### Multi-Turn Conversation Tests (`test_multi_turn.py`)
 
-Two AEGIS-wrapped agents conduct a 10-turn dialogue in three style variants.
+Two AEGIS-wrapped agents conduct a 12-turn dialogue in three style variants.
 These tests require a real LLM and are skipped when using the mock server.
 
 Run with OpenAI:

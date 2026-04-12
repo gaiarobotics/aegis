@@ -4,7 +4,7 @@ Passive sentinel agent for monitoring AEGIS-protected agent networks. Sentinels 
 
 ## How It Works
 
-Sentinels are read-only participants in an agent network. They have no write capabilities, no tool access, and no real task — they exist solely to detect compromised agents. Because sentinels have no legitimate reason to receive instruction-shaped content from peers, any attempt to inject instructions into a sentinel is a strong signal of compromise in the sending agent.
+Sentinels are read-only participants in an agent network. They have no write capabilities, no tool access, and no real task: they exist solely to detect compromised agents. Because sentinels have no legitimate reason to receive instruction-shaped content from peers, any attempt to inject instructions into a sentinel is a strong signal of compromise in the sending agent.
 
 The sentinel runs an AEGIS Shield instance with a hardened profile (scanner sensitivity 0.85, zero write budgets, aggressive NK cell thresholds) and reports threats to the monitoring service.
 
@@ -59,7 +59,7 @@ coverage_mode: broad        # "broad" (auto-discover) or "watchlist" (explicit)
 poll_interval_seconds: 30
 monitor_url: "http://aegis-monitor:8080/api/v1"
 
-# Watchlist mode only — monitor specific agents/submolts
+# Watchlist mode only: monitor specific agents/submolts
 watchlist:
   - "submolt:general"
   - "submolt:engineering"

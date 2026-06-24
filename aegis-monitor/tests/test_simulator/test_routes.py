@@ -13,7 +13,7 @@ def client(tmp_path):
     from monitor.config import MonitorConfig
 
     app = create_simulator_app(preset_dir=str(tmp_path))
-    app.state.config = MonitorConfig(api_keys={})
+    app.state.config = MonitorConfig(api_keys={}, allow_open_mode=True)
     return TestClient(app)
 
 
@@ -159,3 +159,8 @@ class TestSimulationControl:
         data = resp.json()
         assert "nodes" in data
         assert "edges" in data
+
+
+def test_preset_name_rejects_path_traversal(client):
+    resp = client.post("/api/v1/simulator/presets/..%2Fevil", json={"num_agents": 1})
+    assert resp.status_code in (400, 404)

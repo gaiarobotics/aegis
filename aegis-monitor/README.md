@@ -28,7 +28,9 @@ host: "0.0.0.0"
 port: 8080
 database_path: "monitor.db"
 api_keys:
-  - "your-api-key"
+  "your-api-key": operator
+# Development only: set true to run without api_keys.
+allow_open_mode: false
 clustering_enabled: true
 r0_window_hours: 24
 ```
@@ -38,7 +40,8 @@ r0_window_hours: 24
 | `MONITOR_HOST` | Bind address (default `0.0.0.0`) |
 | `MONITOR_PORT` | Port (default `8080`) |
 | `MONITOR_DATABASE_PATH` | SQLite path (default `monitor.db`) |
-| `MONITOR_API_KEYS` | Comma-separated API keys |
+| `MONITOR_API_KEYS` | Comma-separated API keys, optionally `key:role` entries |
+| `MONITOR_ALLOW_OPEN_MODE` | Permit unauthenticated development mode when no API keys are configured (`true`/`false`; default `false`) |
 | `MONITOR_CLUSTERING_ENABLED` | Enable ML clustering (`true`/`false`) |
 | `MONITOR_R0_WINDOW_HOURS` | R0 estimation window (default `24`) |
 

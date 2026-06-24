@@ -8,6 +8,7 @@ directory can be supplied to overlay or extend them.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from monitor.simulator.models import (
 )
 
 _BUILTIN_DIR = Path(__file__).parent / "presets"
+_PRESET_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class PresetManager:
@@ -58,6 +60,16 @@ class PresetManager:
                     names.add(p.stem)
         return sorted(names)
 
+    def _preset_path(self, directory: Path, name: str) -> Path:
+        """Return a validated preset path contained in *directory*."""
+        if not _PRESET_NAME_RE.fullmatch(name):
+            raise ValueError("Preset name must contain only letters, numbers, dots, underscores, and hyphens")
+        base = directory.resolve()
+        path = (base / f"{name}.yaml").resolve()
+        if path.parent != base:
+            raise ValueError("Preset path escapes the preset directory")
+        return path
+
     def load(self, name: str) -> SimConfig:
         """Load a preset by *name* and return a :class:`SimConfig`.
 
@@ -70,7 +82,7 @@ class PresetManager:
             If no YAML file with the given name exists in any search dir.
         """
         for d in self._search_dirs():
-            path = d / f"{name}.yaml"
+            path = self._preset_path(d, name)
             if path.is_file():
                 with open(path, "r") as fh:
                     data = yaml.safe_load(fh)
@@ -86,7 +98,7 @@ class PresetManager:
         """
         target_dir = self._user_dir if self._user_dir else self._builtin_dir
         target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{name}.yaml"
+        path = self._preset_path(target_dir, name)
         with open(path, "w") as fh:
             yaml.dump(
                 self._config_to_dict(config),
@@ -106,7 +118,7 @@ class PresetManager:
             If no YAML file with the given name exists in any search dir.
         """
         for d in self._search_dirs():
-            path = d / f"{name}.yaml"
+            path = self._preset_path(d, name)
             if path.is_file():
                 path.unlink()
                 return

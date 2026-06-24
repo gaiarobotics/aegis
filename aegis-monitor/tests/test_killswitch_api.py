@@ -16,12 +16,15 @@ def client(tmp_path):
     db_path = str(tmp_path / "test_ks.db")
     os.environ["MONITOR_DATABASE_PATH"] = db_path
     os.environ.pop("MONITOR_API_KEYS", None)
+    os.environ["MONITOR_ALLOW_OPEN_MODE"] = "true"
 
     with TestClient(app) as c:
         app.state.config.api_keys = []
+        app.state.config.allow_open_mode = True
         yield c
 
     os.environ.pop("MONITOR_DATABASE_PATH", None)
+    os.environ.pop("MONITOR_ALLOW_OPEN_MODE", None)
 
 
 class TestKillswitchStatus:

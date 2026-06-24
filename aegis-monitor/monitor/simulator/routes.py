@@ -95,12 +95,17 @@ def register_routes(app: FastAPI) -> None:
             config = app.state.preset_manager.load(name)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"Preset '{name}' not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         return app.state.preset_manager._config_to_dict(config)
 
     @app.post("/api/v1/simulator/presets/{name}")
     async def save_preset(name: str, body: dict[str, Any], _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
         config = app.state.preset_manager._dict_to_config(body)
-        app.state.preset_manager.save(name, config)
+        try:
+            app.state.preset_manager.save(name, config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         return {"status": "ok"}
 
     @app.delete("/api/v1/simulator/presets/{name}")
@@ -109,6 +114,8 @@ def register_routes(app: FastAPI) -> None:
             app.state.preset_manager.delete(name)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"Preset '{name}' not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         return {"status": "ok"}
 
     # ------------------------------------------------------------------
@@ -286,7 +293,7 @@ def register_routes(app: FastAPI) -> None:
         config: MonitorConfig = ws.app.state.config
 
         # In open mode, accept immediately
-        if not config.api_keys:
+        if not config.api_keys and config.allow_open_mode:
             await ws.accept()
             app.state.sim_ws_clients.add(ws)
             try:
@@ -361,7 +368,7 @@ def register_routes(app: FastAPI) -> None:
         config = app.state.config
 
         # Open mode: serve directly
-        if not config.api_keys:
+        if not config.api_keys and config.allow_open_mode:
             html_path = _STATIC_DIR / "simulator.html"
             if not html_path.is_file():
                 raise HTTPException(status_code=404, detail="simulator.html not found")

@@ -16,11 +16,13 @@ def client(tmp_path):
     db_path = str(tmp_path / "test.db")
     os.environ["MONITOR_DATABASE_PATH"] = db_path
     os.environ.pop("MONITOR_API_KEYS", None)
+    os.environ["MONITOR_ALLOW_OPEN_MODE"] = "true"
 
     with TestClient(app) as c:
         from monitor.validation import ReportValidator
         # Ensure open auth mode for most tests
         app.state.config.api_keys = {}
+        app.state.config.allow_open_mode = True
         # Backwards-compatible: quorum=1, min_trust=0 so existing tests pass
         app.state.config.compromise_quorum = 1
         app.state.config.compromise_min_trust_tier = 0
@@ -30,6 +32,7 @@ def client(tmp_path):
         yield c
 
     os.environ.pop("MONITOR_DATABASE_PATH", None)
+    os.environ.pop("MONITOR_ALLOW_OPEN_MODE", None)
 
 
 class TestDashboard:

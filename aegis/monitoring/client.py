@@ -53,6 +53,8 @@ class MonitoringClient:
             raise ValueError(f"Invalid service URL scheme: {parsed.scheme}")
         if service_url and not parsed.hostname:
             raise ValueError("Service URL must have a valid hostname")
+        if parsed.scheme == "http":
+            logger.warning("Monitoring service URL uses plaintext HTTP: %s", service_url)
         self._service_url = service_url
         self._api_key = config.api_key
         self._heartbeat_interval = config.heartbeat_interval_seconds
@@ -272,7 +274,7 @@ class MonitoringClient:
                     )
                     if resp.is_success:
                         return True
-                elif self._try_legacy_post(url, payload, headers):
+                elif self._try_legacy_post(url, payload, headers, self._timeout):
                     return True
             except Exception:
                 logger.debug(
@@ -286,12 +288,12 @@ class MonitoringClient:
         return False
 
     @staticmethod
-    def _try_legacy_post(url: str, payload: dict, headers: dict) -> bool:
+    def _try_legacy_post(url: str, payload: dict, headers: dict, timeout: float) -> bool:
         """Attempt to POST using httpx or urllib fallback. Returns True on 2xx."""
         body = json.dumps(payload).encode("utf-8")
         try:
             import httpx  # noqa: F811
-            resp = httpx.post(url, content=body, headers=headers, timeout=10)
+            resp = httpx.post(url, content=body, headers=headers, timeout=timeout)
             return 200 <= resp.status_code < 300
         except ImportError:
             pass
@@ -301,7 +303,7 @@ class MonitoringClient:
         try:
             import urllib.request
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return 200 <= resp.status < 300
         except Exception:
             return False

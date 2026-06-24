@@ -390,3 +390,17 @@ class TestStateLogCheckpoint:
         log, _ = _make_log(tmp_path)
         result = log.load_checkpoint(tmp_path / "nope.json")
         assert result is None
+
+
+def test_state_log_file_permissions_are_owner_only(tmp_path):
+    log, _ = _make_log(tmp_path)
+    log.append("secret_event")
+    assert (log.path.stat().st_mode & 0o777) == 0o600
+
+
+def test_checkpoint_permissions_are_owner_only(tmp_path):
+    key = os.urandom(32)
+    log = StateLog(tmp_path / "events.jsonl", key=key)
+    cp_path = tmp_path / "checkpoint.json"
+    log.write_checkpoint({"secret": True}, cp_path)
+    assert (cp_path.stat().st_mode & 0o777) == 0o600

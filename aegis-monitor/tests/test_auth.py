@@ -115,7 +115,7 @@ from monitor.auth import verify_api_key, require_role, get_config
 def _make_app(api_keys: dict[str, str]) -> tuple[FastAPI, TestClient]:
     """Create a minimal FastAPI app with the given api_keys config."""
     test_app = FastAPI()
-    cfg = MonitorConfig(api_keys=api_keys)
+    cfg = MonitorConfig(api_keys=api_keys, allow_open_mode=(not api_keys))
     test_app.state.config = cfg
 
     @test_app.get("/agent-only")
@@ -303,6 +303,7 @@ def auth_client(tmp_path):
     db_path = str(tmp_path / "test.db")
     os.environ["MONITOR_DATABASE_PATH"] = db_path
     os.environ.pop("MONITOR_API_KEYS", None)
+    os.environ["MONITOR_ALLOW_OPEN_MODE"] = "true"
 
     with TestClient(monitor_app) as c:
         monitor_app.state.config.api_keys = {
@@ -321,6 +322,7 @@ def auth_client(tmp_path):
         yield c
 
     os.environ.pop("MONITOR_DATABASE_PATH", None)
+    os.environ.pop("MONITOR_ALLOW_OPEN_MODE", None)
 
 
 class TestAuthRoutes:
@@ -359,6 +361,7 @@ class TestAuthRoutes:
 
     def test_login_open_mode(self, auth_client):
         auth_client.app.state.config.api_keys = {}
+        auth_client.app.state.config.allow_open_mode = True
         resp = auth_client.post("/auth/login", json={"api_key": "anything"})
         assert resp.status_code == 200
         assert resp.json()["role"] == "open"
@@ -754,3 +757,18 @@ class TestVerifiedFieldPersistence:
         from monitor.models import CompromiseRecord
         record = CompromiseRecord(record_id="r1")
         assert record.verified is False
+
+
+def test_open_mode_requires_explicit_allow():
+    app, client = _make_app({"sk-a": "agent"})
+    app.state.config.api_keys = {}
+    app.state.config.allow_open_mode = False
+    resp = client.get("/agent-only")
+    assert resp.status_code == 503
+
+
+def test_allow_open_mode_from_config(tmp_path):
+    cfg_file = tmp_path / "monitor.yaml"
+    cfg_file.write_text("allow_open_mode: true\n")
+    cfg = MonitorConfig.load(cfg_file)
+    assert cfg.allow_open_mode is True

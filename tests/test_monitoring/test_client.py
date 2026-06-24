@@ -285,3 +285,34 @@ class TestServiceUrlValidation:
         cfg = MonitoringConfig(enabled=False, service_url="", api_key="")
         client = MonitoringClient(cfg, agent_id="a1")
         assert client._service_url == ""
+
+
+def test_http_service_url_warns(caplog):
+    cfg = MonitoringConfig(enabled=True, service_url="http://example.com", api_key="")
+    with caplog.at_level("WARNING"):
+        MonitoringClient(cfg, agent_id="a1")
+    assert "plaintext HTTP" in caplog.text
+
+
+def test_legacy_post_uses_configured_timeout(monkeypatch):
+    seen = {}
+
+    class FakeHttpx:
+        @staticmethod
+        def post(url, content, headers, timeout):
+            seen["timeout"] = timeout
+            class Resp:
+                status_code = 200
+            return Resp()
+
+    import builtins
+    original_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "httpx":
+            return FakeHttpx
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert MonitoringClient._try_legacy_post("http://example.com", {}, {}, 1.25)
+    assert seen["timeout"] == 1.25

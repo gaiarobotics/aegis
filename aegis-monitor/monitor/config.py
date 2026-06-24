@@ -30,6 +30,7 @@ class MonitorConfig:
     database_path: str = "monitor.db"
     database_url: str = ""  # postgresql:// URL — takes priority over database_path
     api_keys: dict[str, str] = field(default_factory=dict)
+    allow_open_mode: bool = False
     session_secret: str = ""
     session_ttl_seconds: int = 28800
     agent_public_keys: dict[str, AgentKey] = field(default_factory=dict)
@@ -77,6 +78,7 @@ class MonitorConfig:
             database_path=raw.get("database_path", "monitor.db"),
             database_url=raw.get("database_url", ""),
             api_keys=cls._parse_api_keys(raw.get("api_keys")),
+            allow_open_mode=cls._parse_bool(raw.get("allow_open_mode", False)),
             session_secret=raw.get("session_secret", ""),
             session_ttl_seconds=int(raw.get("session_ttl_seconds", 28800)),
             agent_public_keys=parsed_pubkeys,
@@ -99,6 +101,8 @@ class MonitorConfig:
             cfg.database_url = v
         if v := os.environ.get("MONITOR_API_KEYS"):
             cfg.api_keys = cls._parse_env_api_keys(v)
+        if v := os.environ.get("MONITOR_ALLOW_OPEN_MODE"):
+            cfg.allow_open_mode = cls._parse_bool(v)
         if v := os.environ.get("MONITOR_SESSION_SECRET"):
             cfg.session_secret = v
         if v := os.environ.get("MONITOR_SESSION_TTL_SECONDS"):
@@ -145,6 +149,15 @@ class MonitorConfig:
         if key_type is None:
             raise ValueError(f"Unsupported key type prefix: {prefix!r}. Use 'hmac' or 'ed25519'.")
         return AgentKey(key_type=key_type, key_bytes=bytes.fromhex(hex_bytes))
+
+    @staticmethod
+    def _parse_bool(value: Any) -> bool:
+        """Parse a YAML/environment boolean-like value."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
 
     @staticmethod
     def _parse_api_keys(raw_value: Any) -> dict[str, str]:

@@ -11,7 +11,7 @@ from monitor.config import MonitorConfig
 def test_full_simulation_lifecycle(tmp_path):
     """Run a complete simulation: generate -> start -> tick N times -> export."""
     app = create_simulator_app(preset_dir=str(tmp_path))
-    app.state.config = MonitorConfig(api_keys={})
+    app.state.config = MonitorConfig(api_keys={}, allow_open_mode=True)
     client = TestClient(app)
 
     # Generate with 30 agents, 10% infected, seed=42, all modules disabled
@@ -92,7 +92,7 @@ def test_full_simulation_lifecycle(tmp_path):
 def test_preset_roundtrip(tmp_path):
     """Save a preset, reload, generate from it."""
     app = create_simulator_app(preset_dir=str(tmp_path))
-    app.state.config = MonitorConfig(api_keys={})
+    app.state.config = MonitorConfig(api_keys={}, allow_open_mode=True)
     client = TestClient(app)
 
     config = {

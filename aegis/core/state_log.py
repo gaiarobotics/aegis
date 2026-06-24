@@ -110,10 +110,15 @@ def _try_open_append(path: Path) -> Any:
     """
     try:
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
-        fd = os.open(str(path), flags, 0o644)
+        fd = os.open(str(path), flags, 0o600)
         return os.fdopen(fd, "a", encoding="utf-8")
     except (AttributeError, OSError):
-        return open(path, "a", encoding="utf-8")
+        f = open(path, "a", encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return f
 
 
 def resolve_state_key() -> bytes:
@@ -192,7 +197,7 @@ class StateLog:
         """Create the log file and parent directories if needed."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         if not self._path.exists():
-            self._path.touch(mode=0o644)
+            self._path.touch(mode=0o600)
         if self._apply_fs_protection and not self._fs_protected:
             self._fs_protected = _try_set_append_only(self._path)
 
@@ -364,7 +369,12 @@ class StateLog:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(envelope, f, sort_keys=True, separators=(",", ":"))
+            os.chmod(tmp_path, 0o600)
             os.replace(tmp_path, str(checkpoint_path))
+            try:
+                os.chmod(checkpoint_path, 0o600)
+            except OSError:
+                pass
         except BaseException:
             try:
                 os.unlink(tmp_path)

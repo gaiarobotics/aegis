@@ -33,7 +33,9 @@ def verify_api_key(
         Role string: "agent", "viewer", "operator", or "open".
     """
     if not config.api_keys:
-        return "open"
+        if config.allow_open_mode:
+            return "open"
+        raise HTTPException(status_code=503, detail="Open mode is disabled; configure api_keys or set allow_open_mode")
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -140,10 +142,8 @@ def require_csrf(request: Request, config: MonitorConfig = Depends(get_config)) 
     """Enforce CSRF token for cookie-authenticated mutation requests.
 
     Skipped for Bearer-authenticated requests (not cookie-based).
-    Skipped in open mode.
+    Open mode still requires CSRF for cookie-authenticated mutations.
     """
-    if not config.api_keys:
-        return  # Open mode
     if request.headers.get("Authorization", "").startswith("Bearer "):
         return  # Bearer auth — not vulnerable to CSRF
     if not config.session_secret:

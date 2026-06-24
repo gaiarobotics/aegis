@@ -42,6 +42,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 _login_limiter = LoginRateLimiter(per_minute=10, per_hour=50)
 
 
+def _ensure_open_mode_allowed(config: MonitorConfig) -> None:
+    """Fail closed unless unauthenticated open mode is explicitly allowed."""
+    if not config.api_keys and not config.allow_open_mode:
+        raise RuntimeError(
+            "AEGIS monitor open mode is disabled; configure api_keys or set allow_open_mode=true for development"
+        )
+
+
 def _ensure_session_secret(config: MonitorConfig) -> None:
     """Auto-generate session_secret if not configured, with a warning."""
     if not config.session_secret:
@@ -102,6 +110,7 @@ async def _periodic_background(app_state, interval: float = 30.0):
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: C901
     cfg = MonitorConfig.load()
+    _ensure_open_mode_allowed(cfg)
     _ensure_session_secret(cfg)
     app.state.config = cfg
     app.state.db = Database(cfg.effective_database_url)
@@ -201,7 +210,7 @@ async def auth_login(request: Request, data: dict):
     api_key = data.get("api_key", "")
 
     # Open mode
-    if not config.api_keys:
+    if not config.api_keys and config.allow_open_mode:
         secret = config.session_secret or "ephemeral"
         token = create_session_token("open", api_key, secret)
         response = JSONResponse({"role": "open"})
@@ -211,6 +220,9 @@ async def auth_login(request: Request, data: dict):
             max_age=config.session_ttl_seconds,
         )
         return response
+
+    if not config.api_keys:
+        raise HTTPException(status_code=503, detail="Open mode is disabled; configure api_keys or set allow_open_mode")
 
     # Validate the key
     import hmac as _hmac
@@ -1373,7 +1385,7 @@ async def ws_dashboard(ws: WebSocket):
     config: MonitorConfig = ws.app.state.config
 
     # In open mode, accept immediately
-    if not config.api_keys:
+    if not config.api_keys and config.allow_open_mode:
         await ws.accept()
         app.state.ws_clients.add(ws)
         try:
@@ -1448,8 +1460,8 @@ async def ws_dashboard(ws: WebSocket):
 async def dashboard(request: Request):
     config: MonitorConfig = request.app.state.config
 
-    # Open mode: no keys configured — serve dashboard directly
-    if not config.api_keys:
+    # Open mode: no keys configured and explicitly allowed — serve dashboard directly
+    if not config.api_keys and config.allow_open_mode:
         index = STATIC_DIR / "index.html"
         if index.is_file():
             return HTMLResponse(content=index.read_text())

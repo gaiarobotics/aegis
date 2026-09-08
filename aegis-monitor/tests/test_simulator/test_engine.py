@@ -222,9 +222,9 @@ class TestTickExecution:
         # Use high susceptibility models
         cfg.population = PopulationConfig(
             models=[
-                __import__(
-                    "monitor.simulator.models", fromlist=["ModelSpec"]
-                ).ModelSpec("test-model", 1.0, 0.95),
+                __import__("monitor.simulator.models", fromlist=["ModelSpec"]).ModelSpec(
+                    "test-model", 1.0, 0.95
+                ),
             ],
             soul_age_mean=1.0,
             new_agent_fraction=0.9,
@@ -233,9 +233,7 @@ class TestTickExecution:
         engine.generate()
         engine.start()
         initial_infected = sum(
-            1
-            for a in engine.get_agent_states()
-            if a["status"] == AgentStatus.INFECTED.value
+            1 for a in engine.get_agent_states() if a["status"] == AgentStatus.INFECTED.value
         )
         for _ in range(20):
             snapshot = engine.tick()
@@ -247,8 +245,7 @@ class TestTickExecution:
             if a["status"] in (AgentStatus.INFECTED.value, AgentStatus.QUARANTINED.value)
         )
         assert current_infected > initial_infected, (
-            f"Expected infection spread: initial={initial_infected}, "
-            f"current={current_infected}"
+            f"Expected infection spread: initial={initial_infected}, current={current_infected}"
         )
 
     def test_reproduction_metrics_computed(self):
@@ -284,7 +281,6 @@ class TestTickExecution:
 
         assert engine._compute_seed_r() == pytest.approx(2.0)
         assert engine._compute_running_re() == pytest.approx(2.0)
-
 
     def test_confusion_matrix_populated(self):
         from monitor.simulator.engine import SimulationEngine
@@ -386,7 +382,9 @@ class TestAegisAdoption:
         from monitor.simulator.engine import SimulationEngine
 
         cfg = self._make_config_with_modules(
-            num_agents=50, seed=42, aegis_adoption_rate=1.0,
+            num_agents=50,
+            seed=42,
+            aegis_adoption_rate=1.0,
         )
         engine = SimulationEngine(cfg)
         engine.generate()
@@ -398,7 +396,9 @@ class TestAegisAdoption:
         from monitor.simulator.engine import SimulationEngine
 
         cfg = self._make_config_with_modules(
-            num_agents=50, seed=42, aegis_adoption_rate=0.0,
+            num_agents=50,
+            seed=42,
+            aegis_adoption_rate=0.0,
         )
         engine = SimulationEngine(cfg)
         engine.generate()
@@ -410,16 +410,16 @@ class TestAegisAdoption:
         from monitor.simulator.engine import SimulationEngine
 
         cfg = self._make_config_with_modules(
-            num_agents=200, seed=42, aegis_adoption_rate=0.5,
+            num_agents=200,
+            seed=42,
+            aegis_adoption_rate=0.5,
         )
         engine = SimulationEngine(cfg)
         engine.generate()
         agents = engine.get_agent_states()
         aegis_count = sum(1 for a in agents if a["has_aegis"])
         # With 200 agents at 50%, expect ~100; allow generous margin
-        assert 60 <= aegis_count <= 140, (
-            f"Expected ~100 AEGIS agents, got {aegis_count}"
-        )
+        assert 60 <= aegis_count <= 140, f"Expected ~100 AEGIS agents, got {aegis_count}"
 
     def test_modules_disabled_overrides_adoption(self):
         """When all modules are disabled, has_aegis stays False regardless of rate."""
@@ -438,7 +438,9 @@ class TestAegisAdoption:
 
         def run():
             cfg = self._make_config_with_modules(
-                num_agents=50, seed=99, aegis_adoption_rate=0.5,
+                num_agents=50,
+                seed=99,
+                aegis_adoption_rate=0.5,
             )
             engine = SimulationEngine(cfg)
             engine.generate()
@@ -457,13 +459,22 @@ class TestAegisAdoption:
 class TestContentHashing:
     """Verify content hash computation and embedding entries."""
 
+    class _FakeEmbeddingProvider:
+        model_name = "test-embedding"
+        dims = 8
+
+        async def embed(self, text: str) -> list[float]:
+            values = [0.0] * self.dims
+            for index, byte in enumerate(text.encode("utf-8")):
+                values[index % self.dims] += float(byte)
+            return values
+
     def test_agents_get_content_hashes_after_tick(self):
         """After a tick, some agents should have non-None content_hash."""
-        pytest.importorskip("sentence_transformers")
         from monitor.simulator.engine import SimulationEngine
 
         cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
-        engine = SimulationEngine(cfg)
+        engine = SimulationEngine(cfg, embedding_provider=self._FakeEmbeddingProvider())
         engine.generate()
         engine.start()
         engine.tick()
@@ -496,11 +507,10 @@ class TestContentHashing:
 
     def test_get_embedding_entries_returns_neighbors(self):
         """Embedding entries should have neighbors list with <= 5 items."""
-        pytest.importorskip("sentence_transformers")
         from monitor.simulator.engine import SimulationEngine
 
         cfg = _make_config(num_agents=20, seed=42, initial_infected_pct=0.1)
-        engine = SimulationEngine(cfg)
+        engine = SimulationEngine(cfg, embedding_provider=self._FakeEmbeddingProvider())
         engine.generate()
         engine.start()
         # Run a few ticks to build up hashes
@@ -534,4 +544,3 @@ class TestContentHashing:
         engine.reset()
         result = engine.get_embedding_entries()
         assert result == {"entries": [], "centroids": []}
-

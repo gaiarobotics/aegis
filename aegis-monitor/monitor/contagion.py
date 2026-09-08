@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Shared utilities
 # ------------------------------------------------------------------
 
+
 def hamming_distance(a: int, b: int) -> int:
     """Return the Hamming distance (number of differing bits) between two ints."""
     return bin(a ^ b).count("1")
@@ -35,6 +36,7 @@ def hex_to_int(h: str) -> int:
 # ------------------------------------------------------------------
 # Union-Find (fallback when sklearn unavailable)
 # ------------------------------------------------------------------
+
 
 class _UnionFind:
     """Lightweight union-find (disjoint set) for clustering."""
@@ -68,10 +70,22 @@ class _UnionFind:
 # ------------------------------------------------------------------
 
 _CLUSTER_PALETTE = [
-    "#1abc9c", "#2ecc71", "#3498db", "#9b59b6",
-    "#e74c3c", "#e67e22", "#f1c40f", "#1f77b4",
-    "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-    "#8c564b", "#17becf", "#bcbd22", "#7f7f7f",
+    "#1abc9c",
+    "#2ecc71",
+    "#3498db",
+    "#9b59b6",
+    "#e74c3c",
+    "#e67e22",
+    "#f1c40f",
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#17becf",
+    "#bcbd22",
+    "#7f7f7f",
 ]
 
 
@@ -93,7 +107,7 @@ class TopicClusterer:
             forms a cluster).
     """
 
-    def __init__(self, threshold: int = 16, min_samples: int = 3) -> None:
+    def __init__(self, threshold: int = 16, min_samples: int = 1) -> None:
         self._threshold = threshold
         self._min_samples = min_samples
         self._hashes: dict[str, tuple[str, int]] = {}  # agent_id -> (model, hash_int)
@@ -200,7 +214,10 @@ class TopicClusterer:
         for i in range(len(agents)):
             uf.find(agents[i])  # ensure registered
             for j in range(i + 1, len(agents)):
-                if hamming_distance(self._get_hash_int(agents[i]), self._get_hash_int(agents[j])) <= self._threshold:
+                if (
+                    hamming_distance(self._get_hash_int(agents[i]), self._get_hash_int(agents[j]))
+                    <= self._threshold
+                ):
                     uf.union(agents[i], agents[j])
 
         root_to_id: dict[str, int] = {}
@@ -224,7 +241,8 @@ class TopicClusterer:
     # -- Stable cluster tracking ------------------------------------------
 
     def update_stable_clusters(
-        self, agent_statuses: dict[str, str],
+        self,
+        agent_statuses: dict[str, str],
     ) -> dict[str, int]:
         """Run raw clustering, match to stable IDs, compute centroids.
 
@@ -310,7 +328,7 @@ class TopicClusterer:
                 for bit in range(128):
                     count = sum(1 for _, h in member_hashes if h & (1 << bit))
                     if count > num / 2:
-                        mean_hash |= (1 << bit)
+                        mean_hash |= 1 << bit
 
                 best_aid = member_hashes[0][0]
                 best_dist = hamming_distance(member_hashes[0][1], mean_hash)
@@ -553,11 +571,13 @@ class TopicClusterer:
                 for other_id, dist in distances[:top_k]
             ]
 
-            entries.append({
-                "agent_id": aid,
-                "hash": f"{h:032x}",
-                "neighbors": neighbors,
-            })
+            entries.append(
+                {
+                    "agent_id": aid,
+                    "hash": f"{h:032x}",
+                    "neighbors": neighbors,
+                }
+            )
 
         return {"entries": entries}
 
@@ -565,6 +585,7 @@ class TopicClusterer:
 # ------------------------------------------------------------------
 # Contagion detector
 # ------------------------------------------------------------------
+
 
 class ContagionDetector:
     """Detects contagion spread by comparing hashes against known-compromised agents.

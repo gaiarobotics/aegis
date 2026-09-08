@@ -219,7 +219,7 @@ class TestSessionTokens:
     def test_tampered_token_rejected(self):
         token = create_session_token("viewer", "sk-view-1", self.SECRET)
         parts = token.split(".")
-        parts[-1] = "a" + parts[-1][1:]
+        parts[-1] = ("b" if parts[-1][0] == "a" else "a") + parts[-1][1:]
         tampered = ".".join(parts)
         payload = verify_session_token(tampered, self.SECRET, ttl=3600)
         assert payload is None

@@ -71,8 +71,9 @@ class TestPresidioAvailability:
         import aegis.scanner.pii as pii_mod
 
         monkeypatch.setattr(pii_mod, "_PRESIDIO_AVAILABLE", None)
-        # Ensure presidio is NOT in sys.modules
-        monkeypatch.delitem(sys.modules, "presidio_analyzer", raising=False)
+        # Simulate the optional dependency being unavailable even when the
+        # developer environment happens to have it installed.
+        monkeypatch.setitem(sys.modules, "presidio_analyzer", None)
         assert is_presidio_available() is False
 
     def test_available_when_installed(self, monkeypatch):
@@ -159,9 +160,9 @@ class TestPiiDetectorEnabled:
 
         # Verify analyzer was called with only the configured entities
         call_kwargs = mock_engine.analyze.call_args
-        assert call_kwargs.kwargs.get("entities") == [
-            "PHONE_NUMBER"
-        ] or call_kwargs[1].get("entities") == ["PHONE_NUMBER"]
+        assert call_kwargs.kwargs.get("entities") == ["PHONE_NUMBER"] or call_kwargs[1].get(
+            "entities"
+        ) == ["PHONE_NUMBER"]
 
     def test_custom_score_threshold(self, monkeypatch):
         mock_engine, _ = _install_fake_presidio(monkeypatch, [])
@@ -175,9 +176,9 @@ class TestPiiDetectorEnabled:
         detector.detect("some text")
 
         call_kwargs = mock_engine.analyze.call_args
-        threshold = call_kwargs.kwargs.get(
+        threshold = call_kwargs.kwargs.get("score_threshold") or call_kwargs[1].get(
             "score_threshold"
-        ) or call_kwargs[1].get("score_threshold")
+        )
         assert threshold == 0.9
 
 
@@ -223,12 +224,8 @@ class TestManualRedaction:
     def test_manual_redact_multiple_entities(self):
         detector = PiiDetector(config=PiiConfig(enabled=True, redact_char="#"))
         entities = [
-            PiiEntity(
-                entity_type="EMAIL", text="a@b.c", start=0, end=5, score=0.9
-            ),
-            PiiEntity(
-                entity_type="PHONE", text="555", start=10, end=13, score=0.8
-            ),
+            PiiEntity(entity_type="EMAIL", text="a@b.c", start=0, end=5, score=0.9),
+            PiiEntity(entity_type="PHONE", text="555", start=10, end=13, score=0.8),
         ]
         result = detector._manual_redact("a@b.c and 555 done", entities)
         assert "a@b.c" not in result

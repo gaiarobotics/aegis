@@ -501,6 +501,13 @@ _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
 
 _ENV_OVERRIDES_NESTED: list[tuple[str, str, str, str, type]] = [
     ("AEGIS_EMBEDDING_MODEL", "behavior", "content_hash", "embedding_model", str),
+    (
+        "AEGIS_CONTENT_HASH_ENABLED",
+        "behavior",
+        "content_hash",
+        "enabled",
+        lambda v: v.lower() in ("1", "true", "yes"),
+    ),
 ]
 
 

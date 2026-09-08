@@ -10,11 +10,21 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.postgres
+pytestmark = [
+    pytest.mark.postgres,
+    pytest.mark.skipif(
+        not os.environ.get("TEST_POSTGRES_URL"),
+        reason="TEST_POSTGRES_URL is not configured",
+    ),
+]
 
 _TABLES = [
-    "agents", "edges", "events", "compromises",
-    "killswitch_rules", "quarantine_rules",
+    "agents",
+    "edges",
+    "events",
+    "compromises",
+    "killswitch_rules",
+    "quarantine_rules",
 ]
 
 
@@ -72,8 +82,11 @@ class TestPostgresEdges:
         from monitor.models import AgentEdge
 
         edge = AgentEdge(
-            source_agent_id="a", target_agent_id="b",
-            direction="outbound", last_seen=1.0, message_count=5,
+            source_agent_id="a",
+            target_agent_id="b",
+            direction="outbound",
+            last_seen=1.0,
+            message_count=5,
         )
         db.upsert_edge(edge)
         edges = db.get_all_edges()
@@ -87,8 +100,11 @@ class TestPostgresEvents:
         from monitor.models import StoredEvent
 
         event = StoredEvent(
-            event_id="ev-1", event_type="threat", agent_id="a1",
-            timestamp=time.time(), payload={"detail": "test"},
+            event_id="ev-1",
+            event_type="threat",
+            agent_id="a1",
+            timestamp=time.time(),
+            payload={"detail": "test"},
         )
         db.insert_event(event)
         events = db.get_events(event_type="threat")
@@ -102,8 +118,10 @@ class TestPostgresCompromises:
         from monitor.models import CompromiseRecord
 
         record = CompromiseRecord(
-            record_id="cr-1", reporter_agent_id="r1",
-            compromised_agent_id="c1", timestamp=time.time(),
+            record_id="cr-1",
+            reporter_agent_id="r1",
+            compromised_agent_id="c1",
+            timestamp=time.time(),
         )
         db.insert_compromise(record)
         records = db.get_compromises()
@@ -113,14 +131,22 @@ class TestPostgresCompromises:
     def test_count_compromised_agents(self, db):
         from monitor.models import CompromiseRecord
 
-        db.insert_compromise(CompromiseRecord(
-            record_id="cr-2", reporter_agent_id="r1",
-            compromised_agent_id="c1", timestamp=time.time(),
-        ))
-        db.insert_compromise(CompromiseRecord(
-            record_id="cr-3", reporter_agent_id="r1",
-            compromised_agent_id="c2", timestamp=time.time(),
-        ))
+        db.insert_compromise(
+            CompromiseRecord(
+                record_id="cr-2",
+                reporter_agent_id="r1",
+                compromised_agent_id="c1",
+                timestamp=time.time(),
+            )
+        )
+        db.insert_compromise(
+            CompromiseRecord(
+                record_id="cr-3",
+                reporter_agent_id="r1",
+                compromised_agent_id="c2",
+                timestamp=time.time(),
+            )
+        )
         assert db.count_compromised_agents() == 2
 
 
@@ -129,8 +155,11 @@ class TestPostgresKillswitch:
         from monitor.models import KillswitchRule
 
         rule = KillswitchRule(
-            rule_id="ks-1", scope="swarm", blocked=True,
-            reason="test", created_at=time.time(),
+            rule_id="ks-1",
+            scope="swarm",
+            blocked=True,
+            reason="test",
+            created_at=time.time(),
         )
         db.insert_killswitch_rule(rule)
         rules = db.get_killswitch_rules()
@@ -156,9 +185,13 @@ class TestPostgresQuarantine:
         from monitor.models import QuarantineRule
 
         rule = QuarantineRule(
-            rule_id="qr-1", scope="agent", target="a1",
-            quarantined=True, reason="suspicious",
-            severity="medium", created_at=time.time(),
+            rule_id="qr-1",
+            scope="agent",
+            target="a1",
+            quarantined=True,
+            reason="suspicious",
+            severity="medium",
+            created_at=time.time(),
         )
         db.insert_quarantine_rule(rule)
         rules = db.get_quarantine_rules()

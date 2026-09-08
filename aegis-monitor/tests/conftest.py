@@ -1,14 +1,10 @@
-"""Shared test configuration for AEGIS monitor."""
+"""Shared monitor test isolation settings."""
+
+from __future__ import annotations
 
 import os
 
-import pytest
 
-
-def pytest_collection_modifyitems(config, items):
-    """Skip ``@pytest.mark.postgres`` tests unless TEST_POSTGRES_URL is set."""
-    if not os.environ.get("TEST_POSTGRES_URL"):
-        skip_pg = pytest.mark.skip(reason="TEST_POSTGRES_URL not set")
-        for item in items:
-            if "postgres" in item.keywords:
-                item.add_marker(skip_pg)
+# Simulator tests use an injected deterministic provider when they exercise
+# content hashing. Other tests must never download a model as a side effect.
+os.environ.setdefault("AEGIS_SIM_DISABLE_EMBEDDINGS", "true")

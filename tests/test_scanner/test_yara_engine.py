@@ -71,7 +71,9 @@ class TestYaraAvailability:
         import aegis.scanner.yara_engine as yara_mod
 
         monkeypatch.setattr(yara_mod, "_YARA_AVAILABLE", None)
-        monkeypatch.delitem(sys.modules, "yara", raising=False)
+        # Simulate the optional dependency being unavailable even when the
+        # developer environment happens to have it installed.
+        monkeypatch.setitem(sys.modules, "yara", None)
         assert is_yara_available() is False
 
     def test_available(self, monkeypatch):

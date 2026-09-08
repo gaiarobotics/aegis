@@ -3,8 +3,17 @@
 import re
 import time
 
+import pytest
+
 from aegis.scanner.pattern_matcher import PatternMatcher, ThreatMatch
 from aegis.scanner.signatures import load_signatures
+
+
+@pytest.fixture
+def regex_matcher(monkeypatch):
+    """Exercise the regex path even when the optional YARA backend is installed."""
+    monkeypatch.setattr("aegis.scanner.yara_engine.is_yara_available", lambda: False)
+    return PatternMatcher(load_signatures(), sensitivity=0.0)
 
 
 class TestDetectPromptInjection:
@@ -172,29 +181,75 @@ class TestPerformance:
 
         assert elapsed < 1.0, f"1000 threat scans took {elapsed:.2f}s, expected < 1s"
 
-    def test_repeated_evasion_keyword_does_not_backtrack_quadratically(self):
+    @pytest.mark.parametrize("unit", ["reveal ", "reveal systeX "], ids=["prefix", "near-miss"])
+    def test_repeated_evasion_keyword_does_not_backtrack_quadratically(self, regex_matcher, unit):
         """A long line of a signature's leading keyword must not blow up.
 
         EV-001 previously joined its two halves with an unbounded `.*`. Every
         occurrence of the first half is a match start, and each one scanned to
         end of line looking for the second half, so a single line of repeated
         "reveal " cost O(n^2): ~19s for 160 KB, with no timeout around it. Input
-        of that size is ordinary for a retrieved document or tool output, both of
-        which are scanned as context.
+        of that size is ordinary for a retrieved document or tool output when
+        passed as the text to scan. Also exercise repeated incomplete suffixes.
         """
-        sigs = load_signatures()
-        matcher = PatternMatcher(sigs, sensitivity=0.5)
-        text = "reveal " * 22_000  # ~154 KB on one line, and never matches
+        text = unit * (154_000 // len(unit))
 
-        start = time.time()
-        matcher.scan(text)
-        elapsed = time.time() - start
+        start = time.perf_counter()
+        matches = regex_matcher.scan(text)
+        elapsed = time.perf_counter() - start
 
+        assert "EV-001" not in {m.signature_id for m in matches}
+        assert elapsed < 1.0, f"scan took {elapsed:.2f}s, expected < 1s"
+
+    @pytest.mark.parametrize("whitespace", [" ", "\n"], ids=["spaces", "newlines"])
+    @pytest.mark.parametrize("location", ["prefix", "suffix"])
+    def test_evasion_long_whitespace_near_miss(self, regex_matcher, whitespace, location):
+        """Unbounded inter-letter whitespace must remain cheap on failure."""
+        gap = whitespace * 154_000
+        if location == "prefix":
+            text = "r" + gap + "eveaX system"
+        else:
+            # Several bounded-gap candidates retry the same long suffix run.
+            text = "reveal " * 16 + "s" + gap + "ysteX"
+
+        start = time.perf_counter()
+        matches = regex_matcher.scan(text)
+        elapsed = time.perf_counter() - start
+
+        assert "EV-001" not in {m.signature_id for m in matches}
         assert elapsed < 1.0, f"scan took {elapsed:.2f}s, expected < 1s"
 
 
 class TestEvasionSignatureStillDetects:
     """EV-001 bounds the gap between its halves; it must keep detecting."""
+
+    @pytest.mark.parametrize("gap_length", [0, 119, 120, 121])
+    @pytest.mark.parametrize("padding", ["-", "\u754c"], ids=["ascii", "unicode"])
+    def test_gap_boundary(self, regex_matcher, gap_length, padding):
+        # Neutral padding avoids another signature masking an EV-001 miss.
+        # Unicode checks that the regex bound counts characters, not UTF-8 bytes.
+        text = "reveal" + padding * gap_length + "system"
+        ids = {m.signature_id for m in regex_matcher.scan(text)}
+        assert ("EV-001" in ids) == (gap_length <= 120)
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("reveal\nsystem", False),
+            ("reveal\r\nsystem", False),
+            ("r\neveal system", True),
+            ("reveal s\nystem", True),
+        ],
+        ids=["gap-lf", "gap-crlf", "prefix-lf", "suffix-lf"],
+    )
+    def test_newline_semantics(self, regex_matcher, text, expected):
+        ids = {m.signature_id for m in regex_matcher.scan(text)}
+        assert ("EV-001" in ids) == expected
+
+    def test_reports_earliest_system_suffix(self, regex_matcher):
+        matches = regex_matcher.scan("reveal system and system")
+        match = next(m for m in matches if m.signature_id == "EV-001")
+        assert match.matched_text == "reveal system"
 
     def test_detects_spaced_out_evasion(self):
         sigs = load_signatures()

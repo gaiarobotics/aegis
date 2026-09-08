@@ -89,7 +89,10 @@ class RemoteThreatIntel:
             return result
 
     def check_hash(
-        self, hash_hex: str, model: str = "", threshold: float = 0.85,
+        self,
+        hash_hex: str,
+        model: str = "",
+        threshold: float = 0.85,
     ) -> tuple[bool, float]:
         """Check a content hash against known-compromised hashes for a model.
 
@@ -150,6 +153,8 @@ class RemoteThreatIntel:
 
             if self._http_pool is not None:
                 resp = self._http_pool.get(self._url, headers=headers, timeout=_POLL_TIMEOUT)
+                if resp.status_code < 200 or resp.status_code >= 300:
+                    raise RuntimeError(f"Monitor returned HTTP {resp.status_code}")
                 data: dict[str, Any] = resp.json()
             else:
                 req = urllib.request.Request(self._url, method="GET")
@@ -158,8 +163,18 @@ class RemoteThreatIntel:
                 with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
                     data = json.loads(resp.read())
 
-            compromised_agents = set(data.get("compromised_agents", []))
-            quarantined_agents = set(data.get("quarantined_agents", []))
+            if not isinstance(data, dict):
+                raise ValueError("Invalid threat-intel response schema")
+            raw_agents = data.get("compromised_agents")
+            raw_quarantined = data.get("quarantined_agents")
+            if not isinstance(raw_agents, list) or not all(isinstance(v, str) for v in raw_agents):
+                raise ValueError("Invalid compromised_agents response field")
+            if not isinstance(raw_quarantined, list) or not all(
+                isinstance(v, str) for v in raw_quarantined
+            ):
+                raise ValueError("Invalid quarantined_agents response field")
+            compromised_agents = set(raw_agents)
+            quarantined_agents = set(raw_quarantined)
             raw_hashes = data.get("compromised_hashes", {})
             compromised_hashes: dict[str, set[int]] = {}
             if isinstance(raw_hashes, dict):

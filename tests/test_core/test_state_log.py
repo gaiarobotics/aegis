@@ -19,15 +19,18 @@ from aegis.core.state_log import (
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+
 def _make_log(tmp_path, key=None, apply_fs_protection=False):
     key = key or os.urandom(32)
     return StateLog(
-        tmp_path / "events.jsonl", key=key,
+        tmp_path / "events.jsonl",
+        key=key,
         apply_fs_protection=apply_fs_protection,
     ), key
 
 
 # ── StateEvent ───────────────────────────────────────────────────────
+
 
 class TestStateEvent:
     def test_canonical_bytes_deterministic(self):
@@ -61,6 +64,7 @@ class TestStateEvent:
 
 # ── HMAC helpers ─────────────────────────────────────────────────────
 
+
 class TestHMAC:
     def test_sign_and_verify(self):
         key = os.urandom(32)
@@ -83,6 +87,7 @@ class TestHMAC:
 
 # ── resolve_state_key ────────────────────────────────────────────────
 
+
 class TestResolveStateKey:
     def test_hex_env_key(self, monkeypatch):
         hex_key = os.urandom(32).hex()
@@ -103,6 +108,7 @@ class TestResolveStateKey:
 
 
 # ── StateLog: basic operations ───────────────────────────────────────
+
 
 class TestStateLogBasic:
     def test_append_creates_file(self, tmp_path):
@@ -151,6 +157,7 @@ class TestStateLogBasic:
 
 # ── StateLog: load and verify ────────────────────────────────────────
 
+
 class TestStateLogVerify:
     def test_load_empty_file(self, tmp_path):
         log, _ = _make_log(tmp_path)
@@ -198,6 +205,7 @@ class TestStateLogVerify:
 
 # ── StateLog: tamper detection ───────────────────────────────────────
 
+
 class TestStateLogTamperDetection:
     """Tests that modify the log file on disk to simulate tampering.
 
@@ -242,14 +250,16 @@ class TestStateLogTamperDetection:
 
         # Insert a forged entry between a and c
         lines = log.path.read_text().strip().split("\n")
-        forged = json.dumps({
-            "event_type": "forged",
-            "data": {},
-            "timestamp": time.time(),
-            "sequence": 1,
-            "chain_hash": "0" * 64,
-            "signature": "f" * 64,
-        })
+        forged = json.dumps(
+            {
+                "event_type": "forged",
+                "data": {},
+                "timestamp": time.time(),
+                "sequence": 1,
+                "chain_hash": "0" * 64,
+                "signature": "f" * 64,
+            }
+        )
         log.path.write_text(lines[0] + "\n" + forged + "\n" + lines[1] + "\n")
 
         log2 = StateLog(tmp_path / "events.jsonl", key=key, apply_fs_protection=False)
@@ -305,14 +315,18 @@ class TestStateLogTamperDetection:
             chain_hash=_sha256_hex(e0.signature),
         )
         forged_event.signature = _hmac_sign(forged_event.canonical_bytes(), key)
-        line = json.dumps({
-            "event_type": forged_event.event_type,
-            "data": forged_event.data,
-            "timestamp": forged_event.timestamp,
-            "sequence": forged_event.sequence,
-            "chain_hash": forged_event.chain_hash,
-            "signature": forged_event.signature,
-        }, sort_keys=True, separators=(",", ":"))
+        line = json.dumps(
+            {
+                "event_type": forged_event.event_type,
+                "data": forged_event.data,
+                "timestamp": forged_event.timestamp,
+                "sequence": forged_event.sequence,
+                "chain_hash": forged_event.chain_hash,
+                "signature": forged_event.signature,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
         with open(log.path, "a") as f:
             f.write(line + "\n")
@@ -323,6 +337,7 @@ class TestStateLogTamperDetection:
 
 
 # ── StateLog: checkpoints ────────────────────────────────────────────
+
 
 class TestStateLogCheckpoint:
     def test_checkpoint_round_trip(self, tmp_path):
@@ -392,12 +407,14 @@ class TestStateLogCheckpoint:
         assert result is None
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not enforced on Windows")
 def test_state_log_file_permissions_are_owner_only(tmp_path):
     log, _ = _make_log(tmp_path)
     log.append("secret_event")
     assert (log.path.stat().st_mode & 0o777) == 0o600
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not enforced on Windows")
 def test_checkpoint_permissions_are_owner_only(tmp_path):
     key = os.urandom(32)
     log = StateLog(tmp_path / "events.jsonl", key=key)

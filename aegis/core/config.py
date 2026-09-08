@@ -16,6 +16,7 @@ _PROFILES_DIR = Path(__file__).parent.parent / "profiles"
 # Scanner sub-models
 # ---------------------------------------------------------------------------
 
+
 class ScannerSignaturesConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     use_bundled: bool = True
@@ -51,10 +52,16 @@ class LLMGuardConfig(BaseModel):
 class PiiConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     enabled: bool = False
-    entities: list[str] = Field(default_factory=lambda: [
-        "EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD",
-        "US_SSN", "IP_ADDRESS", "IBAN_CODE",
-    ])
+    entities: list[str] = Field(
+        default_factory=lambda: [
+            "EMAIL_ADDRESS",
+            "PHONE_NUMBER",
+            "CREDIT_CARD",
+            "US_SSN",
+            "IP_ADDRESS",
+            "IBAN_CODE",
+        ]
+    )
     score_threshold: float = 0.5
     action: str = "redact"
     redact_char: str = "*"
@@ -80,14 +87,14 @@ class ContentGateConfig(BaseModel):
 class LLMScreenConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     enabled: bool = False
-    provider: str = "openai"        # "openai" | "anthropic"
+    provider: str = "openai"  # "openai" | "anthropic"
     model: str = "gpt-5-mini"
     api_key: str = ""
-    base_url: str = ""              # e.g. "http://localhost:11434/v1" for Ollama
+    base_url: str = ""  # e.g. "http://localhost:11434/v1" for Ollama
     timeout_seconds: float = 5.0
     temperature: float = 0.0
-    max_tokens: int = 2             # clamped in adapter, never exceeds 2
-    system_prompt: str = ""         # override built-in prompt (advanced)
+    max_tokens: int = 2  # clamped in adapter, never exceeds 2
+    system_prompt: str = ""  # override built-in prompt (advanced)
     skip_if_pattern_hit: bool = True
 
 
@@ -121,6 +128,7 @@ class ScannerConfig(BaseModel):
 # Broker sub-models
 # ---------------------------------------------------------------------------
 
+
 class BudgetLimitsConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     max_write_tool_calls: int = 20
@@ -150,6 +158,7 @@ class BrokerConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Identity sub-models
 # ---------------------------------------------------------------------------
+
 
 class AttestationConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -202,6 +211,7 @@ class IdentityConfig(BaseModel):
 # Memory sub-models
 # ---------------------------------------------------------------------------
 
+
 class MemoryConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     allowed_categories: list[str] = Field(
@@ -218,6 +228,7 @@ class MemoryConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Behavior sub-models
 # ---------------------------------------------------------------------------
+
 
 class MessageDriftConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -264,6 +275,7 @@ class BehaviorConfig(BaseModel):
 # Skills sub-models
 # ---------------------------------------------------------------------------
 
+
 class SkillsConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     require_manifest: bool = True
@@ -273,11 +285,13 @@ class SkillsConfig(BaseModel):
     incubation_mode: bool = True
     max_code_size: int = 100000
     skills_base_dir: str | None = None
+    trusted_publisher_keys: dict[str, str] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # Recovery sub-models
 # ---------------------------------------------------------------------------
+
 
 class RecoveryConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -290,6 +304,7 @@ class RecoveryConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Monitoring sub-models
 # ---------------------------------------------------------------------------
+
 
 class MonitoringConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -310,6 +325,7 @@ class MonitoringConfig(BaseModel):
 # Telemetry sub-models
 # ---------------------------------------------------------------------------
 
+
 class TelemetryConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     local_log: bool = True
@@ -321,39 +337,51 @@ class TelemetryConfig(BaseModel):
 # Integrity sub-models
 # ---------------------------------------------------------------------------
 
+
 class IntegrityConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    hash_on_load: str = "async"              # "sync" | "async" | "off"
-    rehash_interval_seconds: int = 3600      # periodic full re-hash (0 = disabled)
-    inotify_enabled: bool = True             # attempt inotify on Linux
-    ollama_models_path: str = ""             # override; empty = auto-detect
-    hf_cache_path: str = ""                  # override; empty = auto-detect
-    model_file_extensions: list[str] = Field(default_factory=lambda: [
-        ".safetensors", ".bin", ".pt", ".pth", ".gguf", ".ggml", ".model",
-    ])
+    hash_on_load: str = "async"  # "sync" | "async" | "off"
+    rehash_interval_seconds: int = 3600  # periodic full re-hash (0 = disabled)
+    inotify_enabled: bool = True  # attempt inotify on Linux
+    ollama_models_path: str = ""  # override; empty = auto-detect
+    hf_cache_path: str = ""  # override; empty = auto-detect
+    model_file_extensions: list[str] = Field(
+        default_factory=lambda: [
+            ".safetensors",
+            ".bin",
+            ".pt",
+            ".pth",
+            ".gguf",
+            ".ggml",
+            ".model",
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
 # Killswitch sub-models
 # ---------------------------------------------------------------------------
 
+
 class KillswitchConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    monitors: list[str] = Field(default_factory=list)   # URLs or "aegis-central"
+    monitors: list[str] = Field(default_factory=list)  # URLs or "aegis-central"
     ttl_seconds: int = 60
+    api_key: str = ""
 
 
 # ---------------------------------------------------------------------------
 # Self-Integrity sub-models
 # ---------------------------------------------------------------------------
 
+
 class SelfIntegrityConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     enabled: bool = True
     check_interval_seconds: float = 5
-    on_tamper: str = "block"       # "exit" | "block" | "log"
-    watch_package: bool = False    # Watch aegis/ source files
-    watch_config: bool = True      # Watch the config file used at startup
+    on_tamper: str = "block"  # "exit" | "block" | "log"
+    watch_package: bool = False  # Watch aegis/ source files
+    watch_config: bool = True  # Watch the config file used at startup
 
 
 class StateStoreConfig(BaseModel):
@@ -361,7 +389,7 @@ class StateStoreConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    enabled: bool = True
+    enabled: bool = False
     log_dir: str = ".aegis/state"
     checkpoint_interval: int = 100
     anchor_window: int = 20
@@ -386,6 +414,7 @@ _DEFAULT_MODULES: dict[str, bool] = {
 # ---------------------------------------------------------------------------
 # Top-level AegisConfig
 # ---------------------------------------------------------------------------
+
 
 class AegisConfig(BaseModel):
     """AEGIS unified configuration."""
@@ -422,6 +451,7 @@ class AegisConfig(BaseModel):
 # File discovery and loading
 # ---------------------------------------------------------------------------
 
+
 def _discover_config_file(start: Path | None = None) -> Path | None:
     """Search for aegis.yaml or aegis.json from start directory up to root."""
     if start is None:
@@ -457,7 +487,12 @@ _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
     ("AEGIS_BROKER_DEFAULT_POSTURE", "broker", "default_posture", str),
     ("AEGIS_BEHAVIOR_DRIFT_THRESHOLD", "behavior", "drift_threshold", float),
     ("AEGIS_BEHAVIOR_WINDOW_SIZE", "behavior", "window_size", int),
-    ("AEGIS_MONITORING_ENABLED", "monitoring", "enabled", lambda v: v.lower() in ("1", "true", "yes")),
+    (
+        "AEGIS_MONITORING_ENABLED",
+        "monitoring",
+        "enabled",
+        lambda v: v.lower() in ("1", "true", "yes"),
+    ),
     ("AEGIS_MONITORING_SERVICE_URL", "monitoring", "service_url", str),
     ("AEGIS_MONITORING_API_KEY", "monitoring", "api_key", str),
     ("AEGIS_INTEGRITY_HASH_ON_LOAD", "integrity", "hash_on_load", str),
@@ -466,6 +501,13 @@ _ENV_OVERRIDES: list[tuple[str, str, str | None, type]] = [
 
 _ENV_OVERRIDES_NESTED: list[tuple[str, str, str, str, type]] = [
     ("AEGIS_EMBEDDING_MODEL", "behavior", "content_hash", "embedding_model", str),
+    (
+        "AEGIS_CONTENT_HASH_ENABLED",
+        "behavior",
+        "content_hash",
+        "enabled",
+        lambda v: v.lower() in ("1", "true", "yes"),
+    ),
 ]
 
 
@@ -491,9 +533,8 @@ def _apply_env_overrides(data: dict) -> dict:
     return data
 
 
-
 def _deep_merge(base: dict, overlay: dict) -> dict:
-    """Recursively merge overlay onto base. Overlay wins for scalars, recurses for dicts, replaces lists."""
+    """Merge overlay onto base; recurse for mappings and replace lists/scalars."""
     result = dict(base)
     for key, value in overlay.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):

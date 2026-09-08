@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -35,9 +35,7 @@ class ManifestRegistry:
         unless *overwrite* is ``True``.
         """
         if manifest.name in self._manifests and not overwrite:
-            raise ValueError(
-                f"Manifest already registered for tool: {manifest.name}"
-            )
+            raise ValueError(f"Manifest already registered for tool: {manifest.name}")
         self._manifests[manifest.name] = manifest
 
     def get(self, tool_name: str) -> ToolManifest | None:
@@ -60,6 +58,11 @@ class ManifestRegistry:
         if action_request.read_write == "write" and manifest.read_write == "read":
             return False
 
+        if manifest.schema is not None and not self._matches_schema(
+            action_request.args, manifest.schema
+        ):
+            return False
+
         # Check target against allowed domains and paths
         if manifest.allowed_domains or manifest.allowed_paths:
             # Extract hostname from URL targets for domain comparison
@@ -67,18 +70,52 @@ class ManifestRegistry:
             hostname = parsed.hostname or action_request.target
 
             domain_ok = any(
-                hostname == d or hostname.endswith("." + d)
-                for d in manifest.allowed_domains
+                hostname == d or hostname.endswith("." + d) for d in manifest.allowed_domains
             )
 
             # Use normpath + trailing separator for safe prefix matching
-            norm_target = os.path.normpath(action_request.target)
+            target_path = Path(action_request.target).resolve(strict=False)
             path_ok = any(
-                norm_target == os.path.normpath(p)
-                or norm_target.startswith(os.path.normpath(p) + os.sep)
+                target_path == Path(p).resolve(strict=False)
+                or Path(p).resolve(strict=False) in target_path.parents
                 for p in manifest.allowed_paths
             )
             if not domain_ok and not path_ok:
                 return False
 
+        return True
+
+    @staticmethod
+    def _matches_schema(value: Any, schema: dict[str, Any]) -> bool:
+        """Validate the small JSON-Schema subset used by tool manifests."""
+        type_map = {
+            "object": dict,
+            "array": list,
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
+        }
+        expected = schema.get("type")
+        if expected in type_map and not isinstance(value, type_map[expected]):
+            return False
+        if "enum" in schema and value not in schema["enum"]:
+            return False
+        if isinstance(value, dict):
+            required = schema.get("required", [])
+            if any(name not in value for name in required):
+                return False
+            properties = schema.get("properties", {})
+            if schema.get("additionalProperties") is False and any(
+                name not in properties for name in value
+            ):
+                return False
+            for name, child_schema in properties.items():
+                if name in value and not ManifestRegistry._matches_schema(
+                    value[name], child_schema
+                ):
+                    return False
+        if isinstance(value, list) and "items" in schema:
+            if not all(ManifestRegistry._matches_schema(item, schema["items"]) for item in value):
+                return False
         return True

@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -18,15 +19,18 @@ from fastapi.staticfiles import StaticFiles
 from monitor.async_db import run_db, run_in_transaction
 from monitor.cache import InMemoryCache
 from monitor.auth import (
+    AuthPrincipal,
     LoginRateLimiter,
     _SESSION_COOKIE_NAME,
+    bind_agent_identity,
     create_session_token,
     generate_csrf_token,
     require_csrf,
     require_role,
-    verify_api_key,
+    scope_agent_query,
     verify_report_signature,
     verify_session_token,
+    validate_report_payload,
 )
 from monitor.clustering import ThreatClusterer
 from monitor.config import MonitorConfig
@@ -38,6 +42,26 @@ from monitor.models import AgentNode, CompromiseRecord, KillswitchRule, Quaranti
 from monitor.validation import ReportValidator
 
 STATIC_DIR = Path(__file__).parent / "static"
+_MAX_REPLAY_IDS = 100_000
+
+
+async def _claim_report_id(request: Request, data: dict, principal: AuthPrincipal) -> None:
+    """Reject replay of identity-bound agent reports within this process."""
+    if principal.role != "agent":
+        return
+    report_id = data["report_id"]
+    if await run_db(request.app.state.db.event_exists, report_id):
+        raise HTTPException(status_code=409, detail="Duplicate report_id")
+    seen: OrderedDict[str, None] = getattr(request.app.state, "seen_report_ids", None)
+    if seen is None:
+        seen = OrderedDict()
+        request.app.state.seen_report_ids = seen
+    if report_id in seen:
+        raise HTTPException(status_code=409, detail="Duplicate report_id")
+    seen[report_id] = None
+    if len(seen) > _MAX_REPLAY_IDS:
+        seen.popitem(last=False)
+
 
 _login_limiter = LoginRateLimiter(per_minute=10, per_hour=50)
 
@@ -54,6 +78,7 @@ def _ensure_session_secret(config: MonitorConfig) -> None:
     """Auto-generate session_secret if not configured, with a warning."""
     if not config.session_secret:
         import secrets as _secrets
+
         config.session_secret = _secrets.token_hex(32)
         logging.warning(
             "WARNING: session_secret not configured — sessions will not survive "
@@ -81,10 +106,13 @@ async def _periodic_background(app_state, interval: float = 30.0):
 
             centroids = app_state.topic_clusterer.get_cluster_centroids()
             active_count = sum(1 for c in centroids if c["active"])
-            await _broadcast(app_state, {
-                "type": "topic_clusters_updated",
-                "active_cluster_count": active_count,
-            })
+            await _broadcast(
+                app_state,
+                {
+                    "type": "topic_clusters_updated",
+                    "active_cluster_count": active_count,
+                },
+            )
 
             # 2. R0 computation + caching
             cfg = app_state.config
@@ -121,6 +149,7 @@ async def lifespan(app: FastAPI):  # noqa: C901
     app.state.topic_clusterer = TopicHashClusterer()
     app.state.contagion_detector = ContagionDetector()
     app.state.report_validator = ReportValidator(cfg)
+    app.state.seen_report_ids = OrderedDict()
 
     # Load existing compromise records into R0 estimator
     records = app.state.db.get_compromises()
@@ -156,7 +185,7 @@ async def lifespan(app: FastAPI):  # noqa: C901
         _compromised_by_model.setdefault(_model_key, []).append(f"{_hash_int:032x}")
     _ti_result = {
         "compromised_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_compromised"]],
-        "compromised_hashes_by_model": _compromised_by_model,
+        "compromised_hashes": _compromised_by_model,
         "quarantined_agents": [n["id"] for n in _ti_graph_state["nodes"] if n["is_quarantined"]],
         "generated_at": time.time(),
     }
@@ -168,6 +197,31 @@ async def lifespan(app: FastAPI):  # noqa: C901
 
 
 app = FastAPI(title="AEGIS Monitor", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if request.method in {"POST", "PUT", "PATCH"} and content_length:
+        try:
+            too_large = int(content_length) > 1_048_576
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+        if too_large:
+            return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+        "connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'; "
+        "frame-ancestors 'none'; form-action 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Register simulator routes
@@ -179,6 +233,7 @@ _register_sim_routes(app)
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
 
 async def _broadcast(app_state: Any, event: dict) -> None:
     """Push an event to all connected WebSocket clients in parallel."""
@@ -199,6 +254,7 @@ async def _broadcast(app_state: Any, event: dict) -> None:
 # Auth routes
 # ------------------------------------------------------------------
 
+
 @app.post("/auth/login")
 async def auth_login(request: Request, data: dict):
     config: MonitorConfig = request.app.state.config
@@ -215,17 +271,24 @@ async def auth_login(request: Request, data: dict):
         token = create_session_token("open", api_key, secret)
         response = JSONResponse({"role": "open"})
         response.set_cookie(
-            _SESSION_COOKIE_NAME, token,
-            httponly=True, samesite="lax", secure=request.url.scheme == "https",
+            _SESSION_COOKIE_NAME,
+            token,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
             max_age=config.session_ttl_seconds,
         )
         return response
 
     if not config.api_keys:
-        raise HTTPException(status_code=503, detail="Open mode is disabled; configure api_keys or set allow_open_mode")
+        raise HTTPException(
+            status_code=503,
+            detail="Open mode is disabled; configure api_keys or set allow_open_mode",
+        )
 
     # Validate the key
     import hmac as _hmac
+
     matched_role = None
     for configured_key, role in config.api_keys.items():
         if _hmac.compare_digest(api_key, configured_key):
@@ -241,8 +304,11 @@ async def auth_login(request: Request, data: dict):
     token = create_session_token(matched_role, api_key, config.session_secret)
     response = JSONResponse({"role": matched_role})
     response.set_cookie(
-        _SESSION_COOKIE_NAME, token,
-        httponly=True, samesite="lax", secure=request.url.scheme == "https",
+        _SESSION_COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
         max_age=config.session_ttl_seconds,
     )
     return response
@@ -263,11 +329,9 @@ async def auth_me(request: Request):
     # In non-open mode, verify key still exists
     if config.api_keys:
         import hashlib
+
         key_hash = payload.get("key_hash", "")
-        found = any(
-            hashlib.sha256(k.encode()).hexdigest() == key_hash
-            for k in config.api_keys
-        )
+        found = any(hashlib.sha256(k.encode()).hexdigest() == key_hash for k in config.api_keys)
         if not found:
             raise HTTPException(status_code=401, detail="API key revoked")
 
@@ -296,12 +360,20 @@ async def auth_logout(request: Request):
 # Report endpoints
 # ------------------------------------------------------------------
 
+
 @app.post("/api/v1/reports/compromise")
-async def receive_compromise(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_compromise(
+    request: Request,
+    data: dict,
+    principal: AuthPrincipal = Depends(require_role("agent", "operator")),
+):
     config: MonitorConfig = request.app.state.config
+    bind_agent_identity(data, principal)
+    validate_report_payload(data)
     accepted, verified = verify_report_signature(data, config)
     if not accepted:
         raise HTTPException(status_code=401, detail="Invalid report signature")
+    await _claim_report_id(request, data, principal)
 
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
@@ -320,12 +392,28 @@ async def receive_compromise(request: Request, data: dict, _role: str = Depends(
         timestamp=data.get("timestamp", time.time()),
         verified=verified,
     )
-    # Synchronous in-memory mutations first
-    r0.add_record(record)
-    graph.mark_compromised(record.compromised_agent_id)
-    app.state.agent_counts["compromised"] += 1
-    await app.state.cache.invalidate("graph")
-    await app.state.cache.invalidate("metrics")
+    # Validate before mutating any compromise state.  Pending or rejected
+    # reports are retained for audit but cannot quarantine/poison a target.
+    reporter_node = await run_db(db.get_agent, record.reporter_agent_id)
+    validator: ReportValidator = app.state.report_validator
+    comp_hash = data.get("content_hash_hex", "")
+    embedding_model = data.get("embedding_model", "")
+    vr = validator.validate(
+        reporter_id=record.reporter_agent_id,
+        compromised_id=record.compromised_agent_id,
+        hash_hex=comp_hash,
+        reporter_trust_tier=reporter_node.trust_tier if reporter_node else 0,
+        reporter_is_quarantined=reporter_node.is_quarantined if reporter_node else False,
+    )
+    confirmed = vr.accepted and vr.hash_confirmed
+    if not vr.accepted:
+        validation_status = "rate_limited"
+    elif confirmed:
+        validation_status = "confirmed"
+    elif vr.rejection_reason == "pending_quorum":
+        validation_status = "pending_quorum"
+    else:
+        validation_status = "rejected"
 
     # Prepare models for DB persistence
     node = graph.graph.nodes.get(record.compromised_agent_id, {})
@@ -377,9 +465,10 @@ async def receive_compromise(request: Request, data: dict, _role: str = Depends(
                 int(record.verified),
             ),
         )
-        # Upsert agent state
-        tx.execute(
-            """INSERT INTO agents
+        # Upsert agent state only after validation confirms the report.
+        if confirmed:
+            tx.execute(
+                """INSERT INTO agents
                    (agent_id, operator_id, trust_tier, trust_score,
                     is_compromised, is_quarantined, is_killswitched,
                     last_heartbeat, metadata)
@@ -394,18 +483,18 @@ async def receive_compromise(request: Request, data: dict, _role: str = Depends(
                    last_heartbeat  = excluded.last_heartbeat,
                    metadata        = excluded.metadata
             """,
-            (
-                agent_node.agent_id,
-                agent_node.operator_id,
-                agent_node.trust_tier,
-                agent_node.trust_score,
-                int(agent_node.is_compromised),
-                int(agent_node.is_quarantined),
-                int(agent_node.is_killswitched),
-                agent_node.last_heartbeat,
-                json.dumps(agent_node.metadata),
-            ),
-        )
+                (
+                    agent_node.agent_id,
+                    agent_node.operator_id,
+                    agent_node.trust_tier,
+                    agent_node.trust_score,
+                    int(agent_node.is_compromised),
+                    int(agent_node.is_quarantined),
+                    int(agent_node.is_killswitched),
+                    agent_node.last_heartbeat,
+                    json.dumps(agent_node.metadata),
+                ),
+            )
         # Insert event
         tx.execute(
             """INSERT INTO events
@@ -427,73 +516,60 @@ async def receive_compromise(request: Request, data: dict, _role: str = Depends(
                 json.dumps(event.payload),
             ),
         )
-        # Look up reporter info within same transaction
-        row = tx.fetchone(
-            "SELECT * FROM agents WHERE agent_id = ?",
-            (record.reporter_agent_id,),
-        )
-        return row
+        return None
 
-    reporter_row = await run_in_transaction(db, _persist_compromise)
-    reporter_node = Database._row_to_agent(reporter_row) if reporter_row else None
+    await run_in_transaction(db, _persist_compromise)
 
-    # Validate the compromise report hash before adding to contagion cloud
+    # Mutate live state only after the durable audit transaction succeeds.
     contagion_detector: ContagionDetector = app.state.contagion_detector
-    validator: ReportValidator = app.state.report_validator
-    comp_hash = data.get("content_hash_hex", "")
-    embedding_model = data.get("embedding_model", "")
-
-    reporter_trust_tier = reporter_node.trust_tier if reporter_node else 0
-    reporter_is_quarantined = reporter_node.is_quarantined if reporter_node else False
-
-    vr = validator.validate(
-        reporter_id=record.reporter_agent_id,
-        compromised_id=record.compromised_agent_id,
-        hash_hex=comp_hash,
-        reporter_trust_tier=reporter_trust_tier,
-        reporter_is_quarantined=reporter_is_quarantined,
-    )
-
-    if not vr.accepted:
-        validation_status = "rate_limited"
-    elif vr.hash_confirmed:
-        validation_status = "confirmed"
-    elif vr.rejection_reason == "pending_quorum":
-        validation_status = "pending_quorum"
-    else:
-        validation_status = "rejected" if vr.rejection_reason else "confirmed"
-
-    # Only add to contagion cloud if hash was confirmed by validation
-    if vr.hash_confirmed and comp_hash:
-        contagion_detector.mark_compromised(record.compromised_agent_id, comp_hash, model=embedding_model)
-    elif not comp_hash:
-        # Fallback path: no hash provided, use graph node hash (unchanged behaviour)
-        node_attrs = graph.graph.nodes.get(record.compromised_agent_id, {})
-        fallback_hash = node_attrs.get("content_hash", "")
-        if fallback_hash:
-            contagion_detector.mark_compromised(record.compromised_agent_id, fallback_hash, model=embedding_model)
-        validation_status = "confirmed"
+    if confirmed:
+        r0.add_record(record)
+        graph.mark_compromised(record.compromised_agent_id)
+        app.state.agent_counts["compromised"] += 1
+        if comp_hash:
+            contagion_detector.mark_compromised(
+                record.compromised_agent_id, comp_hash, model=embedding_model
+            )
+        else:
+            fallback_hash = graph.graph.nodes.get(record.compromised_agent_id, {}).get(
+                "content_hash", ""
+            )
+            if fallback_hash:
+                contagion_detector.mark_compromised(
+                    record.compromised_agent_id, fallback_hash, model=embedding_model
+                )
 
     await app.state.cache.invalidate("threat-intel")
     await app.state.cache.invalidate("metrics")
 
-    at_risk = graph.get_at_risk_agents(record.compromised_agent_id)
+    at_risk = graph.get_at_risk_agents(record.compromised_agent_id) if confirmed else []
 
-    await _broadcast(app.state, {
-        "type": "compromise",
-        "compromised_agent_id": record.compromised_agent_id,
-        "at_risk": at_risk,
-    })
+    if confirmed:
+        await _broadcast(
+            app.state,
+            {
+                "type": "compromise",
+                "compromised_agent_id": record.compromised_agent_id,
+                "at_risk": at_risk,
+            },
+        )
 
     return {"status": "ok", "at_risk_agents": at_risk, "validation": validation_status}
 
 
 @app.post("/api/v1/reports/trust")
-async def receive_trust(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_trust(
+    request: Request,
+    data: dict,
+    principal: AuthPrincipal = Depends(require_role("agent", "operator")),
+):
     config: MonitorConfig = request.app.state.config
+    bind_agent_identity(data, principal)
+    validate_report_payload(data)
     accepted, verified = verify_report_signature(data, config)
     if not accepted:
         raise HTTPException(status_code=401, detail="Invalid report signature")
+    await _claim_report_id(request, data, principal)
 
     db: Database = app.state.db
 
@@ -506,12 +582,18 @@ async def receive_trust(request: Request, data: dict, _role: str = Depends(requi
         payload=data,
     )
     target_id = data.get("target_agent_id", "")
-    target_node = AgentNode(
-        agent_id=target_id,
-        trust_tier=data.get("trust_tier", 0),
-        trust_score=data.get("trust_score", 0.0),
-        last_heartbeat=time.time(),
-    ) if target_id else None
+    # Agent reports are observations, not authority to assign trust.  Only an
+    # operator may directly update another agent's trust state.
+    target_node = (
+        AgentNode(
+            agent_id=target_id,
+            trust_tier=data.get("trust_tier", 0),
+            trust_score=data.get("trust_score", 0.0),
+            last_heartbeat=time.time(),
+        )
+        if target_id and principal.role != "agent"
+        else None
+    )
 
     def _persist_trust(tx):
         tx.execute(
@@ -570,24 +652,34 @@ async def receive_trust(request: Request, data: dict, _role: str = Depends(requi
 
 
 @app.post("/api/v1/reports/threat")
-async def receive_threat(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_threat(
+    request: Request,
+    data: dict,
+    principal: AuthPrincipal = Depends(require_role("agent", "operator")),
+):
     config: MonitorConfig = request.app.state.config
+    bind_agent_identity(data, principal)
+    validate_report_payload(data)
     accepted, verified = verify_report_signature(data, config)
     if not accepted:
         raise HTTPException(status_code=401, detail="Invalid report signature")
+    await _claim_report_id(request, data, principal)
 
     db: Database = app.state.db
     clusterer: ThreatClusterer = app.state.clusterer
 
     event_id = data.get("report_id", str(uuid.uuid4()))
-    await run_db(db.insert_event, StoredEvent(
-        event_id=event_id,
-        event_type="threat",
-        agent_id=data.get("agent_id", ""),
-        operator_id=data.get("operator_id", ""),
-        timestamp=data.get("timestamp", time.time()),
-        payload=data,
-    ))
+    await run_db(
+        db.insert_event,
+        StoredEvent(
+            event_id=event_id,
+            event_type="threat",
+            agent_id=data.get("agent_id", ""),
+            operator_id=data.get("operator_id", ""),
+            timestamp=data.get("timestamp", time.time()),
+            payload=data,
+        ),
+    )
 
     # Build metadata text for clustering (no raw content)
     meta_parts = [
@@ -599,27 +691,44 @@ async def receive_threat(request: Request, data: dict, _role: str = Depends(requ
     clusterer.add_event(event_id, " ".join(meta_parts))
     await app.state.cache.invalidate("metrics")
 
-    await _broadcast(app.state, {
-        "type": "threat",
-        "agent_id": data.get("agent_id", ""),
-        "threat_score": data.get("threat_score", 0.0),
-    })
+    await _broadcast(
+        app.state,
+        {
+            "type": "threat",
+            "agent_id": data.get("agent_id", ""),
+            "threat_score": data.get("threat_score", 0.0),
+        },
+    )
 
     return {"status": "ok"}
 
 
 @app.post("/api/v1/heartbeat")
-async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(require_role("agent", "operator"))):
+async def receive_heartbeat(
+    request: Request,
+    data: dict,
+    principal: AuthPrincipal = Depends(require_role("agent", "operator")),
+):
     config: MonitorConfig = request.app.state.config
+    bind_agent_identity(data, principal)
+    validate_report_payload(data)
     accepted, verified = verify_report_signature(data, config)
     if not accepted:
         raise HTTPException(status_code=401, detail="Invalid report signature")
+    await _claim_report_id(request, data, principal)
 
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
     agent_id = data.get("agent_id", "")
     edges = data.get("edges", [])
+    heartbeat_event_id = data.get("report_id", str(uuid.uuid4()))
+
+    if principal.role == "agent":
+        existing_agent = await run_db(db.get_agent, agent_id)
+        data["trust_tier"] = existing_agent.trust_tier if existing_agent else 0
+        data["trust_score"] = existing_agent.trust_score if existing_agent else 0.0
+        data["is_quarantined"] = existing_agent.is_quarantined if existing_agent else False
 
     if agent_id not in graph.graph:
         app.state.agent_counts["total"] += 1
@@ -643,6 +752,7 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
 
     # Persist agent + edges in a single transaction
     from monitor.models import AgentEdge
+
     agent_node = AgentNode(
         agent_id=agent_id,
         operator_id=data.get("operator_id", ""),
@@ -665,6 +775,19 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
 
     def _persist_heartbeat(tx):
         tx.execute(
+            """INSERT INTO events
+                   (event_id, event_type, agent_id, operator_id, timestamp, payload)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                heartbeat_event_id,
+                "heartbeat",
+                agent_id,
+                data.get("operator_id", ""),
+                data.get("timestamp", time.time()),
+                json.dumps(data),
+            ),
+        )
+        tx.execute(
             """INSERT INTO agents
                    (agent_id, operator_id, trust_tier, trust_score,
                     is_compromised, is_quarantined, is_killswitched,
@@ -672,11 +795,11 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(agent_id) DO UPDATE SET
                    operator_id     = excluded.operator_id,
-                   trust_tier      = excluded.trust_tier,
-                   trust_score     = excluded.trust_score,
-                   is_compromised  = excluded.is_compromised,
-                   is_quarantined  = excluded.is_quarantined,
-                   is_killswitched = excluded.is_killswitched,
+                   trust_tier      = CASE WHEN agents.is_compromised THEN agents.trust_tier ELSE excluded.trust_tier END,
+                   trust_score     = CASE WHEN agents.is_compromised THEN agents.trust_score ELSE excluded.trust_score END,
+                   is_compromised  = agents.is_compromised,
+                   is_quarantined  = CASE WHEN agents.is_quarantined THEN agents.is_quarantined ELSE excluded.is_quarantined END,
+                   is_killswitched = agents.is_killswitched,
                    last_heartbeat  = excluded.last_heartbeat,
                    metadata        = excluded.metadata
             """,
@@ -729,7 +852,10 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
         topic_clusterer.update(agent_id, hash_for_analysis, model=embedding_model)
 
         score = contagion_detector.check_with_velocity(
-            agent_id, hash_for_analysis, model=embedding_model, topic_velocity=topic_velocity,
+            agent_id,
+            hash_for_analysis,
+            model=embedding_model,
+            topic_velocity=topic_velocity,
         )
         if score >= contagion_detector._alert_threshold:
             contagion_event = StoredEvent(
@@ -821,13 +947,16 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
             graph.mark_quarantined(agent_id, True)
             await app.state.cache.invalidate("threat-intel")
 
-            await _broadcast(app.state, {
-                "type": "quarantine",
-                "agent_id": agent_id,
-                "quarantined": True,
-                "reason": rule.reason,
-                "source": "contagion_detector",
-            })
+            await _broadcast(
+                app.state,
+                {
+                    "type": "quarantine",
+                    "agent_id": agent_id,
+                    "quarantined": True,
+                    "reason": rule.reason,
+                    "source": "contagion_detector",
+                },
+            )
 
     await _broadcast(app.state, {"type": "heartbeat", "agent_id": agent_id})
 
@@ -837,6 +966,7 @@ async def receive_heartbeat(request: Request, data: dict, _role: str = Depends(r
 # ------------------------------------------------------------------
 # Query endpoints
 # ------------------------------------------------------------------
+
 
 @app.get("/api/v1/graph")
 async def get_graph(_role: str = Depends(require_role("viewer", "operator"))):
@@ -876,8 +1006,7 @@ async def get_metrics(_role: str = Depends(require_role("viewer", "operator"))):
     topic_centroids = topic_clusterer.get_cluster_centroids()
     topic_cluster_count = sum(1 for c in topic_centroids if c["active"])
 
-    active_threats = await run_db(db.get_events, event_type="threat",
-                                  since=time.time() - 3600)
+    active_threats = await run_db(db.get_events, event_type="threat", since=time.time() - 3600)
 
     counts = app.state.agent_counts
     result = {
@@ -897,7 +1026,7 @@ async def get_metrics(_role: str = Depends(require_role("viewer", "operator"))):
 
 
 @app.get("/api/v1/threat-intel")
-async def get_threat_intel(_role: str = Depends(require_role("viewer", "operator"))):
+async def get_threat_intel(_role: str = Depends(require_role("agent", "viewer", "operator"))):
     """Return threat intelligence for agent-side pre-emptive filtering."""
     cache = app.state.cache
     cached = await cache.get("threat-intel")
@@ -989,20 +1118,24 @@ async def get_trust(agent_id: str, _role: str = Depends(require_role("viewer", "
 # Killswitch endpoints
 # ------------------------------------------------------------------
 
+
 @app.get("/api/v1/killswitch/status")
 async def killswitch_status(
     agent_id: str = "",
     operator_id: str = "",
-    _role: str = Depends(require_role("viewer", "operator")),
+    principal: AuthPrincipal = Depends(require_role("agent", "viewer", "operator")),
 ):
     """Agent polling endpoint — returns block status."""
+    agent_id, operator_id = scope_agent_query(agent_id, operator_id, principal)
     db: Database = app.state.db
     blocked, reason, scope = await run_db(db.check_killswitch, agent_id, operator_id)
     return {"blocked": blocked, "reason": reason, "scope": scope}
 
 
 @app.post("/api/v1/killswitch/rules")
-async def create_killswitch_rule(data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
+async def create_killswitch_rule(
+    data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)
+):
     """Create a killswitch rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -1015,6 +1148,7 @@ async def create_killswitch_rule(data: dict, _role: str = Depends(require_role("
         created_at=data.get("created_at", time.time()),
         created_by=data.get("created_by", ""),
     )
+
     def _persist_killswitch_create(tx):
         tx.execute(
             """INSERT INTO killswitch_rules
@@ -1080,15 +1214,18 @@ async def create_killswitch_rule(data: dict, _role: str = Depends(require_role("
     await app.state.cache.invalidate("graph")
     await app.state.cache.invalidate("metrics")
 
-    await _broadcast(app.state, {
-        "type": "killswitch",
-        "action": "created",
-        "rule_id": rule_id,
-        "scope": rule.scope,
-        "target": rule.target,
-        "blocked": rule.blocked,
-        "reason": rule.reason,
-    })
+    await _broadcast(
+        app.state,
+        {
+            "type": "killswitch",
+            "action": "created",
+            "rule_id": rule_id,
+            "scope": rule.scope,
+            "target": rule.target,
+            "blocked": rule.blocked,
+            "reason": rule.reason,
+        },
+    )
 
     return {"rule_id": rule_id, "status": "ok"}
 
@@ -1115,15 +1252,17 @@ async def list_killswitch_rules(_role: str = Depends(require_role("viewer", "ope
 
 
 @app.delete("/api/v1/killswitch/rules/{rule_id}")
-async def delete_killswitch_rule(rule_id: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
+async def delete_killswitch_rule(
+    rule_id: str,
+    _role: str = Depends(require_role("operator")),
+    _csrf: None = Depends(require_csrf),
+):
     """Remove a killswitch rule."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
     def _persist_killswitch_delete(tx):
-        rowcount = tx.execute(
-            "DELETE FROM killswitch_rules WHERE rule_id = ?", (rule_id,)
-        )
+        rowcount = tx.execute("DELETE FROM killswitch_rules WHERE rule_id = ?", (rule_id,))
         if rowcount == 0:
             return False, []
         # Re-evaluate killswitch status for all agents
@@ -1168,11 +1307,14 @@ async def delete_killswitch_rule(rule_id: str, _role: str = Depends(require_role
     await app.state.cache.invalidate("metrics")
 
     if deleted:
-        await _broadcast(app.state, {
-            "type": "killswitch",
-            "action": "deleted",
-            "rule_id": rule_id,
-        })
+        await _broadcast(
+            app.state,
+            {
+                "type": "killswitch",
+                "action": "deleted",
+                "rule_id": rule_id,
+            },
+        )
 
     return {"status": "ok" if deleted else "not_found"}
 
@@ -1181,20 +1323,24 @@ async def delete_killswitch_rule(rule_id: str, _role: str = Depends(require_role
 # Quarantine endpoints
 # ------------------------------------------------------------------
 
+
 @app.get("/api/v1/quarantine/status")
 async def quarantine_status(
     agent_id: str = "",
     operator_id: str = "",
-    _role: str = Depends(require_role("viewer", "operator")),
+    principal: AuthPrincipal = Depends(require_role("agent", "viewer", "operator")),
 ):
     """Agent polling endpoint — returns quarantine status."""
+    agent_id, operator_id = scope_agent_query(agent_id, operator_id, principal)
     db: Database = app.state.db
     quarantined, reason, scope, severity = await run_db(db.check_quarantine, agent_id, operator_id)
     return {"quarantined": quarantined, "reason": reason, "scope": scope, "severity": severity}
 
 
 @app.post("/api/v1/quarantine/rules")
-async def create_quarantine_rule(data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
+async def create_quarantine_rule(
+    data: dict, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)
+):
     """Create a quarantine rule."""
     db: Database = app.state.db
     rule_id = data.get("rule_id", str(uuid.uuid4()))
@@ -1208,6 +1354,7 @@ async def create_quarantine_rule(data: dict, _role: str = Depends(require_role("
         created_at=data.get("created_at", time.time()),
         created_by=data.get("created_by", ""),
     )
+
     def _persist_quarantine_create(tx):
         tx.execute(
             """INSERT INTO quarantine_rules
@@ -1276,16 +1423,19 @@ async def create_quarantine_rule(data: dict, _role: str = Depends(require_role("
     await app.state.cache.invalidate("threat-intel")
     await app.state.cache.invalidate("metrics")
 
-    await _broadcast(app.state, {
-        "type": "quarantine",
-        "action": "created",
-        "rule_id": rule_id,
-        "scope": rule.scope,
-        "target": rule.target,
-        "quarantined": rule.quarantined,
-        "reason": rule.reason,
-        "severity": rule.severity,
-    })
+    await _broadcast(
+        app.state,
+        {
+            "type": "quarantine",
+            "action": "created",
+            "rule_id": rule_id,
+            "scope": rule.scope,
+            "target": rule.target,
+            "quarantined": rule.quarantined,
+            "reason": rule.reason,
+            "severity": rule.severity,
+        },
+    )
 
     return {"rule_id": rule_id, "status": "ok"}
 
@@ -1313,15 +1463,17 @@ async def list_quarantine_rules(_role: str = Depends(require_role("viewer", "ope
 
 
 @app.delete("/api/v1/quarantine/rules/{rule_id}")
-async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role("operator")), _csrf: None = Depends(require_csrf)):
+async def delete_quarantine_rule(
+    rule_id: str,
+    _role: str = Depends(require_role("operator")),
+    _csrf: None = Depends(require_csrf),
+):
     """Remove a quarantine rule (release quarantine)."""
     db: Database = app.state.db
     graph: AgentGraph = app.state.graph
 
     def _persist_quarantine_delete(tx):
-        rowcount = tx.execute(
-            "DELETE FROM quarantine_rules WHERE rule_id = ?", (rule_id,)
-        )
+        rowcount = tx.execute("DELETE FROM quarantine_rules WHERE rule_id = ?", (rule_id,))
         if rowcount == 0:
             return False, []
         # Re-evaluate quarantine status for all agents
@@ -1367,11 +1519,14 @@ async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role
     await app.state.cache.invalidate("metrics")
 
     if deleted:
-        await _broadcast(app.state, {
-            "type": "quarantine",
-            "action": "deleted",
-            "rule_id": rule_id,
-        })
+        await _broadcast(
+            app.state,
+            {
+                "type": "quarantine",
+                "action": "deleted",
+                "rule_id": rule_id,
+            },
+        )
 
     return {"status": "ok" if deleted else "not_found"}
 
@@ -1379,6 +1534,7 @@ async def delete_quarantine_rule(rule_id: str, _role: str = Depends(require_role
 # ------------------------------------------------------------------
 # WebSocket
 # ------------------------------------------------------------------
+
 
 @app.websocket("/ws/dashboard")
 async def ws_dashboard(ws: WebSocket):
@@ -1399,10 +1555,13 @@ async def ws_dashboard(ws: WebSocket):
 
     # Try session cookie first
     import hashlib
+
     cookie = ws.cookies.get(_SESSION_COOKIE_NAME)
     role = None
     if cookie and config.session_secret:
-        payload = verify_session_token(cookie, config.session_secret, ttl=config.session_ttl_seconds)
+        payload = verify_session_token(
+            cookie, config.session_secret, ttl=config.session_ttl_seconds
+        )
         if payload and payload.get("role") in ("viewer", "operator", "open"):
             key_hash = payload.get("key_hash", "")
             for k in config.api_keys:
@@ -1426,6 +1585,7 @@ async def ws_dashboard(ws: WebSocket):
     await ws.accept()
     try:
         import hmac as _hmac
+
         raw = await asyncio.wait_for(ws.receive_json(), timeout=10.0)
         auth_data = raw.get("auth", {})
         api_key = auth_data.get("api_key", "")
@@ -1456,6 +1616,7 @@ async def ws_dashboard(ws: WebSocket):
 # Dashboard
 # ------------------------------------------------------------------
 
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     config: MonitorConfig = request.app.state.config
@@ -1476,6 +1637,7 @@ async def dashboard(request: Request):
         if payload and payload.get("role") in ("viewer", "operator", "open"):
             # Verify the key still exists
             import hashlib as _hashlib
+
             key_hash = payload.get("key_hash", "")
             for k in config.api_keys:
                 if _hashlib.sha256(k.encode()).hexdigest() == key_hash:

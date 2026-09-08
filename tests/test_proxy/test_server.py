@@ -81,6 +81,59 @@ class TestRouting:
             urllib.request.urlopen(req)
         assert exc_info.value.code == 400
 
+    def test_oversized_body_returns_413(self):
+        config = ProxyConfig(port=0, host="127.0.0.1", max_body_bytes=16)
+        shield = Shield(mode="enforce")
+        server = create_server(config, shield)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/v1/chat/completions",
+                data=b"x" * 17,
+                headers={"Content-Type": "application/json"},
+            )
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen(req)
+            assert exc_info.value.code == 413
+        finally:
+            server.shutdown()
+
+    def test_configured_client_key_is_required(self):
+        config = ProxyConfig(port=0, host="127.0.0.1", client_keys=("proxy-secret",))
+        shield = Shield(mode="enforce")
+        server = create_server(config, shield)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/v1/unknown",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+            )
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen(req)
+            assert exc_info.value.code == 401
+        finally:
+            server.shutdown()
+
+    def test_configured_client_key_protects_health(self):
+        config = ProxyConfig(port=0, host="127.0.0.1", client_keys=("proxy-secret",))
+        shield = Shield(mode="enforce")
+        server = create_server(config, shield)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_address[1]}/health"
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen(url)
+            assert exc_info.value.code == 401
+            req = urllib.request.Request(url, headers={"X-Aegis-Proxy-Key": "proxy-secret"})
+            with urllib.request.urlopen(req) as response:
+                assert response.status == 200
+        finally:
+            server.shutdown()
+
 
 class TestServerCreation:
     def test_create_server_binds_shield(self):
@@ -93,12 +146,19 @@ class TestServerCreation:
         assert handler_cls.proxy_config is config
         server.server_close()
 
+    def test_non_loopback_requires_client_auth(self):
+        config = ProxyConfig(port=0, host="0.0.0.0")
+        shield = Shield(mode="observe")
+        with pytest.raises(ValueError, match="requires AEGIS_PROXY_CLIENT_KEYS"):
+            create_server(config, shield)
+
 
 class TestConfig:
     def test_default_config(self):
         cfg = ProxyConfig()
         assert cfg.port == 8419
         assert cfg.aegis_mode == "enforce"
+        assert cfg.host == "127.0.0.1"
 
     def test_from_env_with_overrides(self):
         cfg = ProxyConfig.from_env(port=9999, mode="observe")

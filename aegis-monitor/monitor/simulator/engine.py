@@ -6,6 +6,7 @@ optionally integrating AEGIS Shield modules for detection measurement.
 
 from __future__ import annotations
 
+import os
 import random
 from dataclasses import asdict
 from typing import Any
@@ -40,7 +41,7 @@ class SimulationEngine:
     when the ``aegis`` package is not installed.
     """
 
-    def __init__(self, config: SimConfig) -> None:
+    def __init__(self, config: SimConfig, embedding_provider: Any = None) -> None:
         self._config = config
         self._rng = random.Random(config.seed)
         self._state = SimState.IDLE
@@ -61,17 +62,29 @@ class SimulationEngine:
         self._stable_clusters: dict[int, dict[str, Any]] = {}
         self._hash_available = False
         self._semantic_hasher: Any = None
+        embeddings_disabled = embedding_provider is None and os.environ.get(
+            "AEGIS_SIM_DISABLE_EMBEDDINGS", ""
+        ).lower() in {"1", "true", "yes"}
         try:
             from aegis.behavior.content_hash import SemanticHasher
             from aegis.behavior.embedding_providers import SentenceTransformerProvider
 
-            _provider = SentenceTransformerProvider()
+            if embedding_provider is not None:
+                _provider = embedding_provider
+            elif embeddings_disabled:
+                raise ImportError("disabled by AEGIS_SIM_DISABLE_EMBEDDINGS")
+            else:
+                _provider = SentenceTransformerProvider()
             self._semantic_hasher = SemanticHasher(_provider)
             # Eagerly verify that sentence-transformers is importable so we
             # don't silently produce empty hashes for the entire simulation.
-            _provider._ensure_model()
+            ensure_model = getattr(_provider, "_ensure_model", None)
+            if ensure_model is not None:
+                ensure_model()
             self._hash_available = True
-        except ImportError as exc:
+        except Exception as exc:
+            if embeddings_disabled:
+                return
             import warnings
 
             warnings.warn(
@@ -93,9 +106,7 @@ class SimulationEngine:
     def generate(self) -> None:
         """Generate population and contact graph.  IDLE -> READY."""
         if self._state != SimState.IDLE:
-            raise RuntimeError(
-                f"Cannot generate from state {self._state.value!r}; expected IDLE"
-            )
+            raise RuntimeError(f"Cannot generate from state {self._state.value!r}; expected IDLE")
 
         # 1. Build ContactGraph
         self._graph = ContactGraph.generate(
@@ -158,33 +169,26 @@ class SimulationEngine:
     def start(self) -> None:
         """Start the simulation.  READY -> RUNNING."""
         if self._state != SimState.READY:
-            raise RuntimeError(
-                f"Cannot start from state {self._state.value!r}; expected READY"
-            )
+            raise RuntimeError(f"Cannot start from state {self._state.value!r}; expected READY")
         self._state = SimState.RUNNING
 
     def pause(self) -> None:
         """Pause the simulation.  RUNNING -> PAUSED."""
         if self._state != SimState.RUNNING:
-            raise RuntimeError(
-                f"Cannot pause from state {self._state.value!r}; expected RUNNING"
-            )
+            raise RuntimeError(f"Cannot pause from state {self._state.value!r}; expected RUNNING")
         self._state = SimState.PAUSED
 
     def resume(self) -> None:
         """Resume the simulation.  PAUSED -> RUNNING."""
         if self._state != SimState.PAUSED:
-            raise RuntimeError(
-                f"Cannot resume from state {self._state.value!r}; expected PAUSED"
-            )
+            raise RuntimeError(f"Cannot resume from state {self._state.value!r}; expected PAUSED")
         self._state = SimState.RUNNING
 
     def stop(self) -> None:
         """Stop the simulation.  RUNNING/PAUSED -> COMPLETED."""
         if self._state not in (SimState.RUNNING, SimState.PAUSED):
             raise RuntimeError(
-                f"Cannot stop from state {self._state.value!r}; "
-                "expected RUNNING or PAUSED"
+                f"Cannot stop from state {self._state.value!r}; expected RUNNING or PAUSED"
             )
         self._state = SimState.COMPLETED
 
@@ -218,9 +222,7 @@ class SimulationEngine:
         if self._state == SimState.READY:
             self._state = SimState.RUNNING
         if self._state != SimState.RUNNING:
-            raise RuntimeError(
-                f"Cannot tick in state {self._state.value!r}; expected RUNNING"
-            )
+            raise RuntimeError(f"Cannot tick in state {self._state.value!r}; expected RUNNING")
         assert self._graph is not None
         assert self._corpus is not None
 
@@ -232,9 +234,7 @@ class SimulationEngine:
 
         # Phase 1: Infected agents spread
         infected_ids = [
-            aid
-            for aid, agent in self._agents.items()
-            if agent.status == AgentStatus.INFECTED
+            aid for aid, agent in self._agents.items() if agent.status == AgentStatus.INFECTED
         ]
         for aid in infected_ids:
             agent = self._agents[aid]
@@ -242,9 +242,7 @@ class SimulationEngine:
             if not neighbors:
                 continue
             num_contacts = max(1, int(agent.activity_level * 2))
-            contacts = self._rng.sample(
-                neighbors, min(num_contacts, len(neighbors))
-            )
+            contacts = self._rng.sample(neighbors, min(num_contacts, len(neighbors)))
             for target_id in contacts:
                 target = self._agents[target_id]
                 payload = self._corpus.generate(self._rng)
@@ -283,9 +281,7 @@ class SimulationEngine:
                         susceptibility = target.compute_susceptibility(
                             model_spec.base_susceptibility
                         )
-                        worm_susc = susceptibility.get(
-                            TechniqueType.WORM_PROPAGATION.value, 0.0
-                        )
+                        worm_susc = susceptibility.get(TechniqueType.WORM_PROPAGATION.value, 0.0)
                         if self._rng.random() < worm_susc:
                             target.status = AgentStatus.INFECTED
                             target.infection_tick = self._tick_count
@@ -308,25 +304,34 @@ class SimulationEngine:
                         else:
                             # Susceptibility roll failed
                             transmission_attempts.append(
-                                {"source": aid, "target": target_id, "success": False, "blocked_by": "natural"}
+                                {
+                                    "source": aid,
+                                    "target": target_id,
+                                    "success": False,
+                                    "blocked_by": "natural",
+                                }
                             )
-                    elif not payload.is_benign and TechniqueType.WORM_PROPAGATION in payload.techniques:
+                    elif (
+                        not payload.is_benign
+                        and TechniqueType.WORM_PROPAGATION in payload.techniques
+                    ):
                         # Worm payload was blocked by AEGIS detection
                         transmission_attempts.append(
-                            {"source": aid, "target": target_id, "success": False, "blocked_by": "aegis"}
+                            {
+                                "source": aid,
+                                "target": target_id,
+                                "success": False,
+                                "blocked_by": "aegis",
+                            }
                         )
 
         # Phase 2: Background benign traffic
         clean_ids = [
-            aid
-            for aid, agent in self._agents.items()
-            if agent.status == AgentStatus.CLEAN
+            aid for aid, agent in self._agents.items() if agent.status == AgentStatus.CLEAN
         ]
         for aid in clean_ids:
             agent = self._agents[aid]
-            num_messages = max(
-                0, int(self._config.background_message_rate * agent.activity_level)
-            )
+            num_messages = max(0, int(self._config.background_message_rate * agent.activity_level))
             for _ in range(num_messages):
                 bg_payload = self._corpus.generate_background(self._rng)
 
@@ -344,18 +349,12 @@ class SimulationEngine:
                 # Record confusion matrix (all techniques present=False)
                 bg_detected = scan_result.get("detected", False)
                 for technique in TechniqueType:
-                    tick_confusion.record(
-                        technique, present=False, detected=bg_detected
-                    )
-                    self._confusion.record(
-                        technique, present=False, detected=bg_detected
-                    )
+                    tick_confusion.record(technique, present=False, detected=bg_detected)
+                    self._confusion.record(technique, present=False, detected=bg_detected)
 
         # Phase 3: Recovery - quarantined agents recover after recovery_ticks
         quarantined_ids = [
-            aid
-            for aid, agent in self._agents.items()
-            if agent.status == AgentStatus.QUARANTINED
+            aid for aid, agent in self._agents.items() if agent.status == AgentStatus.QUARANTINED
         ]
         for aid in quarantined_ids:
             agent = self._agents[aid]
@@ -420,28 +419,32 @@ class SimulationEngine:
                     if self._rng.random() < self._config.sentinel_recovery_prob:
                         target.status = AgentStatus.RECOVERED
                         target.recovery_tick = self._tick_count
-                        status_changes.append({
-                            "agent_id": target_id,
-                            "from": AgentStatus.INFECTED.value,
-                            "to": AgentStatus.RECOVERED.value,
-                            "tick": self._tick_count,
-                            "sentinel": sentinel_id,
-                            "mechanism": "dendritic_recovery",
-                        })
+                        status_changes.append(
+                            {
+                                "agent_id": target_id,
+                                "from": AgentStatus.INFECTED.value,
+                                "to": AgentStatus.RECOVERED.value,
+                                "tick": self._tick_count,
+                                "sentinel": sentinel_id,
+                                "mechanism": "dendritic_recovery",
+                            }
+                        )
                 else:
                     # Re-scan gate tripped: escalate to quarantine
                     if self._rng.random() < self._config.sentinel_recovery_prob:
                         target.status = AgentStatus.QUARANTINED
                         target.quarantine_tick = self._tick_count
                         target.detected_status = AgentStatus.QUARANTINED
-                        status_changes.append({
-                            "agent_id": target_id,
-                            "from": AgentStatus.INFECTED.value,
-                            "to": AgentStatus.QUARANTINED.value,
-                            "tick": self._tick_count,
-                            "sentinel": sentinel_id,
-                            "mechanism": "dendritic_quarantine",
-                        })
+                        status_changes.append(
+                            {
+                                "agent_id": target_id,
+                                "from": AgentStatus.INFECTED.value,
+                                "to": AgentStatus.QUARANTINED.value,
+                                "tick": self._tick_count,
+                                "sentinel": sentinel_id,
+                                "mechanism": "dendritic_quarantine",
+                            }
+                        )
 
         # Phase 4: Quarantine of infected agents (AEGIS only)
         # Quarantine is an AEGIS capability — agents without AEGIS have no
@@ -466,9 +469,7 @@ class SimulationEngine:
         for aid in current_infected:
             agent = self._agents[aid]
             ticks_infected = (
-                self._tick_count - agent.infection_tick
-                if agent.infection_tick is not None
-                else 0
+                self._tick_count - agent.infection_tick if agent.infection_tick is not None else 0
             )
             detection_prob = min(detection_ceiling, ticks_infected * ramp_rate)
             if self._rng.random() < detection_prob:
@@ -557,9 +558,7 @@ class SimulationEngine:
         """Return per-agent embedding entries with top-5 nearest neighbors
         and cluster centroid information."""
         agents_with_hashes = [
-            (aid, agent)
-            for aid, agent in self._agents.items()
-            if agent.content_hash is not None
+            (aid, agent) for aid, agent in self._agents.items() if agent.content_hash is not None
         ]
         if not agents_with_hashes:
             self._update_stable_clusters()
@@ -603,9 +602,7 @@ class SimulationEngine:
             ]
 
             # Contagion score
-            contagion_score = self._contagion_detector.check(
-                aid, agent.content_hash or ""
-            )
+            contagion_score = self._contagion_detector.check(aid, agent.content_hash or "")
 
             entries.append(
                 {
@@ -641,9 +638,7 @@ class SimulationEngine:
         agents have hashes.
         """
         agents_with_hashes = [
-            (aid, agent)
-            for aid, agent in self._agents.items()
-            if agent.content_hash is not None
+            (aid, agent) for aid, agent in self._agents.items() if agent.content_hash is not None
         ]
         if not agents_with_hashes:
             return None
@@ -677,7 +672,7 @@ class SimulationEngine:
         stable_map = self._update_stable_clusters()
 
         # Classical MDS: double-center the squared distance matrix
-        D2 = dist ** 2
+        D2 = dist**2
         H = np.eye(n) - np.ones((n, n)) / n
         B = -0.5 * H @ D2 @ H
 
@@ -696,9 +691,7 @@ class SimulationEngine:
             if data["active"] and data["centroid_agent_id"]:
                 cagent = self._agents.get(data["centroid_agent_id"])
                 if cagent and cagent.content_hash:
-                    centroid_hashes[data["cluster_id"]] = hex_to_int(
-                        cagent.content_hash
-                    )
+                    centroid_hashes[data["cluster_id"]] = hex_to_int(cagent.content_hash)
 
         points: list[dict[str, Any]] = []
         for i, aid in enumerate(ids):
@@ -715,19 +708,19 @@ class SimulationEngine:
 
             # Compute distance from cluster centroid
             if cluster_id in centroid_hashes:
-                dist_from_centroid = hamming_distance(
-                    hash_ints[i], centroid_hashes[cluster_id]
-                )
+                dist_from_centroid = hamming_distance(hash_ints[i], centroid_hashes[cluster_id])
 
-            points.append({
-                "agent_id": aid,
-                "x": float(coords[i, 0]),
-                "y": float(coords[i, 1]),
-                "status": agent.status.value,
-                "cluster_id": cluster_id,
-                "is_centroid": is_centroid,
-                "distance_from_centroid": dist_from_centroid,
-            })
+            points.append(
+                {
+                    "agent_id": aid,
+                    "x": float(coords[i, 0]),
+                    "y": float(coords[i, 1]),
+                    "status": agent.status.value,
+                    "cluster_id": cluster_id,
+                    "is_centroid": is_centroid,
+                    "distance_from_centroid": dist_from_centroid,
+                }
+            )
 
         return points
 
@@ -835,7 +828,7 @@ class SimulationEngine:
                 for bit in range(128):
                     count = sum(1 for _, h in member_hashes if h & (1 << bit))
                     if count > num / 2:
-                        mean_hash |= (1 << bit)
+                        mean_hash |= 1 << bit
 
                 best_aid = member_hashes[0][0]
                 best_dist = hamming_distance(member_hashes[0][1], mean_hash)
@@ -853,26 +846,27 @@ class SimulationEngine:
             # Collect known worm payloads from infected members
             worm_entries: list[dict[str, Any]] = []
             if member_hashes and centroid_agent_id:
-                centroid_h = next(
-                    h for a, h in member_hashes if a == centroid_agent_id
-                )
+                centroid_h = next(h for a, h in member_hashes if a == centroid_agent_id)
                 for aid_w in raw_members:
                     agent_w = self._agents.get(aid_w)
                     if (
                         agent_w
-                        and agent_w.status
-                        in (AgentStatus.INFECTED, AgentStatus.QUARANTINED)
+                        and agent_w.status in (AgentStatus.INFECTED, AgentStatus.QUARANTINED)
                         and agent_w.last_payload_text
                         and aid_w != centroid_agent_id
                     ):
                         h_w = hex_to_int(agent_w.content_hash) if agent_w.content_hash else None
                         dist = hamming_distance(h_w, centroid_h) if h_w is not None else None
-                        worm_entries.append({
-                            "agent_id": aid_w,
-                            "text": agent_w.last_payload_text,
-                            "distance": dist,
-                        })
-                worm_entries.sort(key=lambda e: e["distance"] if e["distance"] is not None else 999)
+                        worm_entries.append(
+                            {
+                                "agent_id": aid_w,
+                                "text": agent_w.last_payload_text,
+                                "distance": dist,
+                            }
+                        )
+                worm_entries.sort(
+                    key=lambda e: e["distance"] if e["distance"] is not None else 999
+                )
 
             # Count current statuses and posts of cluster members
             status_counts: dict[str, int] = {}
@@ -1008,9 +1002,7 @@ class SimulationEngine:
                 new_dists[new_key] = d_new
 
             # Remove old entries involving a or b
-            keys_to_remove = [
-                k for k in dists if a in k or b in k
-            ]
+            keys_to_remove = [k for k in dists if a in k or b in k]
             for k in keys_to_remove:
                 del dists[k]
 
@@ -1033,6 +1025,7 @@ class SimulationEngine:
             return None
         try:
             import asyncio
+
             hash_int = asyncio.run(self._semantic_hasher.hash(text))
             return f"{hash_int:032x}"
         except Exception:
@@ -1087,9 +1080,7 @@ class SimulationEngine:
         if len(hub_candidates) >= n:
             chosen = self._rng.sample(hub_candidates, n)
         else:
-            remaining = [
-                aid for aid in self._agents if aid not in hub_candidates
-            ]
+            remaining = [aid for aid in self._agents if aid not in hub_candidates]
             extra = self._rng.sample(remaining, min(n - len(hub_candidates), len(remaining)))
             chosen = hub_candidates + extra
 
@@ -1163,11 +1154,7 @@ class SimulationEngine:
         if not self._seed_ids:
             return 0.0
 
-        seed_agents = [
-            self._agents[aid]
-            for aid in self._seed_ids
-            if aid in self._agents
-        ]
+        seed_agents = [self._agents[aid] for aid in self._seed_ids if aid in self._agents]
         if not seed_agents:
             return 0.0
 
@@ -1190,4 +1177,3 @@ class SimulationEngine:
 
         total_secondary = sum(agent.secondary_infections for agent in eligible_agents)
         return total_secondary / len(eligible_agents)
-

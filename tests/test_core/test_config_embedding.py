@@ -32,3 +32,8 @@ class TestEnvOverrideEmbeddingModel:
         monkeypatch.setenv("AEGIS_EMBEDDING_MODEL", "gemini-embedding-2-preview")
         cfg = load_config()
         assert cfg.behavior.content_hash.embedding_model == "gemini-embedding-2-preview"
+
+    def test_enabled_env_override(self, monkeypatch):
+        monkeypatch.setenv("AEGIS_CONTENT_HASH_ENABLED", "false")
+        cfg = load_config()
+        assert cfg.behavior.content_hash.enabled is False

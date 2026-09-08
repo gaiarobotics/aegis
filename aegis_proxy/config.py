@@ -16,9 +16,13 @@ class ProxyConfig:
     upstream_url: str = ""
     upstream_key: str = ""
     port: int = 8419
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     aegis_mode: str = "enforce"
     aegis_config: str = ""
+    client_keys: tuple[str, ...] = field(default_factory=tuple)
+    max_body_bytes: int = 1_048_576
+    max_concurrent_requests: int = 32
+    request_timeout_seconds: float = 30.0
 
     @classmethod
     def from_env(cls, **overrides: str | int) -> ProxyConfig:
@@ -28,13 +32,22 @@ class ProxyConfig:
             or os.environ.get("AEGIS_PROXY_UPSTREAM_URL", ""),
             upstream_key=str(overrides.get("upstream_key", ""))
             or os.environ.get("AEGIS_PROXY_UPSTREAM_KEY", ""),
-            port=int(overrides.get("port", 0))
-            or int(os.environ.get("AEGIS_PROXY_PORT", "8419")),
-            host=str(overrides.get("host", ""))
-            or os.environ.get("AEGIS_PROXY_HOST", "0.0.0.0"),
-            aegis_mode=str(overrides.get("mode", ""))
-            or os.environ.get("AEGIS_MODE", "enforce"),
+            port=int(overrides.get("port", 0)) or int(os.environ.get("AEGIS_PROXY_PORT", "8419")),
+            host=str(overrides.get("host", "")) or os.environ.get("AEGIS_PROXY_HOST", "127.0.0.1"),
+            aegis_mode=str(overrides.get("mode", "")) or os.environ.get("AEGIS_MODE", "enforce"),
             aegis_config=str(overrides.get("aegis_config", ""))
             or os.environ.get("AEGIS_CONFIG", ""),
+            client_keys=tuple(
+                key.strip()
+                for key in os.environ.get("AEGIS_PROXY_CLIENT_KEYS", "").split(",")
+                if key.strip()
+            ),
+            max_body_bytes=int(os.environ.get("AEGIS_PROXY_MAX_BODY_BYTES", "1048576")),
+            max_concurrent_requests=int(
+                os.environ.get("AEGIS_PROXY_MAX_CONCURRENT_REQUESTS", "32")
+            ),
+            request_timeout_seconds=float(
+                os.environ.get("AEGIS_PROXY_REQUEST_TIMEOUT_SECONDS", "30")
+            ),
         )
         return cfg

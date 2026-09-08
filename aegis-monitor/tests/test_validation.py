@@ -127,12 +127,19 @@ class TestQuorum:
 
 
 class TestEmptyHash:
-    def test_empty_hash_skips_all_checks(self):
+    def test_empty_hash_still_checks_reporter_reputation(self):
         v = ReportValidator(_cfg(compromise_quorum=2))
         r = v.validate("reporter", "victim", "", 0, True)
         assert r.accepted is True
         assert r.hash_confirmed is False
-        assert r.rejection_reason == ""
+        assert r.rejection_reason == "low_trust"
+
+    def test_empty_hash_requires_independent_quorum(self):
+        v = ReportValidator(_cfg(compromise_quorum=2))
+        first = v.validate("reporter-1", "victim", "", 2, False)
+        second = v.validate("reporter-2", "victim", "", 2, False)
+        assert first.rejection_reason == "pending_quorum"
+        assert second.hash_confirmed is True
 
 
 class TestPendingPruning:

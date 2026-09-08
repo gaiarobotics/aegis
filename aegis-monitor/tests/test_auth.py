@@ -2,32 +2,26 @@
 
 import os
 import pytest
-from monitor.config import MonitorConfig, AgentKey
+from monitor.config import MonitorConfig, AgentKey, ApiKeyIdentity
 
 
 class TestAgentKeyConfig:
     def test_parse_hmac_key_from_yaml(self, tmp_path):
         cfg_file = tmp_path / "monitor.yaml"
-        cfg_file.write_text(
-            'agent_public_keys:\n'
-            '  "agent-1": "hmac:' + 'aa' * 32 + '"\n'
-        )
+        cfg_file.write_text('agent_public_keys:\n  "agent-1": "hmac:' + "aa" * 32 + '"\n')
         cfg = MonitorConfig.load(cfg_file)
         assert "agent-1" in cfg.agent_public_keys
         key = cfg.agent_public_keys["agent-1"]
         assert key.key_type == "hmac-sha256"
-        assert key.key_bytes == bytes.fromhex('aa' * 32)
+        assert key.key_bytes == bytes.fromhex("aa" * 32)
 
     def test_parse_ed25519_key_from_yaml(self, tmp_path):
         cfg_file = tmp_path / "monitor.yaml"
-        cfg_file.write_text(
-            'agent_public_keys:\n'
-            '  "agent-2": "ed25519:' + 'bb' * 32 + '"\n'
-        )
+        cfg_file.write_text('agent_public_keys:\n  "agent-2": "ed25519:' + "bb" * 32 + '"\n')
         cfg = MonitorConfig.load(cfg_file)
         key = cfg.agent_public_keys["agent-2"]
         assert key.key_type == "ed25519"
-        assert key.key_bytes == bytes.fromhex('bb' * 32)
+        assert key.key_bytes == bytes.fromhex("bb" * 32)
 
     def test_parse_keys_from_env_var(self, monkeypatch):
         monkeypatch.setenv(
@@ -53,10 +47,7 @@ class TestAgentKeyConfig:
 
     def test_invalid_key_type_rejected(self, tmp_path):
         cfg_file = tmp_path / "monitor.yaml"
-        cfg_file.write_text(
-            'agent_public_keys:\n'
-            '  "agent-1": "rsa:' + 'aa' * 32 + '"\n'
-        )
+        cfg_file.write_text('agent_public_keys:\n  "agent-1": "rsa:' + "aa" * 32 + '"\n')
         with pytest.raises(ValueError, match="Unsupported key type"):
             MonitorConfig.load(cfg_file)
 
@@ -69,7 +60,21 @@ class TestConfigMigration:
             'api_keys:\n  "sk-agent-1": agent\n  "sk-view-1": viewer\n  "sk-ops-1": operator\n'
         )
         cfg = MonitorConfig.load(cfg_file)
-        assert cfg.api_keys == {"sk-agent-1": "agent", "sk-view-1": "viewer", "sk-ops-1": "operator"}
+        assert cfg.api_keys == {
+            "sk-agent-1": "agent",
+            "sk-view-1": "viewer",
+            "sk-ops-1": "operator",
+        }
+
+    def test_agent_key_identity_binding(self, tmp_path):
+        cfg_file = tmp_path / "monitor.yaml"
+        cfg_file.write_text(
+            'api_keys:\n  "sk-agent-1":\n    role: agent\n'
+            "    agent_id: agent-1\n    operator_id: op-1\n"
+        )
+        cfg = MonitorConfig.load(cfg_file)
+        assert cfg.api_keys["sk-agent-1"] == "agent"
+        assert cfg.api_key_identities["sk-agent-1"].agent_id == "agent-1"
 
     def test_list_api_keys_migration(self, tmp_path):
         """Old format: list of strings treated as operator with warning."""
@@ -109,7 +114,7 @@ class TestConfigMigration:
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 
-from monitor.auth import verify_api_key, require_role, get_config
+from monitor.auth import require_role
 
 
 def _make_app(api_keys: dict[str, str]) -> tuple[FastAPI, TestClient]:
@@ -186,6 +191,7 @@ class TestRoleResolution:
         """Verify we use hmac.compare_digest (not `in` or `==`)."""
         import inspect
         from monitor import auth
+
         source = inspect.getsource(auth.verify_api_key)
         assert "compare_digest" in source
 
@@ -213,7 +219,7 @@ class TestSessionTokens:
     def test_tampered_token_rejected(self):
         token = create_session_token("viewer", "sk-view-1", self.SECRET)
         parts = token.split(".")
-        parts[-1] = "a" + parts[-1][1:]
+        parts[-1] = ("b" if parts[-1][0] == "a" else "a") + parts[-1][1:]
         tampered = ".".join(parts)
         payload = verify_session_token(tampered, self.SECRET, ttl=3600)
         assert payload is None
@@ -311,13 +317,19 @@ def auth_client(tmp_path):
             "sk-view-1": "viewer",
             "sk-ops-1": "operator",
         }
+        monitor_app.state.config.api_key_identities = {
+            "sk-agent-1": ApiKeyIdentity(role="agent", agent_id="agent-1"),
+        }
+        monitor_app.state.config.agent_public_keys = {}
         monitor_app.state.config.session_secret = "test-session-secret"
         monitor_app.state.config.session_ttl_seconds = 3600
         monitor_app.state.config.compromise_quorum = 1
         monitor_app.state.config.compromise_min_trust_tier = 0
         from monitor.validation import ReportValidator
+
         monitor_app.state.report_validator = ReportValidator(monitor_app.state.config)
         from monitor.cache import InMemoryCache
+
         monitor_app.state.cache = InMemoryCache()
         yield c
 
@@ -369,6 +381,7 @@ class TestAuthRoutes:
     def test_login_rate_limited(self, auth_client):
         """Excessive login attempts should return 429."""
         from monitor.app import _login_limiter
+
         _login_limiter._attempts.clear()
         for _ in range(10):
             auth_client.post("/auth/login", json={"api_key": "sk-ops-1"})
@@ -383,7 +396,11 @@ class TestEndpointPermissions:
         ("POST", "/api/v1/reports/compromise", {"agent_id": "a", "evidence": {}}),
         ("POST", "/api/v1/reports/trust", {"agent_id": "a", "trust_score": 50}),
         ("POST", "/api/v1/reports/threat", {"agent_id": "a", "threat_score": 0.5}),
-        ("POST", "/api/v1/heartbeat", {"agent_id": "a", "operator_id": "o", "trust_tier": 1, "trust_score": 50, "edges": []}),
+        (
+            "POST",
+            "/api/v1/heartbeat",
+            {"agent_id": "a", "operator_id": "o", "trust_tier": 1, "trust_score": 50, "edges": []},
+        ),
     ]
 
     VIEWER_ENDPOINTS = [
@@ -413,17 +430,61 @@ class TestEndpointPermissions:
             return client.get(path, headers=headers)
         elif method == "DELETE":
             return client.delete(path, headers=headers)
-        return client.post(path, json=json_body, headers=headers)
+        body = dict(json_body or {})
+        if key == "sk-agent-1":
+            body["agent_id"] = "agent-1"
+            body["report_id"] = f"report-{time.time_ns()}"
+            body["timestamp"] = time.time()
+        return client.post(path, json=body, headers=headers)
 
     def test_agent_key_can_submit_reports(self, auth_client):
         for method, path, body in self.AGENT_ENDPOINTS:
             resp = self._request(auth_client, method, path, body, "sk-agent-1")
             assert resp.status_code != 403, f"agent rejected from {path}"
 
+    def test_agent_key_cannot_impersonate_another_agent(self, auth_client):
+        resp = auth_client.post(
+            "/api/v1/heartbeat",
+            json={
+                "report_id": "impersonation-1",
+                "timestamp": time.time(),
+                "agent_id": "victim-agent",
+                "edges": [],
+            },
+            headers={"Authorization": "Bearer sk-agent-1"},
+        )
+        assert resp.status_code == 403
+
+    def test_replayed_agent_report_is_rejected(self, auth_client):
+        report = {
+            "report_id": "replay-1",
+            "timestamp": time.time(),
+            "agent_id": "agent-1",
+            "edges": [],
+        }
+        headers = {"Authorization": "Bearer sk-agent-1"}
+        assert (
+            auth_client.post("/api/v1/heartbeat", json=report, headers=headers).status_code == 200
+        )
+        # Simulate a process restart: the durable event record must still reject
+        # the replay after the in-memory replay cache has been lost.
+        auth_client.app.state.seen_report_ids.clear()
+        assert (
+            auth_client.post("/api/v1/heartbeat", json=report, headers=headers).status_code == 409
+        )
+
     def test_agent_key_rejected_from_viewer_endpoints(self, auth_client):
+        agent_control_paths = {
+            "/api/v1/threat-intel",
+            "/api/v1/killswitch/status",
+            "/api/v1/quarantine/status",
+        }
         for method, path, body in self.VIEWER_ENDPOINTS:
             resp = self._request(auth_client, method, path, body, "sk-agent-1")
-            assert resp.status_code == 403, f"agent allowed on {path}"
+            if path in agent_control_paths:
+                assert resp.status_code == 200, f"agent cannot poll {path}"
+            else:
+                assert resp.status_code == 403, f"agent allowed on {path}"
 
     def test_agent_key_rejected_from_operator_endpoints(self, auth_client):
         for method, path, body in self.OPERATOR_ENDPOINTS:
@@ -512,6 +573,7 @@ class TestCSRFEnforcement:
     @pytest.fixture(autouse=True)
     def _clear_rate_limiter(self):
         from monitor.app import _login_limiter
+
         _login_limiter._attempts.clear()
 
     def test_operator_mutation_via_cookie_requires_csrf(self, auth_client):
@@ -567,6 +629,7 @@ class TestSessionSecretWarning:
         """Auto-generated session secret should emit a loud warning."""
         import logging
         from monitor.app import _ensure_session_secret
+
         cfg = MonitorConfig()
         assert cfg.session_secret == ""
         with caplog.at_level(logging.WARNING):
@@ -577,6 +640,7 @@ class TestSessionSecretWarning:
     def test_no_warning_when_secret_configured(self, caplog):
         import logging
         from monitor.app import _ensure_session_secret
+
         cfg = MonitorConfig(session_secret="my-secret")
         with caplog.at_level(logging.WARNING):
             _ensure_session_secret(cfg)
@@ -585,12 +649,11 @@ class TestSessionSecretWarning:
 
 from monitor.auth import verify_report_signature
 from aegis.identity.attestation import generate_keypair
-from aegis.monitoring.reports import CompromiseReport, TrustReport, ThreatEventReport, AgentHeartbeat
+from aegis.monitoring.reports import CompromiseReport, AgentHeartbeat
 
 
 class TestReportSignatureVerification:
     def _make_config_with_key(self, agent_id, keypair):
-        from monitor.config import AgentKey
         return MonitorConfig(
             agent_public_keys={
                 agent_id: AgentKey(key_type=keypair.key_type, key_bytes=keypair.public_key),
@@ -603,13 +666,14 @@ class TestReportSignatureVerification:
         assert accepted is True
         assert verified is False
 
-    def test_unknown_agent_accepted_unverified(self):
-        from monitor.config import AgentKey
-        cfg = MonitorConfig(agent_public_keys={
-            "other-agent": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
-        })
+    def test_unknown_agent_rejected(self):
+        cfg = MonitorConfig(
+            agent_public_keys={
+                "other-agent": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
+            }
+        )
         accepted, verified = verify_report_signature({"agent_id": "unknown"}, cfg)
-        assert accepted is True
+        assert accepted is False
         assert verified is False
 
     def test_known_agent_valid_signature_accepted(self):
@@ -641,10 +705,11 @@ class TestReportSignatureVerification:
         assert verified is False
 
     def test_known_agent_missing_signature_rejected(self):
-        from monitor.config import AgentKey
-        cfg = MonitorConfig(agent_public_keys={
-            "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
-        })
+        cfg = MonitorConfig(
+            agent_public_keys={
+                "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
+            }
+        )
         data = {"agent_id": "agent-1", "report_type": "compromise", "signature": ""}
         accepted, verified = verify_report_signature(data, cfg)
         assert accepted is False
@@ -655,10 +720,11 @@ class TestReportSignatureVerification:
         report = CompromiseReport(agent_id="agent-1")
         report.sign(kp)
         data = report.to_dict()
-        from monitor.config import AgentKey
-        cfg = MonitorConfig(agent_public_keys={
-            "agent-1": AgentKey(key_type="ed25519", key_bytes=kp.public_key),
-        })
+        cfg = MonitorConfig(
+            agent_public_keys={
+                "agent-1": AgentKey(key_type="ed25519", key_bytes=kp.public_key),
+            }
+        )
         accepted, verified = verify_report_signature(data, cfg)
         assert accepted is False
         assert verified is False
@@ -681,20 +747,24 @@ class TestReportSignatureVerification:
 
 class TestEndpointSignatureVerification:
     def test_known_agent_bad_signature_rejected(self, auth_client):
-        from monitor.config import AgentKey
         kp = generate_keypair("hmac-sha256")
         auth_client.app.state.config.agent_public_keys = {
             "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=kp.public_key),
         }
         resp = auth_client.post(
             "/api/v1/reports/compromise",
-            json={"agent_id": "agent-1", "compromised_agent_id": "agent-2"},
+            json={
+                "report_id": "bad-sig-1",
+                "timestamp": time.time(),
+                "agent_id": "agent-1",
+                "compromised_agent_id": "agent-2",
+                "report_type": "compromise",
+            },
             headers={"Authorization": "Bearer sk-agent-1"},
         )
         assert resp.status_code == 401
 
     def test_known_agent_valid_signature_accepted(self, auth_client):
-        from monitor.config import AgentKey
         kp = generate_keypair("hmac-sha256")
         auth_client.app.state.config.agent_public_keys = {
             "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=kp.public_key),
@@ -712,36 +782,54 @@ class TestEndpointSignatureVerification:
         )
         assert resp.status_code != 401
 
-    def test_unknown_agent_accepted_without_signature(self, auth_client):
-        from monitor.config import AgentKey
+    def test_unknown_agent_rejected_without_signature(self, auth_client):
         auth_client.app.state.config.agent_public_keys = {
             "other-agent": AgentKey(key_type="hmac-sha256", key_bytes=b"\x00" * 32),
         }
         resp = auth_client.post(
             "/api/v1/reports/compromise",
-            json={"agent_id": "agent-1", "compromised_agent_id": "agent-2"},
+            json={
+                "report_id": "unknown-1",
+                "timestamp": time.time(),
+                "agent_id": "agent-1",
+                "compromised_agent_id": "agent-2",
+                "report_type": "compromise",
+            },
             headers={"Authorization": "Bearer sk-agent-1"},
         )
-        assert resp.status_code != 401
+        assert resp.status_code == 401
 
     def test_open_mode_no_verification(self, auth_client):
         auth_client.app.state.config.agent_public_keys = {}
         resp = auth_client.post(
             "/api/v1/reports/compromise",
-            json={"agent_id": "agent-1", "compromised_agent_id": "agent-2"},
+            json={
+                "report_id": "unsigned-1",
+                "timestamp": time.time(),
+                "agent_id": "agent-1",
+                "compromised_agent_id": "agent-2",
+            },
             headers={"Authorization": "Bearer sk-agent-1"},
         )
         assert resp.status_code != 401
 
     def test_heartbeat_verification(self, auth_client):
-        from monitor.config import AgentKey
         kp = generate_keypair("hmac-sha256")
         auth_client.app.state.config.agent_public_keys = {
             "agent-1": AgentKey(key_type="hmac-sha256", key_bytes=kp.public_key),
         }
         resp = auth_client.post(
             "/api/v1/heartbeat",
-            json={"agent_id": "agent-1", "operator_id": "op-1", "trust_tier": 1, "trust_score": 50, "edges": []},
+            json={
+                "report_id": "bad-heartbeat-1",
+                "timestamp": time.time(),
+                "agent_id": "agent-1",
+                "operator_id": "op-1",
+                "trust_tier": 1,
+                "trust_score": 50,
+                "edges": [],
+                "report_type": "heartbeat",
+            },
             headers={"Authorization": "Bearer sk-agent-1"},
         )
         assert resp.status_code == 401
@@ -750,11 +838,13 @@ class TestEndpointSignatureVerification:
 class TestVerifiedFieldPersistence:
     def test_compromise_record_has_verified_field(self):
         from monitor.models import CompromiseRecord
+
         record = CompromiseRecord(record_id="r1", verified=True)
         assert record.verified is True
 
     def test_compromise_record_defaults_unverified(self):
         from monitor.models import CompromiseRecord
+
         record = CompromiseRecord(record_id="r1")
         assert record.verified is False
 

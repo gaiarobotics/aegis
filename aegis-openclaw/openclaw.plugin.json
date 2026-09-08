@@ -1,0 +1,16 @@
+{
+  "id": "aegis-security",
+  "name": "AEGIS Security",
+  "description": "Fail-closed pre-tool policy enforcement for AEGIS",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "pythonBinary": {
+        "type": "string",
+        "description": "Python interpreter used to invoke the AEGIS evaluator"
+      }
+    }
+  }
+}

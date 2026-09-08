@@ -116,7 +116,7 @@ class TestPatchSubprocess:
 
         patch_subprocess(broker)
         try:
-            result = subprocess.run(["echo", "hello"])
+            subprocess.run(["echo", "hello"])
             # When denied, should raise PermissionError
             # This won't be reached
             assert False, "Should have raised PermissionError"
@@ -153,8 +153,9 @@ class TestPatchFilesystem:
 
             fd, path = tempfile.mkstemp()
             os.close(fd)
+            broker.evaluate.reset_mock()
             try:
-                with open(path) as f:
+                with open(path):
                     pass
                 broker.evaluate.assert_not_called()
             finally:
@@ -185,16 +186,18 @@ class TestPatchFilesystem:
 
     def test_write_mode_denied(self):
         """Opening a file in write mode when denied should raise PermissionError."""
+        import os
+        import tempfile
+
+        # Create the fixture before patching os.open; tempfile intentionally
+        # retries candidate names when creation is intercepted.
+        fd, path = tempfile.mkstemp()
+        os.close(fd)
         broker = MagicMock(spec=Broker)
         broker.evaluate.return_value = _deny_response()
 
         patch_filesystem(broker)
         try:
-            import os
-            import tempfile
-
-            fd, path = tempfile.mkstemp()
-            os.close(fd)
             try:
                 with open(path, "w") as f:
                     f.write("test")

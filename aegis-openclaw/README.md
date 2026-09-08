@@ -2,7 +2,7 @@
 
 AEGIS skill and hooks package for [OpenClaw](https://github.com/gaiarobotics/openclaw) agents. Provides runtime security scanning, output sanitization, action auditing, and behavioral drift detection through two complementary layers:
 
-1. **Hooks** - Automatic runtime integration that scans inbound messages, sanitizes outbound messages, and audits every tool call
+1. **Hooks and plugin** - Runtime message integration plus a fail-closed pre-tool policy gate
 2. **Skill commands** - Agent-accessible security commands (`aegis-scan`, `aegis-trust`, `aegis-quarantine`, etc.)
 
 For proxy-based protection, see the [AEGIS Proxy](../aegis_proxy/) and the full [OpenClaw Integration Guide](../docs/openclaw-integration.md).
@@ -21,17 +21,20 @@ Requires Python 3.10+.
 
 ## Setup
 
-### 1. Install Hooks
+### 1. Install Hooks and the AEGIS plugin
 
-Copy the four hook directories from `hooks/` into your OpenClaw hooks directory:
+Copy the three message hook directories from `hooks/` into your OpenClaw hooks directory:
 
 ```
 hooks/
 ├── aegis-bootstrap/        # Injects security context on agent startup
 ├── aegis-scan-inbound/     # Scans every inbound message for threats
 ├── aegis-sanitize-outbound/  # Sanitizes every outbound message
-└── aegis-tool-audit/       # Audits every tool call against broker policies (critical)
 ```
+
+Install this `aegis-openclaw/` directory as an OpenClaw plugin.  Its typed
+`before_tool_call` gate blocks denied tools before execution and fails closed
+if policy evaluation errors or times out.
 
 ### 2. Install the Skill
 
@@ -42,7 +45,7 @@ Copy `SKILL.md` and `scripts/` into your OpenClaw skills directory. The skill re
 ```bash
 export AEGIS_MODE=enforce              # "enforce" or "observe". "Observe" should only be used for testing.
 export AEGIS_CONFIG=/path/to/aegis.yaml  # Optional config file
-export AEGIS_STATE_KEY=<hex-secret>    # Optional - enables persistent tamper-proof state. Set to a unique hex string of your choosing.
+export AEGIS_STATE_KEY=<hex-secret>    # Required when state_store.enabled=true
 export AEGIS_EXIT_TOKEN=<token>        # Required to exit quarantine
 ```
 
@@ -66,9 +69,9 @@ Scans every inbound user message through the AEGIS scanner. If a threat is detec
 
 Sanitizes every outbound assistant message. Removes authority markers (`[SYSTEM]`, `[ADMIN]`), credential fragments, and instruction-shaped content. Detects behavioral drift against the frozen baseline.
 
-### aegis-tool-audit (`tool_result_persist`) - Critical
+### AEGIS plugin (`before_tool_call`) - Critical
 
-The most important hook. Evaluates every tool call against AEGIS broker policies before execution. Classifies tools as read or write, checks budget limits, enforces quarantine restrictions, and feeds tool usage into the behavior tracker for drift detection.
+The most important control. Evaluates every tool call against AEGIS broker policies before execution. It returns a terminal block decision for denied tools, quarantine and killswitch state. OpenClaw's policy-hook failure behavior is fail closed.
 
 ## Commands
 
@@ -150,7 +153,7 @@ User ──> OpenClaw Agent
               ├── aegis-scan-inbound hook (every message)
               │     └── shield.scan_input() → inject warning if threat
               │
-              ├── aegis-tool-audit hook (every tool call)
+              ├── aegis-security plugin (before every tool call)
               │     └── shield.evaluate_action() → block if denied
               │
               ├── aegis-sanitize-outbound hook (every response)
@@ -169,7 +172,15 @@ AEGIS maintains persistent security state via a tamper-proof HMAC-chained event 
 - **Quarantine** survives daemon restarts
 - **Behavioral baselines** freeze after initial interactions
 
-Set `AEGIS_STATE_KEY` to a hex secret for durable state across sessions. Without it, an ephemeral key is generated per session.
+Persistent state is opt-in. Set `state_store.enabled: true` and inject a stable
+`AEGIS_STATE_KEY`; enforce mode refuses to start persistent state without one.
+
+For production key storage, prefer runtime injection from a cloud secret manager
+using workload identity. Local desktop deployments can use an OS keyring backed
+by Windows DPAPI, macOS Keychain, or Linux Secret Service/libsecret. A
+permission-restricted local key file is a simpler fallback, but should live
+outside the repository and configuration file. A future pluggable key-provider
+interface can support these without changing the state-log format.
 
 ## License
 

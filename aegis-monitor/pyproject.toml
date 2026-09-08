@@ -12,7 +12,8 @@ requires-python = ">=3.10"
 authors = [{name = "Gaia Robotics"}]
 keywords = ["ai", "security", "monitoring", "agents", "dashboard"]
 dependencies = [
-    "fastapi>=0.110",
+    "fastapi>=0.141.1",
+    "starlette>=1.6.0",
     "uvicorn[standard]>=0.29",
     "networkx>=3.0",
     "numpy>=1.24",

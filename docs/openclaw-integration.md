@@ -3,7 +3,7 @@
 AEGIS provides two complementary integration layers for OpenClaw:
 
 1. **aegis-proxy** — An OpenAI-compatible HTTP proxy that scans every LLM call
-2. **aegis-openclaw** — An OpenClaw skill + hooks package for agent-level visibility
+2. **aegis-openclaw** — An OpenClaw skill, hooks, and native pre-tool plugin
 
 Together they cover the full attack surface: the proxy sees LLM conversations, the hooks see tool execution.
 
@@ -47,14 +47,18 @@ The proxy reads the API key from the `Authorization` header and forwards it to t
 
 Copy `aegis-openclaw/SKILL.md` and `aegis-openclaw/scripts/` into your OpenClaw skills directory. The skill teaches the agent to use AEGIS security commands.
 
-### 4. Install the Hooks
+### 4. Install the Hooks and Plugin
 
-Copy the four hook directories from `aegis-openclaw/hooks/` into your OpenClaw hooks directory:
+Copy the three hook directories from `aegis-openclaw/hooks/` into your OpenClaw hooks directory:
 
 - `aegis-scan-inbound/` — Scans inbound messages for threats
 - `aegis-sanitize-outbound/` — Sanitizes outbound messages
-- `aegis-tool-audit/` — Audits every tool call (critical)
 - `aegis-bootstrap/` — Injects security context on startup
+
+Install `aegis-openclaw/` as a native OpenClaw plugin as well. Its typed
+`before_tool_call` handler is the critical enforcement boundary: it checks the
+killswitch, quarantine state, and broker policy before tool execution and fails
+closed if evaluation errors or times out.
 
 ## Architecture
 
@@ -68,7 +72,7 @@ User ──> OpenClaw Gateway ──> AEGIS Proxy ──> Real LLM Provider
               │
               ├── aegis-scan-inbound hook
               ├── aegis-sanitize-outbound hook
-              ├── aegis-tool-audit hook (sees tool calls)
+              ├── AEGIS native before_tool_call gate
               └── aegis-bootstrap hook (session setup)
 ```
 
@@ -81,6 +85,8 @@ User ──> OpenClaw Gateway ──> AEGIS Proxy ──> Real LLM Provider
 | `AEGIS_PROXY_UPSTREAM_URL` | (none) | Upstream LLM provider URL |
 | `AEGIS_PROXY_UPSTREAM_KEY` | (none) | Default upstream API key |
 | `AEGIS_PROXY_PORT` | `8419` | Listen port |
+| `AEGIS_PROXY_HOST` | `127.0.0.1` | Bind address |
+| `AEGIS_PROXY_CLIENT_KEYS` | (none) | Comma-separated proxy client keys |
 | `AEGIS_MODE` | `enforce` | AEGIS mode: `observe` or `enforce` |
 | `AEGIS_CONFIG` | (none) | Path to `aegis.yaml` config file |
 
@@ -90,7 +96,7 @@ User ──> OpenClaw Gateway ──> AEGIS Proxy ──> Real LLM Provider
 python -m aegis_proxy [OPTIONS]
 
 --port          Listen port (default: 8419)
---host          Bind address (default: 0.0.0.0)
+--host          Bind address (default: 127.0.0.1)
 --upstream-url  Upstream LLM provider URL
 --upstream-key  Default upstream API key
 --mode          AEGIS mode (observe/enforce)
@@ -149,9 +155,11 @@ Scans every inbound user message. If a threat is detected, injects a system warn
 
 Sanitizes every outbound assistant message. Removes authority markers (`[SYSTEM]`, `[ADMIN]`), credential fragments, and logs modifications.
 
-### aegis-tool-audit (tool_result_persist)
+### AEGIS native plugin (before_tool_call)
 
-The critical hook. Evaluates every tool call against AEGIS broker policies: budget limits, allowed tools, read/write classification. Feeds tool usage into the behavior tracker for drift detection.
+The critical gate. It evaluates every tool call against AEGIS broker policies,
+killswitch state, and quarantine state before execution. A denied evaluation,
+evaluator error, or timeout prevents the tool from running.
 
 ### aegis-bootstrap (agent:bootstrap)
 

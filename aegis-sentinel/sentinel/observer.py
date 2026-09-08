@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from types import SimpleNamespace
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class ObservationResult:
     threat_score: float
     details: dict[str, Any] = field(default_factory=dict)
     dendritic_alert_sent: bool = False
+    scan_succeeded: bool = True
 
 
 class Observer:
@@ -37,7 +39,7 @@ class Observer:
         dendritic_processor: Any = None,
         alert_channel: Any = None,
         sentinel_id: str = "",
-        signing_key: Optional[bytes] = None,
+        signing_key: bytes | None = None,
         key_type: str = "hmac-sha256",
     ) -> None:
         self._shield = shield
@@ -52,32 +54,44 @@ class Observer:
     def observe_post(self, post: dict[str, Any]) -> ObservationResult:
         """Scan a single post and report if malicious.
 
-        If scanning raises an exception (malformed content, scanner crash),
-        the error is logged and a safe non-threat result is returned so that
-        a single poisoned post cannot take down the sentinel.
+        In enforce mode, scanner failures are treated as threats rather than
+        allowing unscanned content to pass as clean. Observe mode records an
+        explicit failed-scan result without stopping ingestion.
         """
         post_id = post.get("id", "")
         author = post.get("author", "")
         content = post.get("content", "")
 
         self._agent_observation_counts[author] += 1
+        scan_succeeded = True
 
         try:
             scan_result = self._shield.scan_input(
                 text=content,
                 source_agent_id=author,
             )
-        except Exception:
-            logger.warning(
-                "scan_input failed for post %s from %s", post_id, author,
-                exc_info=True,
-            )
-            return ObservationResult(
-                post_id=post_id,
-                agent_id=author,
-                is_threat=False,
-                threat_score=0.0,
-            )
+        except Exception as exc:
+            # Enforce-mode contagion blocks carry the positive scan result;
+            # preserve it instead of converting it into a clean observation.
+            from aegis.shield import ThreatBlockedError
+
+            if isinstance(exc, ThreatBlockedError):
+                scan_result = exc.scan_result
+            else:
+                scan_succeeded = False
+                logger.warning(
+                    "scan_input failed for post %s from %s",
+                    post_id,
+                    author,
+                    exc_info=True,
+                )
+                scan_result = SimpleNamespace(
+                    is_threat=getattr(self._shield, "mode", "enforce") != "observe",
+                    threat_score=(
+                        0.0 if getattr(self._shield, "mode", "enforce") == "observe" else 1.0
+                    ),
+                    details={"scan_error": type(exc).__name__},
+                )
 
         result = ObservationResult(
             post_id=post_id,
@@ -85,6 +99,7 @@ class Observer:
             is_threat=scan_result.is_threat,
             threat_score=scan_result.threat_score,
             details=scan_result.details,
+            scan_succeeded=scan_succeeded,
         )
 
         if scan_result.is_threat:
@@ -93,9 +108,7 @@ class Observer:
             self._reporter.report_compromised_agent(
                 compromised_agent_id=author,
                 nk_score=scan_result.threat_score,
-                nk_verdict=(
-                    "hostile" if scan_result.threat_score >= 0.7 else "suspicious"
-                ),
+                nk_verdict=("hostile" if scan_result.threat_score >= 0.7 else "suspicious"),
                 content_hash_hex=content_hash,
             )
             self._reporter.report_threat_event(
@@ -124,7 +137,9 @@ class Observer:
                 except Exception:
                     logger.warning(
                         "Dendritic processing failed for post %s from %s",
-                        post_id, author, exc_info=True,
+                        post_id,
+                        author,
+                        exc_info=True,
                     )
 
         return result

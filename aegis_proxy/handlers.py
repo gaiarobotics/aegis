@@ -8,9 +8,12 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from aegis.shield import InferenceBlockedError, Shield, ThreatBlockedError
+from aegis.shield import Shield
 
 logger = logging.getLogger(__name__)
+
+_UPSTREAM_TIMEOUT_SECONDS = 30.0
+_MAX_UPSTREAM_RESPONSE_BYTES = 8 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -18,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_user_text_openai(messages: list[dict]) -> str:
-    """Extract concatenated user text from OpenAI-format messages."""
+    """Extract all untrusted OpenAI-format user and tool content."""
     parts: list[str] = []
     for msg in messages:
-        if msg.get("role") == "user":
+        if msg.get("role") in ("user", "tool"):
             content = msg.get("content", "")
             if isinstance(content, str):
                 parts.append(content)
@@ -33,7 +36,7 @@ def _extract_user_text_openai(messages: list[dict]) -> str:
 
 
 def _extract_user_text_anthropic(messages: list[dict]) -> str:
-    """Extract concatenated user text from Anthropic-format messages."""
+    """Extract untrusted user text, including nested tool-result content."""
     parts: list[str] = []
     for msg in messages:
         if msg.get("role") == "user":
@@ -44,6 +47,14 @@ def _extract_user_text_anthropic(messages: list[dict]) -> str:
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "text":
                         parts.append(block.get("text", ""))
+                    elif isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_content = block.get("content", "")
+                        if isinstance(tool_content, str):
+                            parts.append(tool_content)
+                        elif isinstance(tool_content, list):
+                            for item in tool_content:
+                                if isinstance(item, dict) and item.get("type") == "text":
+                                    parts.append(item.get("text", ""))
     return "\n".join(parts)
 
 
@@ -95,24 +106,48 @@ def _forward_request(
 
     if http_pool is not None:
         try:
-            resp = http_pool.post(url, body=body, headers=headers)
+            resp = http_pool.post(
+                url, body=body, headers=headers, timeout=_UPSTREAM_TIMEOUT_SECONDS
+            )
+            if len(resp.body) > _MAX_UPSTREAM_RESPONSE_BYTES:
+                raise ValueError("Upstream response exceeds size limit")
             return resp.status_code, resp.json()
         except Exception as exc:
-            return 502, {"error": {"message": f"Upstream connection failed: {exc}", "type": "upstream_error", "code": "connection_failed"}}
+            return 502, {
+                "error": {
+                    "message": f"Upstream connection failed: {exc}",
+                    "type": "upstream_error",
+                    "code": "connection_failed",
+                }
+            }
 
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req) as resp:
-            raw = resp.read()
+        with urllib.request.urlopen(req, timeout=_UPSTREAM_TIMEOUT_SECONDS) as resp:
+            raw = resp.read(_MAX_UPSTREAM_RESPONSE_BYTES + 1)
+            if len(raw) > _MAX_UPSTREAM_RESPONSE_BYTES:
+                raise ValueError("Upstream response exceeds size limit")
             return resp.status, json.loads(raw)
     except urllib.error.HTTPError as exc:
         raw = exc.read()
         try:
             return exc.code, json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            return exc.code, {"error": {"message": raw.decode(errors="replace"), "type": "upstream_error", "code": "upstream_error"}}
+            return exc.code, {
+                "error": {
+                    "message": raw.decode(errors="replace"),
+                    "type": "upstream_error",
+                    "code": "upstream_error",
+                }
+            }
     except urllib.error.URLError as exc:
-        return 502, {"error": {"message": f"Upstream connection failed: {exc.reason}", "type": "upstream_error", "code": "connection_failed"}}
+        return 502, {
+            "error": {
+                "message": f"Upstream connection failed: {exc.reason}",
+                "type": "upstream_error",
+                "code": "connection_failed",
+            }
+        }
 
 
 def _forward_streaming_request(
@@ -136,9 +171,13 @@ def _forward_streaming_request(
     text_parts: list[str] = []
 
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=_UPSTREAM_TIMEOUT_SECONDS) as resp:
             status = resp.status
+            total_bytes = 0
             for line in resp:
+                total_bytes += len(line)
+                if total_bytes > _MAX_UPSTREAM_RESPONSE_BYTES:
+                    raise ValueError("Upstream streaming response exceeds size limit")
                 chunks.append(line)
                 # Parse SSE data lines for text content
                 decoded = line.decode(errors="replace").strip()
@@ -234,7 +273,13 @@ def _handle_streaming_completions(
         try:
             error_data = json.loads(b"".join(chunks))
         except (json.JSONDecodeError, ValueError):
-            error_data = {"error": {"message": "Upstream streaming error", "type": "upstream_error", "code": "streaming_error"}}
+            error_data = {
+                "error": {
+                    "message": "Upstream streaming error",
+                    "type": "upstream_error",
+                    "code": "streaming_error",
+                }
+            }
         return status, error_data
 
     # Sanitize the accumulated text
@@ -293,13 +338,23 @@ def handle_messages(
     if http_pool is not None:
         try:
             pool_resp = http_pool.post(
-                endpoint, body=encoded,
+                endpoint,
+                body=encoded,
                 headers={"Content-Type": "application/json", **headers_extra},
+                timeout=_UPSTREAM_TIMEOUT_SECONDS,
             )
+            if len(pool_resp.body) > _MAX_UPSTREAM_RESPONSE_BYTES:
+                raise ValueError("Upstream response exceeds size limit")
             status = pool_resp.status_code
             response = pool_resp.json()
         except Exception as exc:
-            return 502, {"error": {"message": f"Upstream connection failed: {exc}", "type": "upstream_error", "code": "connection_failed"}}
+            return 502, {
+                "error": {
+                    "message": f"Upstream connection failed: {exc}",
+                    "type": "upstream_error",
+                    "code": "connection_failed",
+                }
+            }
     else:
         req = urllib.request.Request(
             endpoint,
@@ -308,8 +363,10 @@ def handle_messages(
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req) as resp:
-                raw = resp.read()
+            with urllib.request.urlopen(req, timeout=_UPSTREAM_TIMEOUT_SECONDS) as resp:
+                raw = resp.read(_MAX_UPSTREAM_RESPONSE_BYTES + 1)
+                if len(raw) > _MAX_UPSTREAM_RESPONSE_BYTES:
+                    raise ValueError("Upstream response exceeds size limit")
                 status = resp.status
                 response = json.loads(raw)
         except urllib.error.HTTPError as exc:
@@ -317,9 +374,21 @@ def handle_messages(
             try:
                 return exc.code, json.loads(raw)
             except (json.JSONDecodeError, ValueError):
-                return exc.code, {"error": {"message": raw.decode(errors="replace"), "type": "upstream_error", "code": "upstream_error"}}
+                return exc.code, {
+                    "error": {
+                        "message": raw.decode(errors="replace"),
+                        "type": "upstream_error",
+                        "code": "upstream_error",
+                    }
+                }
         except urllib.error.URLError as exc:
-            return 502, {"error": {"message": f"Upstream connection failed: {exc.reason}", "type": "upstream_error", "code": "connection_failed"}}
+            return 502, {
+                "error": {
+                    "message": f"Upstream connection failed: {exc.reason}",
+                    "type": "upstream_error",
+                    "code": "connection_failed",
+                }
+            }
 
     # 4. Sanitize output
     response = _sanitize_anthropic_dict(shield, response)

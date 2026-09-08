@@ -49,13 +49,15 @@ class TestEndToEndPipeline:
         shield = Shield(mode="enforce")
 
         # Register an allowed tool
-        shield.broker.register_tool(ToolManifest(
-            name="calculator",
-            allowed_actions=["tool_call"],
-            allowed_domains=[],
-            allowed_paths=[],
-            read_write="read",
-        ))
+        shield.broker.register_tool(
+            ToolManifest(
+                name="calculator",
+                allowed_actions=["tool_call"],
+                allowed_domains=[],
+                allowed_paths=[],
+                read_write="read",
+            )
+        )
 
         # Allowed action
         req = ActionRequest(
@@ -99,13 +101,15 @@ class TestEndToEndPipeline:
         shield = Shield(config=cfg)
 
         # Register a tool
-        shield.broker.register_tool(ToolManifest(
-            name="writer",
-            allowed_actions=["tool_call"],
-            allowed_domains=[],
-            allowed_paths=[],
-            read_write="write",
-        ))
+        shield.broker.register_tool(
+            ToolManifest(
+                name="writer",
+                allowed_actions=["tool_call"],
+                allowed_domains=[],
+                allowed_paths=[],
+                read_write="write",
+            )
+        )
 
         # Exhaust budget
         for i in range(3):
@@ -179,16 +183,18 @@ class TestEndToEndPipeline:
         scan = shield.scan_input("test input")
         assert scan.is_threat is False
 
-        action = shield.evaluate_action(ActionRequest(
-            id="int-005",
-            timestamp=time.time(),
-            source_provenance="test",
-            action_type="tool_call",
-            read_write="read",
-            target="any_tool",
-            args={},
-            risk_hints={},
-        ))
+        action = shield.evaluate_action(
+            ActionRequest(
+                id="int-005",
+                timestamp=time.time(),
+                source_provenance="test",
+                action_type="tool_call",
+                read_write="read",
+                target="any_tool",
+                args={},
+                risk_hints={},
+            )
+        )
         assert action.allowed is True
 
         sanitize = shield.sanitize_output("test output")
@@ -344,9 +350,10 @@ class TestIdentityBehaviorIntegration:
         import hashlib
         import tempfile
 
+        from aegis.core.config import SkillsConfig
         from aegis.skills import SkillLoader, SkillManifest
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(auto_approve_clean=True))
 
         # Create a valid skill file
         skill_code = "def greet(name):\n    return f'Hello {name}'\n"
@@ -361,7 +368,12 @@ class TestIdentityBehaviorIntegration:
             publisher="test",
             hashes={os.path.basename(skill_path): skill_hash},
             signature=None,
-            capabilities={"network": False, "filesystem": False, "tools": [], "read_write": "read"},
+            capabilities={
+                "network": False,
+                "filesystem": False,
+                "tools": [],
+                "read_write": "read",
+            },
             secrets=[],
             budgets=None,
             sandbox=True,

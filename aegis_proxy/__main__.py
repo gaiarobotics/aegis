@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 
 from aegis.shield import Shield
-
 from aegis_proxy.config import ProxyConfig
 from aegis_proxy.server import create_server
 
@@ -18,10 +16,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="AEGIS OpenAI-compatible proxy server",
     )
     parser.add_argument("--port", type=int, default=0, help="Listen port (default: 8419)")
-    parser.add_argument("--host", default="", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--host", default="", help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--upstream-url", default="", help="Upstream LLM provider URL")
     parser.add_argument("--upstream-key", default="", help="Default upstream API key")
-    parser.add_argument("--mode", default="", choices=["observe", "enforce", ""], help="AEGIS mode")
+    parser.add_argument(
+        "--mode", default="", choices=["observe", "enforce", ""], help="AEGIS mode"
+    )
     parser.add_argument("--config", default="", dest="aegis_config", help="Path to aegis.yaml")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     return parser.parse_args(argv)

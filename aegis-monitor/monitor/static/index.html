@@ -94,8 +94,8 @@
                 <h3>Killswitch</h3>
                 <div id="ks-status" class="ks-status-text">No rules active</div>
                 <div class="ks-actions">
-                    <button class="ks-btn ks-block-swarm" onclick="ksBlockSwarm()">Block All Agents</button>
-                    <button class="ks-btn ks-unblock-swarm" onclick="ksUnblockSwarm()">Unblock All</button>
+                    <button id="ks-block-swarm" class="ks-btn ks-block-swarm">Block All Agents</button>
+                    <button id="ks-unblock-swarm" class="ks-btn ks-unblock-swarm">Unblock All</button>
                 </div>
                 <div id="ks-rules-list"></div>
             </div>
@@ -151,7 +151,7 @@
 
             <!-- Agent detail popup -->
             <div class="agent-popup" id="agent-popup">
-                <button class="close-btn" onclick="document.getElementById('agent-popup').classList.remove('visible')">&times;</button>
+                <button id="agent-popup-close" class="close-btn">&times;</button>
                 <h3 id="popup-agent-id">Agent</h3>
                 <div class="detail-row"><span class="label">Trust Tier</span><span id="popup-tier">—</span></div>
                 <div class="detail-row"><span class="label">Trust Score</span><span id="popup-score">—</span></div>

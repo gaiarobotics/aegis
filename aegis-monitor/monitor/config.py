@@ -14,8 +14,23 @@ import yaml
 @dataclass
 class AgentKey:
     """Public key for agent report signature verification."""
-    key_type: str   # "hmac-sha256" or "ed25519"
+
+    key_type: str  # "hmac-sha256" or "ed25519"
     key_bytes: bytes
+
+
+@dataclass(frozen=True)
+class ApiKeyIdentity:
+    """Identity bound to an API key.
+
+    Agent credentials must carry an ``agent_id``.  Viewer and operator
+    credentials may omit identity fields because they do not originate agent
+    telemetry.
+    """
+
+    role: str
+    agent_id: str = ""
+    operator_id: str = ""
 
 
 _KEY_TYPE_MAP = {"hmac": "hmac-sha256", "ed25519": "ed25519"}
@@ -30,6 +45,7 @@ class MonitorConfig:
     database_path: str = "monitor.db"
     database_url: str = ""  # postgresql:// URL — takes priority over database_path
     api_keys: dict[str, str] = field(default_factory=dict)
+    api_key_identities: dict[str, ApiKeyIdentity] = field(default_factory=dict)
     allow_open_mode: bool = False
     session_secret: str = ""
     session_ttl_seconds: int = 28800
@@ -72,12 +88,15 @@ class MonitorConfig:
             for agent_id, key_str in raw_pubkeys.items():
                 parsed_pubkeys[agent_id] = cls._parse_agent_key(key_str)
 
+        parsed_api_keys, parsed_identities = cls._parse_api_keys(raw.get("api_keys"))
+
         cfg = cls(
             host=raw.get("host", "0.0.0.0"),
             port=int(raw.get("port", 8080)),
             database_path=raw.get("database_path", "monitor.db"),
             database_url=raw.get("database_url", ""),
-            api_keys=cls._parse_api_keys(raw.get("api_keys")),
+            api_keys=parsed_api_keys,
+            api_key_identities=parsed_identities,
             allow_open_mode=cls._parse_bool(raw.get("allow_open_mode", False)),
             session_secret=raw.get("session_secret", ""),
             session_ttl_seconds=int(raw.get("session_ttl_seconds", 28800)),
@@ -100,7 +119,7 @@ class MonitorConfig:
         if v := os.environ.get("MONITOR_DATABASE_URL"):
             cfg.database_url = v
         if v := os.environ.get("MONITOR_API_KEYS"):
-            cfg.api_keys = cls._parse_env_api_keys(v)
+            cfg.api_keys, cfg.api_key_identities = cls._parse_env_api_keys(v)
         if v := os.environ.get("MONITOR_ALLOW_OPEN_MODE"):
             cfg.allow_open_mode = cls._parse_bool(v)
         if v := os.environ.get("MONITOR_SESSION_SECRET"):
@@ -143,7 +162,9 @@ class MonitorConfig:
     def _parse_agent_key(value: str) -> "AgentKey":
         """Parse a prefixed key string like ``hmac:aabb...`` into an AgentKey."""
         if ":" not in value:
-            raise ValueError(f"Agent key must have type prefix (hmac: or ed25519:), got: {value!r}")
+            raise ValueError(
+                f"Agent key must have type prefix (hmac: or ed25519:), got: {value!r}"
+            )
         prefix, hex_bytes = value.split(":", 1)
         key_type = _KEY_TYPE_MAP.get(prefix)
         if key_type is None:
@@ -160,37 +181,63 @@ class MonitorConfig:
         return bool(value)
 
     @staticmethod
-    def _parse_api_keys(raw_value: Any) -> dict[str, str]:
+    def _parse_api_keys(
+        raw_value: Any,
+    ) -> tuple[dict[str, str], dict[str, ApiKeyIdentity]]:
         """Parse api_keys from YAML value into a dict mapping key -> role."""
         if raw_value is None:
-            return {}
+            return {}, {}
         if isinstance(raw_value, dict):
-            return {str(k): str(v) for k, v in raw_value.items()}
+            roles: dict[str, str] = {}
+            identities: dict[str, ApiKeyIdentity] = {}
+            for raw_key, raw_identity in raw_value.items():
+                key = str(raw_key)
+                if isinstance(raw_identity, dict):
+                    role = str(raw_identity.get("role", ""))
+                    roles[key] = role
+                    identities[key] = ApiKeyIdentity(
+                        role=role,
+                        agent_id=str(raw_identity.get("agent_id", "")),
+                        operator_id=str(raw_identity.get("operator_id", "")),
+                    )
+                else:
+                    roles[key] = str(raw_identity)
+            return roles, identities
         if isinstance(raw_value, list):
             warnings.warn(
                 "api_keys as a list is deprecated; use a dict mapping key -> role",
                 DeprecationWarning,
                 stacklevel=3,
             )
-            return {str(k): "operator" for k in raw_value}
-        return {}
+            return {str(k): "operator" for k in raw_value}, {}
+        return {}, {}
 
     @staticmethod
-    def _parse_env_api_keys(value: str) -> dict[str, str]:
+    def _parse_env_api_keys(
+        value: str,
+    ) -> tuple[dict[str, str], dict[str, ApiKeyIdentity]]:
         """Parse MONITOR_API_KEYS env var into a dict mapping key -> role.
 
         Supports ``key:role,key:role`` format.  Bare keys (no colon) are
         treated as ``operator`` with a deprecation warning.
         """
         result: dict[str, str] = {}
+        identities: dict[str, ApiKeyIdentity] = {}
         has_bare = False
         for entry in value.split(","):
             entry = entry.strip()
             if not entry:
                 continue
-            if ":" in entry:
-                key, role = entry.split(":", 1)
-                result[key.strip()] = role.strip()
+            parts = entry.split(":")
+            if len(parts) >= 2:
+                key, role = parts[0].strip(), parts[1].strip()
+                result[key] = role
+                if len(parts) >= 3:
+                    identities[key] = ApiKeyIdentity(
+                        role=role,
+                        agent_id=parts[2].strip(),
+                        operator_id=parts[3].strip() if len(parts) >= 4 else "",
+                    )
             else:
                 result[entry] = "operator"
                 has_bare = True
@@ -200,4 +247,4 @@ class MonitorConfig:
                 DeprecationWarning,
                 stacklevel=2,
             )
-        return result
+        return result, identities

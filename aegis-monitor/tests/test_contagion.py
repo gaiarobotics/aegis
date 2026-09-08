@@ -18,6 +18,7 @@ from monitor.contagion import (
 # Utility
 # ------------------------------------------------------------------
 
+
 class TestHammingDistance:
     def test_identical(self):
         assert hamming_distance(0, 0) == 0
@@ -44,6 +45,7 @@ class TestHexToInt:
 # ------------------------------------------------------------------
 # TopicClusterer — core behaviour (works with either backend)
 # ------------------------------------------------------------------
+
 
 class TestTopicClusterer:
     def test_identical_hashes_same_cluster(self):
@@ -112,6 +114,7 @@ class TestTopicClusterer:
 # ------------------------------------------------------------------
 # TopicClusterer — DBSCAN-specific (anti-chaining)
 # ------------------------------------------------------------------
+
 
 class TestTopicClustererDBSCAN:
     """Tests that exercise the DBSCAN backend specifically.
@@ -192,6 +195,7 @@ class TestTopicClustererDBSCAN:
 # TopicClusterer — union-find fallback
 # ------------------------------------------------------------------
 
+
 class TestTopicClustererFallback:
     def test_union_find_used_when_sklearn_missing(self):
         """Union-find fallback is used when sklearn is unavailable."""
@@ -226,6 +230,7 @@ class TestTopicClustererFallback:
 # ------------------------------------------------------------------
 # ContagionDetector
 # ------------------------------------------------------------------
+
 
 class TestContagionDetector:
     def test_no_compromised_returns_zero(self):
@@ -284,6 +289,7 @@ class TestContagionDetector:
 # ------------------------------------------------------------------
 # ContagionDetector — velocity-aware scoring
 # ------------------------------------------------------------------
+
 
 class TestContagionDetectorVelocity:
     def test_velocity_amplifies_proximity(self):
@@ -358,6 +364,7 @@ class TestContagionDetectorVelocity:
 # Integration: contagion alert creates quarantine rule
 # ------------------------------------------------------------------
 
+
 class TestContagionAlertCreatesQuarantineRule:
     """Integration test: heartbeat with compromised hash auto-quarantines."""
 
@@ -370,15 +377,15 @@ class TestContagionAlertCreatesQuarantineRule:
         db_path = str(tmp_path / "test.db")
         os.environ["MONITOR_DATABASE_PATH"] = db_path
         os.environ.pop("MONITOR_API_KEYS", None)
-    os.environ["MONITOR_ALLOW_OPEN_MODE"] = "true"
+        os.environ["MONITOR_ALLOW_OPEN_MODE"] = "true"
 
         with TestClient(app) as c:
-            app.state.config.api_keys = []
-        app.state.config.allow_open_mode = True
+            app.state.config.api_keys = {}
+            app.state.config.allow_open_mode = True
             yield c, app
 
         os.environ.pop("MONITOR_DATABASE_PATH", None)
-    os.environ.pop("MONITOR_ALLOW_OPEN_MODE", None)
+        os.environ.pop("MONITOR_ALLOW_OPEN_MODE", None)
 
     def test_contagion_alert_creates_quarantine_rule(self, client):
         """A heartbeat triggering a contagion alert should auto-quarantine the agent."""
@@ -391,21 +398,25 @@ class TestContagionAlertCreatesQuarantineRule:
 
         # Send heartbeat from a different agent with the SAME hash
         # This should trigger a contagion alert and auto-quarantine
-        resp = c.post("/api/v1/heartbeat", json={
-            "agent_id": "victim-agent",
-            "operator_id": "op-1",
-            "trust_tier": 2,
-            "trust_score": 50.0,
-            "content_hash": compromised_hash,
-            "topic_velocity": 0.0,
-            "edges": [],
-        })
+        resp = c.post(
+            "/api/v1/heartbeat",
+            json={
+                "agent_id": "victim-agent",
+                "operator_id": "op-1",
+                "trust_tier": 2,
+                "trust_score": 50.0,
+                "content_hash": compromised_hash,
+                "topic_velocity": 0.0,
+                "edges": [],
+            },
+        )
         assert resp.status_code == 200
 
         # Verify quarantine was created
         db = app.state.db
         quarantined, reason, scope, severity = db.check_quarantine(
-            "victim-agent", "op-1",
+            "victim-agent",
+            "op-1",
         )
         assert quarantined is True
         assert "Contagion alert" in reason
@@ -420,6 +431,7 @@ class TestContagionAlertCreatesQuarantineRule:
 # ------------------------------------------------------------------
 # TopicClusterer — model-aware operations
 # ------------------------------------------------------------------
+
 
 class TestTopicClustererModelAware:
     def test_same_model_clusters_together(self):
@@ -459,6 +471,7 @@ class TestTopicClustererModelAware:
 # ------------------------------------------------------------------
 # ContagionDetector — model-aware operations
 # ------------------------------------------------------------------
+
 
 class TestContagionDetectorModelAware:
     def test_same_model_detects_similarity(self):

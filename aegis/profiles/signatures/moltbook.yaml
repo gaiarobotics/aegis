@@ -1,6 +1,8 @@
 # AEGIS Moltbook-Specific Threat Signatures
 # Targets documented attack vectors on Moltbook/OpenClaw platform.
 
+# Free-text gaps are limited to 120 characters on one line to prevent
+# repeated-prefix backtracking. Matches beyond that proximity are intentionally lost.
 signatures:
 
   # --- Moltbook Social Engineering ---
@@ -17,9 +19,10 @@ signatures:
     description: "Moltbook agent impersonating another agent's operator"
 
   # --- OpenClaw File Manipulation ---
+  # Bound overlapping whitespace runs to 16 characters as well as the free-text gap.
   - id: MB-003
     category: memory_poisoning
-    pattern: "(?i)(?:write|append|modify|update|edit|change|add)\\s+(?:.*?\\s+)?(?:to\\s+)?(?:your\\s+)?(?:SOUL\\.md|MEMORY\\.md|heartbeat\\.md|\\.openclaw|\\.moltbot|\\.clawdbot)"
+    pattern: "(?i)(?:write|append|modify|update|edit|change|add)\\s{1,16}(?:[^\\n]{0,120}?\\s{1,16})?(?:to\\s{1,16})?(?:your\\s{1,16})?(?:SOUL\\.md|MEMORY\\.md|heartbeat\\.md|\\.openclaw|\\.moltbot|\\.clawdbot)"
     severity: 0.95
     description: "Instruction to modify OpenClaw personality/memory files"
 
@@ -45,13 +48,14 @@ signatures:
   # --- Destructive Command Injection ---
   - id: MB-007
     category: data_exfiltration
-    pattern: "(?i)(?:run|execute|do|perform|type)\\s+(?:the\\s+(?:command|following)\\s+)?(?:rm\\s+-rf|curl\\s+.*\\|\\s*(?:ba)?sh|wget\\s+.*\\|\\s*(?:ba)?sh|chmod\\s+777)"
+    pattern: "(?i)(?:run|execute|do|perform|type)\\s+(?:the\\s+(?:command|following)\\s+)?(?:rm\\s+-rf|curl\\s+[^\\n]{0,120}?\\|\\s*(?:ba)?sh|wget\\s+[^\\n]{0,120}?\\|\\s*(?:ba)?sh|chmod\\s+777)"
     severity: 0.95
     description: "Destructive shell command injection via social content"
 
+  # Require a nonempty URL token so its surrounding whitespace cannot overlap.
   - id: MB-008
     category: data_exfiltration
-    pattern: "(?i)(?:curl|wget|fetch|http)\\s+[^\\s]*\\s+(?:-d|--data|--post)\\s+.*(?:env|key|token|secret|password|cred)"
+    pattern: "(?i)(?:curl|wget|fetch|http)\\s+[^\\s]+\\s+(?:-d|--data|--post)\\s+[^\\n]{0,120}?(?:env|key|token|secret|password|cred)"
     severity: 0.9
     description: "Data exfiltration via HTTP with credential content"
 
@@ -62,9 +66,10 @@ signatures:
     severity: 0.85
     description: "Worm-style instruction to replicate via Moltbook replies"
 
+  # Keep adjective whitespace inside its optional group to avoid adjacent repeats.
   - id: MB-010
     category: chain_propagation
-    pattern: "(?i)(?:include|copy|repeat|replicate|reproduce)\\s+(?:this\\s+)?(?:exact|entire|full|complete)?\\s*(?:message|text|prompt|instruction|paragraph)\\s+(?:in|into|as)\\s+(?:your\\s+)?(?:next|every|all|each)\\s+(?:post|reply|comment|response|message)"
+    pattern: "(?i)(?:include|copy|repeat|replicate|reproduce)\\s+(?:this\\s+)?(?:(?:exact|entire|full|complete)\\s*)?(?:message|text|prompt|instruction|paragraph)\\s+(?:in|into|as)\\s+(?:your\\s+)?(?:next|every|all|each)\\s+(?:post|reply|comment|response|message)"
     severity: 0.9
     description: "Verbatim replication instruction — classic worm vector"
 

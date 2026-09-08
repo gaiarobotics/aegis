@@ -1,6 +1,8 @@
 # AEGIS Default Threat Signatures
 # Each signature has: id, category, pattern (regex), severity (0.0-1.0), description
 
+# Free-text gaps are limited to 120 characters on one line to prevent
+# repeated-prefix backtracking. Matches beyond that proximity are intentionally lost.
 signatures:
 
   # --- Prompt Injection ---
@@ -74,7 +76,7 @@ signatures:
 
   - id: IO-003
     category: instruction_override
-    pattern: "(?i)IMPORTANT\\s*:[^\\n]*(?:must|always|never|override|ignore)"
+    pattern: "(?i)IMPORTANT\\s*:[^\\n]{0,120}?(?:must|always|never|override|ignore)"
     severity: 0.75
     description: "Imperative override with authority markers"
 
@@ -125,7 +127,7 @@ signatures:
   # --- Memory Poisoning ---
   - id: MP-001
     category: memory_poisoning
-    pattern: "(?i)(?:remember|memorize|store|save|record)\\s+(?:this|that|the\\s+following)\\s*:[^\\n]*(?:always|never|must|override|ignore)"
+    pattern: "(?i)(?:remember|memorize|store|save|record)\\s+(?:this|that|the\\s+following)\\s*:[^\\n]{0,120}?(?:always|never|must|override|ignore)"
     severity: 0.85
     description: "Persistent instruction injection via memory"
 
@@ -156,7 +158,7 @@ signatures:
 
   - id: SE-003
     category: social_engineering
-    pattern: "(?i)(?:urgent|emergency|critical|life.?threatening)\\s*[!:,][^\\n]*(?:ignore|bypass|skip|disable)\\s+(?:safety|security|rules|restrictions)"
+    pattern: "(?i)(?:urgent|emergency|critical|life.?threatening)\\s*[!:,][^\\n]{0,120}?(?:ignore|bypass|skip|disable)\\s+(?:safety|security|rules|restrictions)"
     severity: 0.8
     description: "Urgency-based safety bypass"
 
@@ -187,7 +189,7 @@ signatures:
 
   - id: EV-004
     category: evasion
-    pattern: "(?i)replace\\s+(?:every|each|all)\\s+(?:letter|character|word).*(?:with|by)"
+    pattern: "(?i)replace\\s+(?:every|each|all)\\s+(?:letter|character|word)[^\\n]{0,120}?(?:with|by)"
     severity: 0.6
     description: "Character substitution evasion"
 

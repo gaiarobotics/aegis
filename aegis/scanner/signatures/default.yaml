@@ -169,7 +169,7 @@ signatures:
   # --- Evasion ---
   - id: EV-001
     category: evasion
-    pattern: "(?i)r\\s*e\\s*v\\s*e\\s*a\\s*l.*s\\s*y\\s*s\\s*t\\s*e\\s*m"
+    pattern: "(?i)r\\s*e\\s*v\\s*e\\s*a\\s*l[^\\n]{0,120}?s\\s*y\\s*s\\s*t\\s*e\\s*m"
     severity: 0.8
     description: "Space-separated evasion of keyword detection"
 

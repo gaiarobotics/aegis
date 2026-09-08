@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -97,3 +98,33 @@ def validate_manifest(manifest: SkillManifest) -> ValidationResult:
         valid=len(errors) == 0,
         errors=errors,
     )
+
+
+def verify_manifest_signature(manifest: SkillManifest, public_key_hex: str) -> bool:
+    """Verify an Ed25519 signature over the canonical manifest contents."""
+    if not manifest.signature:
+        return False
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        payload = {
+            "name": manifest.name,
+            "version": manifest.version,
+            "publisher": manifest.publisher,
+            "hashes": manifest.hashes,
+            "capabilities": manifest.capabilities,
+            "secrets": manifest.secrets,
+            "budgets": manifest.budgets,
+            "sandbox": manifest.sandbox,
+        }
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        signature = base64.b64decode(manifest.signature, validate=True)
+        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+        public_key.verify(signature, canonical)
+        return True
+    except (ImportError, ValueError, TypeError):
+        return False
+    except Exception:
+        return False

@@ -115,6 +115,8 @@ class RemoteQuarantine:
 
             if self._http_pool is not None:
                 resp = self._http_pool.get(full_url, headers=headers, timeout=_POLL_TIMEOUT)
+                if resp.status_code < 200 or resp.status_code >= 300:
+                    raise RuntimeError(f"Monitor returned HTTP {resp.status_code}")
                 data: dict[str, Any] = resp.json()
             else:
                 req = urllib.request.Request(full_url, method="GET")
@@ -123,7 +125,9 @@ class RemoteQuarantine:
                 with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
                     data = json.loads(resp.read())
 
-            quarantined = bool(data.get("quarantined", False))
+            if not isinstance(data, dict) or not isinstance(data.get("quarantined"), bool):
+                raise ValueError("Invalid quarantine response schema")
+            quarantined = data["quarantined"]
             reason = str(data.get("reason", ""))
             severity = str(data.get("severity", ""))
 

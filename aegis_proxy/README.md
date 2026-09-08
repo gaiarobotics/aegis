@@ -36,7 +36,7 @@ response = client.chat.completions.create(
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--port` | `8419` | Listen port |
-| `--host` | `0.0.0.0` | Bind address |
+| `--host` | `127.0.0.1` | Bind address |
 | `--upstream-url` | `""` | Upstream LLM provider URL |
 | `--upstream-key` | `""` | Default upstream API key (used when client doesn't send one) |
 | `--mode` | `enforce` | AEGIS mode: `enforce` or `observe` |
@@ -50,7 +50,11 @@ response = client.chat.completions.create(
 | `AEGIS_PROXY_UPSTREAM_URL` | `""` | Upstream LLM provider URL |
 | `AEGIS_PROXY_UPSTREAM_KEY` | `""` | Default upstream API key |
 | `AEGIS_PROXY_PORT` | `8419` | Listen port |
-| `AEGIS_PROXY_HOST` | `0.0.0.0` | Bind address |
+| `AEGIS_PROXY_HOST` | `127.0.0.1` | Bind address |
+| `AEGIS_PROXY_CLIENT_KEYS` | `""` | Comma-separated keys required in `X-Aegis-Proxy-Key` |
+| `AEGIS_PROXY_MAX_BODY_BYTES` | `1048576` | Maximum request body size |
+| `AEGIS_PROXY_MAX_CONCURRENT_REQUESTS` | `32` | Concurrent request limit |
+| `AEGIS_PROXY_REQUEST_TIMEOUT_SECONDS` | `30` | Socket and upstream timeout |
 | `AEGIS_MODE` | `enforce` | AEGIS mode |
 | `AEGIS_CONFIG` | `""` | Path to `aegis.yaml` |
 
@@ -116,7 +120,11 @@ For streaming requests (`"stream": true`), the proxy accumulates all SSE chunks,
 
 ## Authentication
 
-The proxy extracts the API key from the client's `Authorization: Bearer <key>` header (or `x-api-key` for Anthropic) and forwards it to the upstream provider. If the client doesn't send a key, the proxy falls back to the configured `--upstream-key`.
+The proxy binds to loopback by default. A non-loopback bind is rejected unless
+`AEGIS_PROXY_CLIENT_KEYS` is configured. Clients then authenticate to the proxy
+with `X-Aegis-Proxy-Key`; this credential is deliberately separate from the
+provider key in `Authorization` (or Anthropic's `x-api-key`), which is forwarded
+upstream. If no provider key is sent, the proxy uses `--upstream-key`.
 
 ## OpenClaw Integration
 

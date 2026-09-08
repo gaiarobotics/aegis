@@ -16,23 +16,26 @@ def _record_trust_for_messages(shield: Any, messages: list[dict[str, Any]], clea
     """
     try:
         from aegis.identity.speaker import extract_speakers
+
         result = extract_speakers(messages)
         for agent_id in result.agent_ids:
             shield.record_trust_interaction(
-                agent_id, clean=clean, anomaly=not clean,
+                agent_id,
+                clean=clean,
+                anomaly=not clean,
             )
     except Exception:
         logger.debug("Trust recording failed", exc_info=True)
 
 
 def _extract_user_text(messages: list[dict[str, Any]]) -> str:
-    """Extract concatenated user-role text from a message list.
+    """Extract concatenated untrusted user and tool text.
 
     Handles both string content and Anthropic-style content block lists.
     """
     parts: list[str] = []
     for msg in messages:
-        if msg.get("role") != "user":
+        if msg.get("role") not in ("user", "tool"):
             continue
         content = msg.get("content", "")
         if isinstance(content, str):
@@ -41,6 +44,14 @@ def _extract_user_text(messages: list[dict[str, Any]]) -> str:
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
                     parts.append(block.get("text", ""))
+                elif isinstance(block, dict) and block.get("type") == "tool_result":
+                    tool_content = block.get("content", "")
+                    if isinstance(tool_content, str):
+                        parts.append(tool_content)
+                    elif isinstance(tool_content, list):
+                        for item in tool_content:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                parts.append(item.get("text", ""))
     return "\n".join(parts)
 
 
@@ -123,7 +134,11 @@ def _extract_tool_calls(response: Any, provider: str) -> list[str]:
     elif provider == "openai":
         for choice in _get_openai_choices(response):
             msg = _get_choice_message(choice)
-            tcs = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+            tcs = (
+                msg.get("tool_calls")
+                if isinstance(msg, dict)
+                else getattr(msg, "tool_calls", None)
+            )
             if tcs:
                 for tc in tcs:
                     if isinstance(tc, dict):
@@ -156,6 +171,7 @@ def _classify_content_type(response: Any, provider: str) -> str:
 
 
 # --- Internal helpers for response parsing ---
+
 
 def _get_content_blocks(response: Any) -> list:
     """Get Anthropic-style content blocks from a response."""

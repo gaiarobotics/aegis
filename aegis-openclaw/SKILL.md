@@ -150,7 +150,8 @@ AEGIS maintains persistent security state across sessions using a tamper-proof H
 - **Persistent quarantine** - Quarantined agents stay quarantined even after daemon restarts.
 - **Behavioral anchoring** - Baselines freeze after initial interactions, detecting drift against a stable reference.
 
-Set `AEGIS_STATE_KEY` to a secret hex string for durable state. Without it, an ephemeral key is generated per session.
+Persistent state is opt-in. Set `state_store.enabled: true` and inject a stable
+`AEGIS_STATE_KEY`; enforce mode refuses to initialize persistent state without one.
 
 ## Threat Categories
 

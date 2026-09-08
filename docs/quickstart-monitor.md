@@ -52,7 +52,11 @@ host: "0.0.0.0"
 port: 8080
 database_path: "monitor.db"
 api_keys:
-  - "my-secret-key"
+  "agent-secret":
+    role: agent
+    agent_id: "chatbot-1"
+    operator_id: "my-org"
+  "operator-secret": operator
 clustering_enabled: true
 r0_window_hours: 24
 ```
@@ -60,10 +64,12 @@ r0_window_hours: 24
 Or use environment variables:
 
 ```bash
-MONITOR_PORT=9090 MONITOR_API_KEYS=my-secret-key uvicorn monitor.app:app
+MONITOR_PORT=9090 MONITOR_API_KEYS=agent-secret:agent:chatbot-1:my-org uvicorn monitor.app:app
 ```
 
-When `api_keys` is empty (the default), the monitor runs in **open mode** — all requests are accepted. For production, set at least one API key.
+When `api_keys` is empty, startup fails closed by default. Open mode is available
+only when `allow_open_mode: true` (or `MONITOR_ALLOW_OPEN_MODE=true`) is set
+explicitly for development.
 
 ---
 

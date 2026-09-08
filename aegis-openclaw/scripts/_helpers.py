@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -16,6 +17,11 @@ def build_store(config: Any) -> tuple[Any, dict | None]:
     """
     if not config.state_store.enabled:
         return None, {"error": "state_store_disabled"}
+    if not os.environ.get("AEGIS_STATE_KEY"):
+        return None, {
+            "error": "state_key_required",
+            "detail": "Set AEGIS_STATE_KEY before enabling persistent state",
+        }
 
     from aegis.core.state_store import StateStore, TamperDetectedError
 

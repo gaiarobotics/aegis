@@ -1,6 +1,5 @@
 """Tests for skill loader."""
 
-
 from aegis.core.config import SkillsConfig
 from aegis.skills.loader import LoadResult, SkillLoader
 from aegis.skills.manifest import SkillManifest
@@ -33,7 +32,11 @@ class TestLoadCleanSkillApproved:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader(config=SkillsConfig(incubation_mode=False))
+        loader = SkillLoader(
+            config=SkillsConfig(
+                require_manifest=False, auto_approve_clean=True, incubation_mode=False
+            )
+        )
         manifest = _make_manifest()
         result = loader.load_skill(str(skill_file), manifest)
 
@@ -52,7 +55,7 @@ class TestLoadCleanSkillApproved:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(require_manifest=False, auto_approve_clean=True))
         result = loader.load_skill(str(skill_file), _make_manifest())
         assert result.approved is True
 
@@ -60,16 +63,22 @@ class TestLoadCleanSkillApproved:
 class TestLoadDangerousSkillRejected:
     def test_load_dangerous_skill_rejected(self, tmp_path):
         """Code with exec() should be rejected."""
-        code = 'exec("import os; os.system(\'rm -rf /\')")\n'
+        code = "exec(\"import os; os.system('rm -rf /')\")\n"
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(require_manifest=False, auto_approve_clean=True))
         result = loader.load_skill(str(skill_file), _make_manifest())
 
         assert isinstance(result, LoadResult)
         assert result.approved is False
-        assert "reject" in result.reason.lower() or "dangerous" in result.reason.lower() or "unsafe" in result.reason.lower() or "denied" in result.reason.lower() or "fail" in result.reason.lower()
+        assert (
+            "reject" in result.reason.lower()
+            or "dangerous" in result.reason.lower()
+            or "unsafe" in result.reason.lower()
+            or "denied" in result.reason.lower()
+            or "fail" in result.reason.lower()
+        )
 
     def test_load_subprocess_rejected(self, tmp_path):
         """Code with subprocess should be rejected."""
@@ -77,7 +86,7 @@ class TestLoadDangerousSkillRejected:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(require_manifest=False, auto_approve_clean=True))
         result = loader.load_skill(str(skill_file), _make_manifest())
         assert result.approved is False
 
@@ -87,7 +96,7 @@ class TestLoadDangerousSkillRejected:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(require_manifest=False, auto_approve_clean=True))
         bad_manifest = _make_manifest(name="", version="1.0.0")
         result = loader.load_skill(str(skill_file), bad_manifest)
         assert result.approved is False
@@ -101,7 +110,7 @@ class TestHashCacheDedup:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(require_manifest=False, auto_approve_clean=True))
         manifest = _make_manifest()
 
         result1 = loader.load_skill(str(skill_file), manifest)
@@ -114,7 +123,7 @@ class TestHashCacheDedup:
 
     def test_different_code_different_hash(self, tmp_path):
         """Different code should produce different cache entries."""
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(require_manifest=False, auto_approve_clean=True))
         manifest = _make_manifest()
 
         code1 = "def hello():\n    return 'world'\n"
@@ -138,7 +147,11 @@ class TestIncubationMode:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader(config=SkillsConfig(incubation_mode=True))
+        loader = SkillLoader(
+            config=SkillsConfig(
+                require_manifest=False, auto_approve_clean=True, incubation_mode=True
+            )
+        )
         manifest = _make_manifest()
         result = loader.load_skill(str(skill_file), manifest)
 
@@ -151,7 +164,11 @@ class TestIncubationMode:
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader(config=SkillsConfig(incubation_mode=False))
+        loader = SkillLoader(
+            config=SkillsConfig(
+                require_manifest=False, auto_approve_clean=True, incubation_mode=False
+            )
+        )
         manifest = _make_manifest()
         result = loader.load_skill(str(skill_file), manifest)
 
@@ -163,6 +180,7 @@ class TestPathContainment:
         """Skills outside the skills_base_dir should be rejected."""
         import os
         import tempfile
+
         code = "def safe():\n    return 1\n"
         with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
             f.write(code)
@@ -170,7 +188,11 @@ class TestPathContainment:
 
         base_dir = str(tmp_path / "skills")
         (tmp_path / "skills").mkdir()
-        loader = SkillLoader(config=SkillsConfig(skills_base_dir=base_dir))
+        loader = SkillLoader(
+            config=SkillsConfig(
+                require_manifest=False, auto_approve_clean=True, skills_base_dir=base_dir
+            )
+        )
         result = loader.load_skill(outside_path, _make_manifest())
         assert result.approved is False
         assert "outside" in result.reason.lower()
@@ -184,12 +206,42 @@ class TestPathContainment:
         skill_file = base_dir / "main.py"
         skill_file.write_text(code)
 
-        loader = SkillLoader(config=SkillsConfig(skills_base_dir=str(base_dir)))
+        loader = SkillLoader(
+            config=SkillsConfig(
+                require_manifest=False, auto_approve_clean=True, skills_base_dir=str(base_dir)
+            )
+        )
         result = loader.load_skill(str(skill_file), _make_manifest())
         assert result.approved is True
 
 
 class TestHashVerificationInLoader:
+    def test_missing_file_hash_rejected(self, tmp_path):
+        skill_file = tmp_path / "main.py"
+        skill_file.write_text("return_value = 1\n")
+        loader = SkillLoader(config=SkillsConfig(auto_approve_clean=True))
+        result = loader.load_skill(str(skill_file), _make_manifest(hashes={"other.py": "00" * 32}))
+        assert result.approved is False
+        assert "does not contain a hash" in result.reason
+
+    def test_oversized_file_rejected_before_read(self, tmp_path):
+        skill_file = tmp_path / "main.py"
+        skill_file.write_text("x" * 32)
+        loader = SkillLoader(
+            config=SkillsConfig(max_code_size=8, require_manifest=False, auto_approve_clean=True)
+        )
+        result = loader.load_skill(str(skill_file), _make_manifest())
+        assert result.approved is False
+        assert "max_code_size" in result.reason
+
+    def test_clean_skill_requires_manual_approval_by_default(self, tmp_path):
+        skill_file = tmp_path / "main.py"
+        skill_file.write_text("value = 1\n")
+        loader = SkillLoader(config=SkillsConfig(require_manifest=False))
+        result = loader.load_skill(str(skill_file), _make_manifest())
+        assert result.approved is False
+        assert result.incubation is True
+
     def test_hash_mismatch_rejected(self, tmp_path):
         """Skill file with hash mismatch should be rejected."""
         code = "def safe():\n    return 1\n"
@@ -197,11 +249,17 @@ class TestHashVerificationInLoader:
         skill_file.write_text(code)
 
         manifest = SkillManifest(
-            name="test-skill", version="1.0.0", publisher="pub",
+            name="test-skill",
+            version="1.0.0",
+            publisher="pub",
             hashes={"main.py": "wrong_hash_value"},
-            signature=None, capabilities={}, secrets=[], budgets=None, sandbox=True,
+            signature=None,
+            capabilities={},
+            secrets=[],
+            budgets=None,
+            sandbox=True,
         )
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(auto_approve_clean=True))
         result = loader.load_skill(str(skill_file), manifest)
         assert result.approved is False
         assert "hash mismatch" in result.reason.lower()
@@ -209,16 +267,23 @@ class TestHashVerificationInLoader:
     def test_hash_match_accepted(self, tmp_path):
         """Skill file with correct hash should be accepted."""
         import hashlib
+
         code = "def safe():\n    return 1\n"
         expected_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
         skill_file = tmp_path / "main.py"
         skill_file.write_text(code)
 
         manifest = SkillManifest(
-            name="test-skill", version="1.0.0", publisher="pub",
+            name="test-skill",
+            version="1.0.0",
+            publisher="pub",
             hashes={"main.py": expected_hash},
-            signature=None, capabilities={}, secrets=[], budgets=None, sandbox=True,
+            signature=None,
+            capabilities={},
+            secrets=[],
+            budgets=None,
+            sandbox=True,
         )
-        loader = SkillLoader()
+        loader = SkillLoader(config=SkillsConfig(auto_approve_clean=True))
         result = loader.load_skill(str(skill_file), manifest)
         assert result.approved is True

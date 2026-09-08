@@ -74,14 +74,27 @@ class TestObserver:
         )
         assert observer.get_agent_observation_count("moltbook:alice") == 2
 
-    def test_scan_failure_returns_safe_result(self):
+    def test_scan_failure_fails_closed_in_enforce_mode(self):
         observer, mock_shield, mock_reporter = self._make_observer()
+        mock_shield.mode = "enforce"
         mock_shield.scan_input.side_effect = RuntimeError("scanner crash")
         result = observer.observe_post(
             post=_post("p6", "moltbook:bad", "crash content"),
         )
+        assert result.is_threat is True
+        assert result.threat_score == 1.0
+        assert result.scan_succeeded is False
+        mock_reporter.report_compromised_agent.assert_called_once()
+
+    def test_scan_failure_is_explicit_in_observe_mode(self):
+        observer, mock_shield, mock_reporter = self._make_observer()
+        mock_shield.mode = "observe"
+        mock_shield.scan_input.side_effect = RuntimeError("scanner crash")
+        result = observer.observe_post(
+            post=_post("p7", "moltbook:bad", "crash content"),
+        )
         assert result.is_threat is False
-        assert result.threat_score == 0.0
+        assert result.scan_succeeded is False
         mock_reporter.report_compromised_agent.assert_not_called()
 
     def test_observation_result_fields(self):

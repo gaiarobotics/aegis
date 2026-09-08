@@ -305,9 +305,16 @@
             if (existingKsBtn) existingKsBtn.remove();
             var btnDiv = document.createElement("div");
             btnDiv.className = "ks-popup-actions";
-            btnDiv.innerHTML =
-                '<button class="ks-btn ks-block-agent" onclick="ksBlockAgent(\'' + nodeId + '\')">Block Agent</button>' +
-                '<button class="ks-btn ks-unblock-agent" onclick="ksUnblockAgent(\'' + nodeId + '\')">Unblock Agent</button>';
+            var blockBtn = document.createElement("button");
+            blockBtn.className = "ks-btn ks-block-agent";
+            blockBtn.textContent = "Block Agent";
+            blockBtn.addEventListener("click", function () { window.ksBlockAgent(nodeId); });
+            var unblockBtn = document.createElement("button");
+            unblockBtn.className = "ks-btn ks-unblock-agent";
+            unblockBtn.textContent = "Unblock Agent";
+            unblockBtn.addEventListener("click", function () { window.ksUnblockAgent(nodeId); });
+            btnDiv.appendChild(blockBtn);
+            btnDiv.appendChild(unblockBtn);
             popup.appendChild(btnDiv);
 
             popup.classList.add("visible");
@@ -412,7 +419,7 @@
             if (rules.length === 0) {
                 statusEl.textContent = "No rules active";
                 statusEl.className = "ks-status-text";
-                listEl.innerHTML = "";
+                listEl.replaceChildren();
                 return;
             }
 
@@ -425,15 +432,27 @@
                 statusEl.className = "ks-status-text";
             }
 
-            listEl.innerHTML = rules.map(function (r) {
+            listEl.replaceChildren();
+            rules.forEach(function (r) {
                 var label = r.scope === "swarm" ? "ALL AGENTS" :
                     r.scope + ": " + (r.target || "—");
-                return '<div class="ks-rule">' +
-                    '<span class="ks-rule-scope">' + label + '</span>' +
-                    '<span class="ks-rule-reason">' + (r.reason || "") + '</span>' +
-                    '<button class="ks-rule-delete" onclick="ksDeleteRule(\'' + r.rule_id + '\')">&times;</button>' +
-                    '</div>';
-            }).join("");
+                var row = document.createElement("div");
+                row.className = "ks-rule";
+                var scope = document.createElement("span");
+                scope.className = "ks-rule-scope";
+                scope.textContent = label;
+                var reason = document.createElement("span");
+                reason.className = "ks-rule-reason";
+                reason.textContent = r.reason || "";
+                var remove = document.createElement("button");
+                remove.className = "ks-rule-delete";
+                remove.textContent = "×";
+                remove.addEventListener("click", function () { window.ksDeleteRule(r.rule_id); });
+                row.appendChild(scope);
+                row.appendChild(reason);
+                row.appendChild(remove);
+                listEl.appendChild(row);
+            });
         } catch (err) {
             // silent
         }
@@ -905,6 +924,11 @@
         setupFilters();
         setupTopicToggle();
         setupTopicPanel();
+        document.getElementById("ks-block-swarm").addEventListener("click", window.ksBlockSwarm);
+        document.getElementById("ks-unblock-swarm").addEventListener("click", window.ksUnblockSwarm);
+        document.getElementById("agent-popup-close").addEventListener("click", function () {
+            document.getElementById("agent-popup").classList.remove("visible");
+        });
         fetchGraph();
         fetchMetrics();
         fetchKillswitchRules();

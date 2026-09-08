@@ -50,14 +50,22 @@ class AgentGraph:
     ) -> None:
         """Add or update a node and its edges from a heartbeat."""
         existing = self._g.nodes.get(agent_id, {})
-        ks = is_killswitched if is_killswitched is not None else existing.get("is_killswitched", False)
+        ks = (
+            is_killswitched
+            if is_killswitched is not None
+            else existing.get("is_killswitched", False)
+        )
         self._g.add_node(
             agent_id,
             operator_id=operator_id,
-            trust_tier=trust_tier,
-            trust_score=trust_score,
+            trust_tier=existing.get("trust_tier", 0)
+            if existing.get("is_compromised")
+            else trust_tier,
+            trust_score=existing.get("trust_score", 0.0)
+            if existing.get("is_compromised")
+            else trust_score,
             is_compromised=existing.get("is_compromised", False),
-            is_quarantined=is_quarantined,
+            is_quarantined=existing.get("is_quarantined", False) or is_quarantined,
             is_killswitched=ks,
             has_aegis=True,
             last_heartbeat=time.time(),
@@ -68,10 +76,17 @@ class AgentGraph:
                 continue
             # Ensure target node exists
             if target not in self._g:
-                self._g.add_node(target, trust_tier=0, trust_score=0.0,
-                                 is_compromised=False, is_quarantined=False,
-                                 is_killswitched=False, has_aegis=False,
-                                 operator_id="", last_heartbeat=0)
+                self._g.add_node(
+                    target,
+                    trust_tier=0,
+                    trust_score=0.0,
+                    is_compromised=False,
+                    is_quarantined=False,
+                    is_killswitched=False,
+                    has_aegis=False,
+                    operator_id="",
+                    last_heartbeat=0,
+                )
             self._g.add_edge(
                 agent_id,
                 target,
@@ -141,29 +156,33 @@ class AgentGraph:
             compromised = data.get("is_compromised", False)
             quarantined = data.get("is_quarantined", False)
             killswitched = data.get("is_killswitched", False)
-            nodes.append({
-                "id": nid,
-                "operator_id": data.get("operator_id", ""),
-                "trust_tier": tier,
-                "trust_score": data.get("trust_score", 0.0),
-                "is_compromised": compromised,
-                "is_quarantined": quarantined,
-                "is_killswitched": killswitched,
-                "has_aegis": data.get("has_aegis", False),
-                "color": _trust_color(tier, compromised, quarantined, killswitched),
-                "last_heartbeat": data.get("last_heartbeat", 0),
-            })
+            nodes.append(
+                {
+                    "id": nid,
+                    "operator_id": data.get("operator_id", ""),
+                    "trust_tier": tier,
+                    "trust_score": data.get("trust_score", 0.0),
+                    "is_compromised": compromised,
+                    "is_quarantined": quarantined,
+                    "is_killswitched": killswitched,
+                    "has_aegis": data.get("has_aegis", False),
+                    "color": _trust_color(tier, compromised, quarantined, killswitched),
+                    "last_heartbeat": data.get("last_heartbeat", 0),
+                }
+            )
 
         edges = []
         for src, tgt, data in self._g.edges(data=True):
-            edges.append({
-                "source": src,
-                "target": tgt,
-                "direction": data.get("direction", "outbound"),
-                "last_seen": data.get("last_seen", 0),
-                "message_count": data.get("message_count", 0),
-                "weight": max(1, data.get("message_count", 0)),
-            })
+            edges.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "direction": data.get("direction", "outbound"),
+                    "last_seen": data.get("last_seen", 0),
+                    "message_count": data.get("message_count", 0),
+                    "weight": max(1, data.get("message_count", 0)),
+                }
+            )
 
         return {"nodes": nodes, "edges": edges}
 
@@ -189,27 +208,31 @@ class AgentGraph:
         """Convert graph nodes to ``AgentNode`` list."""
         result = []
         for nid, data in self._g.nodes(data=True):
-            result.append(AgentNode(
-                agent_id=nid,
-                operator_id=data.get("operator_id", ""),
-                trust_tier=data.get("trust_tier", 0),
-                trust_score=data.get("trust_score", 0.0),
-                is_compromised=data.get("is_compromised", False),
-                is_quarantined=data.get("is_quarantined", False),
-                is_killswitched=data.get("is_killswitched", False),
-                last_heartbeat=data.get("last_heartbeat", 0),
-            ))
+            result.append(
+                AgentNode(
+                    agent_id=nid,
+                    operator_id=data.get("operator_id", ""),
+                    trust_tier=data.get("trust_tier", 0),
+                    trust_score=data.get("trust_score", 0.0),
+                    is_compromised=data.get("is_compromised", False),
+                    is_quarantined=data.get("is_quarantined", False),
+                    is_killswitched=data.get("is_killswitched", False),
+                    last_heartbeat=data.get("last_heartbeat", 0),
+                )
+            )
         return result
 
     def to_agent_edges(self) -> list[AgentEdge]:
         """Convert graph edges to ``AgentEdge`` list."""
         result = []
         for src, tgt, data in self._g.edges(data=True):
-            result.append(AgentEdge(
-                source_agent_id=src,
-                target_agent_id=tgt,
-                direction=data.get("direction", "outbound"),
-                last_seen=data.get("last_seen", 0),
-                message_count=data.get("message_count", 0),
-            ))
+            result.append(
+                AgentEdge(
+                    source_agent_id=src,
+                    target_agent_id=tgt,
+                    direction=data.get("direction", "outbound"),
+                    last_seen=data.get("last_seen", 0),
+                    message_count=data.get("message_count", 0),
+                )
+            )
         return result

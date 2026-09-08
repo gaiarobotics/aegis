@@ -10,7 +10,14 @@ import json
 from typing import Any
 
 from monitor.backends import create_backend
-from monitor.models import AgentEdge, AgentNode, CompromiseRecord, KillswitchRule, QuarantineRule, StoredEvent
+from monitor.models import (
+    AgentEdge,
+    AgentNode,
+    CompromiseRecord,
+    KillswitchRule,
+    QuarantineRule,
+    StoredEvent,
+)
 
 
 class Database:
@@ -67,9 +74,7 @@ class Database:
         )
 
     def get_agent(self, agent_id: str) -> AgentNode | None:
-        row = self._backend.fetchone(
-            "SELECT * FROM agents WHERE agent_id = ?", (agent_id,)
-        )
+        row = self._backend.fetchone("SELECT * FROM agents WHERE agent_id = ?", (agent_id,))
         if row is None:
             return None
         return self._row_to_agent(row)
@@ -127,6 +132,12 @@ class Database:
         ]
 
     # ---- Events ----
+
+    def event_exists(self, event_id: str) -> bool:
+        return (
+            self._backend.fetchone("SELECT event_id FROM events WHERE event_id = ?", (event_id,))
+            is not None
+        )
 
     def insert_event(self, event: StoredEvent) -> None:
         self._backend.execute(
@@ -222,8 +233,7 @@ class Database:
     ) -> list[CompromiseRecord]:
         if since is not None:
             rows = self._backend.fetchall(
-                "SELECT * FROM compromises WHERE timestamp >= ? "
-                "ORDER BY timestamp DESC LIMIT ?",
+                "SELECT * FROM compromises WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?",
                 (since, limit),
             )
         else:
@@ -292,9 +302,7 @@ class Database:
         )
 
     def get_killswitch_rules(self) -> list[KillswitchRule]:
-        rows = self._backend.fetchall(
-            "SELECT * FROM killswitch_rules ORDER BY created_at DESC"
-        )
+        rows = self._backend.fetchall("SELECT * FROM killswitch_rules ORDER BY created_at DESC")
         return [
             KillswitchRule(
                 rule_id=r["rule_id"],
@@ -376,9 +384,7 @@ class Database:
         )
 
     def get_quarantine_rules(self) -> list[QuarantineRule]:
-        rows = self._backend.fetchall(
-            "SELECT * FROM quarantine_rules ORDER BY created_at DESC"
-        )
+        rows = self._backend.fetchall("SELECT * FROM quarantine_rules ORDER BY created_at DESC")
         return [
             QuarantineRule(
                 rule_id=r["rule_id"],

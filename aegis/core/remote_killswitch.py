@@ -49,6 +49,7 @@ class RemoteKillswitch:
         operator_id: str = "",
         http_pool: Any = None,
     ) -> None:
+        self._config = config
         self._ttl = config.ttl_seconds
         self._agent_id = agent_id
         self._operator_id = operator_id
@@ -125,19 +126,28 @@ class RemoteKillswitch:
             )
 
             if self._http_pool is not None:
+                headers = {"Accept": "application/json"}
+                if self._config.api_key:
+                    headers["Authorization"] = f"Bearer {self._config.api_key}"
                 resp = self._http_pool.get(
                     full_url,
-                    headers={"Accept": "application/json"},
+                    headers=headers,
                     timeout=_POLL_TIMEOUT,
                 )
+                if resp.status_code < 200 or resp.status_code >= 300:
+                    raise RuntimeError(f"Monitor returned HTTP {resp.status_code}")
                 data: dict[str, Any] = resp.json()
             else:
                 req = urllib.request.Request(full_url, method="GET")
                 req.add_header("Accept", "application/json")
+                if self._config.api_key:
+                    req.add_header("Authorization", f"Bearer {self._config.api_key}")
                 with urllib.request.urlopen(req, timeout=_POLL_TIMEOUT) as resp:
                     data = json.loads(resp.read())
 
-            blocked = bool(data.get("blocked", False))
+            if not isinstance(data, dict) or not isinstance(data.get("blocked"), bool):
+                raise ValueError("Invalid killswitch response schema")
+            blocked = data["blocked"]
             reason = str(data.get("reason", ""))
 
             with self._lock:

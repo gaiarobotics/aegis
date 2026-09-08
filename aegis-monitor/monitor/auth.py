@@ -7,6 +7,8 @@ import hashlib
 import hmac
 import json
 import logging
+import math
+import re
 import secrets
 import time
 from collections import defaultdict
@@ -16,7 +18,39 @@ from fastapi import Depends, HTTPException, Request
 
 from monitor.config import MonitorConfig
 
+
+class AuthPrincipal(str):
+    """Authenticated role plus the identity bound to its credential.
+
+    This subclasses ``str`` to preserve compatibility with dependencies that
+    historically received only the role name.
+    """
+
+    role: str
+    agent_id: str
+    operator_id: str
+
+    def __new__(
+        cls,
+        role: str,
+        *,
+        agent_id: str = "",
+        operator_id: str = "",
+    ) -> "AuthPrincipal":
+        value = str.__new__(cls, role)
+        value.role = role
+        value.agent_id = agent_id
+        value.operator_id = operator_id
+        return value
+
+
 logger = logging.getLogger(__name__)
+
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
+_MAX_REPORT_BYTES = 1_048_576
+_MAX_EDGES = 1_000
+_REPORT_MAX_AGE_SECONDS = 300
+_REPORT_FUTURE_SKEW_SECONDS = 30
 
 
 def get_config(request: Request) -> MonitorConfig:
@@ -25,7 +59,8 @@ def get_config(request: Request) -> MonitorConfig:
 
 
 def verify_api_key(
-    request: Request, config: MonitorConfig = Depends(get_config),
+    request: Request,
+    config: MonitorConfig = Depends(get_config),
 ) -> str:
     """Resolve the caller's role from the Authorization header.
 
@@ -34,21 +69,29 @@ def verify_api_key(
     """
     if not config.api_keys:
         if config.allow_open_mode:
-            return "open"
-        raise HTTPException(status_code=503, detail="Open mode is disabled; configure api_keys or set allow_open_mode")
+            return AuthPrincipal("open")
+        raise HTTPException(
+            status_code=503,
+            detail="Open mode is disabled; configure api_keys or set allow_open_mode",
+        )
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         # Check for session cookie before rejecting (placeholder for Task 3)
         session_role = _resolve_session_cookie(request, config)
         if session_role is not None:
-            return session_role
+            return AuthPrincipal(session_role)
         raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
 
-    token = auth_header[len("Bearer "):]
+    token = auth_header[len("Bearer ") :]
     for configured_key, role in config.api_keys.items():
         if hmac.compare_digest(token, configured_key):
-            return role
+            identity = config.api_key_identities.get(configured_key)
+            return AuthPrincipal(
+                role,
+                agent_id=identity.agent_id if identity else "",
+                operator_id=identity.operator_id if identity else "",
+            )
 
     raise HTTPException(status_code=403, detail="Invalid API key")
 
@@ -57,7 +100,11 @@ _SESSION_COOKIE_NAME = "aegis_session"
 
 
 def create_session_token(
-    role: str, api_key: str, secret: str, *, issued_at: float | None = None,
+    role: str,
+    api_key: str,
+    secret: str,
+    *,
+    issued_at: float | None = None,
 ) -> str:
     """Create an HMAC-SHA256 signed session token.
 
@@ -77,7 +124,11 @@ def create_session_token(
 
 
 def verify_session_token(
-    token: str, secret: str, *, ttl: int, now: float | None = None,
+    token: str,
+    secret: str,
+    *,
+    ttl: int,
+    now: float | None = None,
 ) -> dict | None:
     """Verify and decode a session token. Returns payload dict or None."""
     try:
@@ -122,7 +173,11 @@ def generate_csrf_token(secret: str, *, issued_at: float | None = None) -> str:
 
 
 def verify_csrf_token(
-    token: str, secret: str, *, ttl: int, now: float | None = None,
+    token: str,
+    secret: str,
+    *,
+    ttl: int,
+    now: float | None = None,
 ) -> bool:
     """Verify a CSRF token is valid and not expired."""
     try:
@@ -146,11 +201,15 @@ def require_csrf(request: Request, config: MonitorConfig = Depends(get_config)) 
     """
     if request.headers.get("Authorization", "").startswith("Bearer "):
         return  # Bearer auth — not vulnerable to CSRF
+    if not request.cookies.get(_SESSION_COOKIE_NAME):
+        return  # No ambient browser credential to forge
     if not config.session_secret:
         return
 
     csrf_token = request.headers.get("X-CSRF-Token", "")
-    if not csrf_token or not verify_csrf_token(csrf_token, config.session_secret, ttl=config.session_ttl_seconds):
+    if not csrf_token or not verify_csrf_token(
+        csrf_token, config.session_secret, ttl=config.session_ttl_seconds
+    ):
         raise HTTPException(status_code=403, detail="Missing or invalid CSRF token")
 
 
@@ -159,13 +218,96 @@ def require_role(*allowed_roles: str) -> Callable:
 
     The "open" role (when no keys are configured) is always accepted.
     """
-    async def _check(role: str = Depends(verify_api_key)) -> str:
-        if role == "open":
-            return role
-        if role not in allowed_roles:
-            raise HTTPException(status_code=403, detail=f"Role '{role}' not permitted")
-        return role
+
+    async def _check(principal: AuthPrincipal = Depends(verify_api_key)) -> AuthPrincipal:
+        if principal == "open":
+            return principal
+        if principal.role not in allowed_roles:
+            raise HTTPException(status_code=403, detail=f"Role '{principal.role}' not permitted")
+        return principal
+
     return _check
+
+
+def bind_agent_identity(data: dict, principal: AuthPrincipal) -> None:
+    """Require an agent request body to match its authenticated identity."""
+    if principal in ("open", "operator"):
+        return
+    if principal.role != "agent":
+        raise HTTPException(status_code=403, detail="Agent identity is required")
+    if not principal.agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Agent API key is not bound to an agent_id; migrate the key configuration",
+        )
+    if data.get("agent_id") != principal.agent_id:
+        raise HTTPException(status_code=403, detail="Report agent_id does not match API key")
+    if principal.operator_id and data.get("operator_id", "") != principal.operator_id:
+        raise HTTPException(status_code=403, detail="Report operator_id does not match API key")
+    report_id = data.get("report_id")
+    if not isinstance(report_id, str) or not _SAFE_ID.fullmatch(report_id):
+        raise HTTPException(status_code=422, detail="Agent reports require a valid report_id")
+    timestamp = data.get("timestamp")
+    if not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp):
+        raise HTTPException(status_code=422, detail="Agent reports require a finite timestamp")
+    age = time.time() - float(timestamp)
+    if age > _REPORT_MAX_AGE_SECONDS or age < -_REPORT_FUTURE_SKEW_SECONDS:
+        raise HTTPException(
+            status_code=422, detail="Report timestamp is outside the allowed window"
+        )
+
+
+def validate_report_payload(data: dict) -> None:
+    """Apply common structural and resource limits to agent telemetry."""
+    try:
+        encoded_size = len(json.dumps(data, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Report is not valid JSON data") from None
+    if encoded_size > _MAX_REPORT_BYTES:
+        raise HTTPException(status_code=413, detail="Report body exceeds size limit")
+
+    for field in ("agent_id", "operator_id", "target_agent_id", "compromised_agent_id"):
+        value = data.get(field)
+        if value in (None, "") and field not in ("agent_id",):
+            continue
+        if not isinstance(value, str) or not _SAFE_ID.fullmatch(value):
+            raise HTTPException(status_code=422, detail=f"Invalid {field}")
+
+    for field in ("trust_score", "nk_score", "threat_score", "topic_velocity", "timestamp"):
+        value = data.get(field)
+        if value is not None and (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
+            raise HTTPException(status_code=422, detail=f"Invalid {field}")
+
+    edges = data.get("edges")
+    if edges is not None:
+        if not isinstance(edges, list) or len(edges) > _MAX_EDGES:
+            raise HTTPException(status_code=422, detail="Invalid or excessive heartbeat edges")
+        for edge in edges:
+            if not isinstance(edge, dict):
+                raise HTTPException(status_code=422, detail="Invalid heartbeat edge")
+            target = edge.get("target_agent_id")
+            if not isinstance(target, str) or not _SAFE_ID.fullmatch(target):
+                raise HTTPException(status_code=422, detail="Invalid edge target_agent_id")
+
+
+def scope_agent_query(
+    agent_id: str,
+    operator_id: str,
+    principal: AuthPrincipal,
+) -> tuple[str, str]:
+    """Derive agent polling scope from an agent credential, never its query."""
+    if principal.role == "agent":
+        if not principal.agent_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Agent API key is not bound to an agent_id; migrate the key configuration",
+            )
+        return principal.agent_id, principal.operator_id
+    return agent_id, operator_id
 
 
 class LoginRateLimiter:
@@ -209,6 +351,7 @@ def _get_report_type_map() -> dict[str, type]:
             ThreatEventReport,
             TrustReport,
         )
+
         _REPORT_TYPE_MAP = {
             "compromise": CompromiseReport,
             "trust": TrustReport,
@@ -234,8 +377,8 @@ def verify_report_signature(data: dict, config: MonitorConfig) -> tuple[bool, bo
     agent_key = config.agent_public_keys.get(agent_id)
 
     if agent_key is None:
-        logger.debug("Report from unknown agent %r accepted unverified", agent_id)
-        return (True, False)
+        logger.warning("Report from unknown agent %r rejected", agent_id)
+        return (False, False)
 
     sig = data.get("signature", "")
     if not sig:
@@ -246,7 +389,9 @@ def verify_report_signature(data: dict, config: MonitorConfig) -> tuple[bool, bo
     if report_key_type != agent_key.key_type:
         logger.warning(
             "Report from agent %r rejected: key_type mismatch (report=%r, config=%r)",
-            agent_id, report_key_type, agent_key.key_type,
+            agent_id,
+            report_key_type,
+            agent_key.key_type,
         )
         return (False, False)
 
@@ -254,7 +399,9 @@ def verify_report_signature(data: dict, config: MonitorConfig) -> tuple[bool, bo
     type_map = _get_report_type_map()
     report_cls = type_map.get(report_type)
     if report_cls is None:
-        logger.warning("Report from agent %r rejected: unknown report_type %r", agent_id, report_type)
+        logger.warning(
+            "Report from agent %r rejected: unknown report_type %r", agent_id, report_type
+        )
         return (False, False)
 
     try:
@@ -264,5 +411,9 @@ def verify_report_signature(data: dict, config: MonitorConfig) -> tuple[bool, bo
         logger.warning("Report from agent %r rejected: signature verification failed", agent_id)
         return (False, False)
     except Exception:
-        logger.warning("Report from agent %r rejected: deserialization/verification error", agent_id, exc_info=True)
+        logger.warning(
+            "Report from agent %r rejected: deserialization/verification error",
+            agent_id,
+            exc_info=True,
+        )
         return (False, False)

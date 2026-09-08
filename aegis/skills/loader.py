@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from aegis.core.config import SkillsConfig
-from aegis.skills.manifest import SkillManifest, validate_manifest
+from aegis.skills.manifest import (
+    SkillManifest,
+    validate_manifest,
+    verify_manifest_signature,
+)
 from aegis.skills.quarantine import analyze_code
 
 
@@ -72,6 +76,14 @@ class SkillLoader:
                 skill_hash="",
             )
 
+        if self._config.require_signature:
+            publisher_key = self._config.trusted_publisher_keys.get(manifest.publisher)
+            if not publisher_key or not verify_manifest_signature(manifest, publisher_key):
+                return LoadResult(
+                    approved=False,
+                    reason="Manifest signature is missing, untrusted, or invalid",
+                )
+
         # Step 2: Resolve path and enforce containment
         p = Path(path).resolve()
         skills_base_dir = self._config.skills_base_dir
@@ -87,17 +99,36 @@ class SkillLoader:
                     skill_hash="",
                 )
 
+        try:
+            size = p.stat().st_size
+        except OSError as exc:
+            return LoadResult(approved=False, reason=f"Skill file cannot be inspected: {exc}")
+        if size > self._config.max_code_size:
+            return LoadResult(
+                approved=False,
+                reason=f"Skill exceeds max_code_size ({size} > {self._config.max_code_size})",
+            )
+
         code = p.read_text(encoding="utf-8")
         skill_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
 
         # Step 2b: Verify hash against manifest
         filename = p.name
-        if manifest.hashes:
+        if self._config.require_manifest:
             expected_hash = manifest.hashes.get(filename)
-            if expected_hash is not None and expected_hash != skill_hash:
+            if expected_hash is None:
                 return LoadResult(
                     approved=False,
-                    reason=f"Hash mismatch for {filename}: expected {expected_hash}, got {skill_hash}",
+                    reason=f"Manifest does not contain a hash for {filename}",
+                    skill_hash=skill_hash,
+                )
+            if expected_hash != skill_hash:
+                return LoadResult(
+                    approved=False,
+                    reason=(
+                        f"Hash mismatch for {filename}: expected {expected_hash}, "
+                        f"got {skill_hash}"
+                    ),
                     incubation=False,
                     skill_hash=skill_hash,
                 )
@@ -107,21 +138,28 @@ class SkillLoader:
             return self._hash_cache[skill_hash]
 
         # Step 4: Run static analysis
-        analysis = analyze_code(code, language="python")
+        analysis = analyze_code(code, language="python") if self._config.static_analysis else None
 
         # Step 5: Determine approval
-        if analysis.safe:
+        if analysis is not None and analysis.safe and self._config.auto_approve_clean:
             result = LoadResult(
                 approved=True,
                 reason="Static analysis passed: code is safe",
                 incubation=False,
                 skill_hash=skill_hash,
             )
-        else:
+        elif analysis is not None and not analysis.safe:
             result = LoadResult(
                 approved=False,
                 reason="Static analysis failed: unsafe patterns detected",
                 incubation=False,
+                skill_hash=skill_hash,
+            )
+        else:
+            result = LoadResult(
+                approved=False,
+                reason="Skill requires manual approval",
+                incubation=True,
                 skill_hash=skill_hash,
             )
 

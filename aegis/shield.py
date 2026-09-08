@@ -145,6 +145,7 @@ class Shield:
 
         # Shared connection pool
         from aegis.core.http import HttpPool
+
         self._http_pool = HttpPool()
 
         self._init_state_store()
@@ -161,15 +162,27 @@ class Shield:
         cfg = self._config.state_store
         if not cfg.enabled:
             return
+        if not os.environ.get("AEGIS_STATE_KEY"):
+            message = (
+                "state_store.enabled requires AEGIS_STATE_KEY so security state "
+                "can be verified after restart"
+            )
+            if self._mode == "enforce":
+                raise RuntimeError(message)
+            logger.error(message)
+            return
         try:
             from aegis.core.state_store import StateStore
+
             self._state_store = StateStore(
                 log_dir=cfg.log_dir,
                 checkpoint_interval=cfg.checkpoint_interval,
                 anchor_window=cfg.anchor_window,
             )
-        except Exception:
-            logger.debug("State store init failed", exc_info=True)
+        except Exception as exc:
+            logger.exception("State store init failed")
+            if self._mode == "enforce":
+                raise RuntimeError("Required state store failed to initialize") from exc
 
     @property
     def state_store(self):
@@ -181,13 +194,17 @@ class Shield:
         if self._config.is_module_enabled("scanner"):
             try:
                 from aegis.scanner import Scanner
+
                 self._scanner = Scanner(config=self._config, http_pool=self._http_pool)
-            except Exception:
-                logger.debug("Scanner module init failed", exc_info=True)
+            except Exception as exc:
+                logger.exception("Scanner module init failed")
+                if self._mode == "enforce":
+                    raise RuntimeError("Required scanner failed to initialize") from exc
 
             # Content gate (scanner sub-module)
             try:
                 from aegis.scanner.content_gate import ContentGate
+
                 gate_cfg = self._config.scanner.content_gate
                 if gate_cfg.enabled:
                     self._content_gate = ContentGate(config=gate_cfg, scanner=self._scanner)
@@ -197,36 +214,45 @@ class Shield:
         if self._config.is_module_enabled("broker"):
             try:
                 from aegis.broker import Broker
+
                 self._broker = Broker(config=self._config)
-            except Exception:
-                logger.debug("Broker module init failed", exc_info=True)
+            except Exception as exc:
+                logger.exception("Broker module init failed")
+                if self._mode == "enforce":
+                    raise RuntimeError("Required broker failed to initialize") from exc
 
         if self._config.is_module_enabled("identity"):
             try:
                 from aegis.identity import NKCell, TrustManager
                 from aegis.identity.resolver import IdentityResolver
+
                 self._trust_manager = TrustManager(config=self._config.identity.trust)
                 self._nk_cell = NKCell(config=self._config.identity.nkcell)
                 self._identity_resolver = IdentityResolver(
                     aliases=self._config.identity.resolver.aliases,
                     auto_learn=self._config.identity.resolver.auto_learn,
                 )
-            except Exception:
-                logger.debug("Identity module init failed", exc_info=True)
+            except Exception as exc:
+                logger.exception("Identity module init failed")
+                if self._mode == "enforce":
+                    raise RuntimeError("Required identity module failed to initialize") from exc
 
         if self._config.is_module_enabled("behavior"):
             try:
                 from aegis.behavior import BehaviorTracker, DriftDetector
+
                 self._behavior_tracker = BehaviorTracker(config=self._config.behavior)
                 self._drift_detector = DriftDetector(config=self._config.behavior)
                 try:
                     from aegis.behavior.message_drift import MessageDriftDetector
+
                     msg_drift_cfg = self._config.behavior.message_drift
                     self._message_drift_detector = MessageDriftDetector(config=msg_drift_cfg)
                 except Exception:
                     logger.debug("Message drift detector init failed", exc_info=True)
                 try:
                     from aegis.behavior.prompt_monitor import PromptMonitor
+
                     prompt_mon_cfg = self._config.behavior.prompt_monitor
                     self._prompt_monitor = PromptMonitor(config=prompt_mon_cfg)
                 except Exception:
@@ -238,6 +264,7 @@ class Shield:
                         from aegis.behavior.isolation_forest import (
                             IsolationForestDetector,
                         )
+
                         self._isolation_forest = IsolationForestDetector(
                             config=iso_cfg,
                         )
@@ -246,9 +273,11 @@ class Shield:
                 # Content hash tracker (LSH fingerprinting)
                 try:
                     from aegis.behavior.content_hash import ContentHashTracker
+
                     ch_cfg = self._config.behavior.content_hash
                     if ch_cfg.enabled:
                         from aegis.behavior.embedding_providers import create_provider
+
                         try:
                             provider = create_provider(
                                 model=ch_cfg.embedding_model,
@@ -268,6 +297,7 @@ class Shield:
         if self._config.is_module_enabled("memory"):
             try:
                 from aegis.memory import MemoryGuard
+
                 self._memory_guard = MemoryGuard(config=self._config.memory, scanner=self._scanner)
             except Exception:
                 logger.debug("Memory module init failed", exc_info=True)
@@ -275,14 +305,29 @@ class Shield:
         if self._config.is_module_enabled("recovery"):
             try:
                 from aegis.recovery import ContextRollback, RecoveryQuarantine
+
                 self._recovery_quarantine = RecoveryQuarantine(config=self._config.recovery)
                 self._context_rollback = ContextRollback()
-            except Exception:
-                logger.debug("Recovery module init failed", exc_info=True)
+                if self._state_store is not None:
+                    persisted = self._state_store.get_quarantine()
+                    if persisted.active:
+                        self._recovery_quarantine.enter(
+                            reason=persisted.reason or "Persisted quarantine",
+                            read_only=True,
+                        )
+                    if persisted.escalated:
+                        self._recovery_quarantine.escalate(
+                            persisted.escalation_reason or "Persisted escalation"
+                        )
+            except Exception as exc:
+                logger.exception("Recovery module init failed")
+                if self._mode == "enforce":
+                    raise RuntimeError("Required recovery module failed to initialize") from exc
 
         if self._config.is_module_enabled("integrity"):
             try:
                 from aegis.integrity.monitor import IntegrityMonitor
+
                 self._integrity_monitor = IntegrityMonitor(
                     config=self._config.integrity,
                 )
@@ -314,7 +359,9 @@ class Shield:
         # Auto-register on first call for this model
         if not self._integrity_monitor.is_registered(model_name):
             self._integrity_monitor.register_model(
-                model_name, provider, model_path=model_path,
+                model_name,
+                provider,
+                model_path=model_path,
             )
 
         # Fast stat check
@@ -346,7 +393,8 @@ class Shield:
         else:
             logger.warning(
                 "Model tampering detected (observe mode): %s -- %s",
-                model_name, detail,
+                model_name,
+                detail,
             )
 
     def _init_monitoring(self) -> None:
@@ -372,14 +420,14 @@ class Shield:
 
             # Wire compromise callback
             if self._trust_manager is not None:
-                self._trust_manager.set_compromise_callback(
-                    self._on_compromise_reported
-                )
+                self._trust_manager.set_compromise_callback(self._on_compromise_reported)
 
             self._monitoring_client.start()
-        except Exception:
-            logger.debug("Monitoring client init failed", exc_info=True)
+        except Exception as exc:
+            logger.exception("Monitoring client init failed")
             self._monitoring_client = None
+            if self._mode == "enforce":
+                raise RuntimeError("Enabled monitoring client failed to initialize") from exc
 
     def _init_killswitch(self) -> None:
         """Initialize remote killswitch if monitors are configured."""
@@ -388,15 +436,20 @@ class Shield:
             return
         try:
             from aegis.core.remote_killswitch import RemoteKillswitch
+
             self._killswitch = RemoteKillswitch(
-                config=ks_cfg,
+                config=ks_cfg.model_copy(
+                    update={"api_key": ks_cfg.api_key or self._config.monitoring.api_key}
+                ),
                 agent_id=self._config.agent_id,
                 operator_id=self._config.operator_id,
                 http_pool=self._http_pool,
             )
             self._killswitch.start()
-        except Exception:
-            logger.debug("Remote killswitch init failed", exc_info=True)
+        except Exception as exc:
+            logger.exception("Remote killswitch init failed")
+            if self._mode == "enforce":
+                raise RuntimeError("Configured remote killswitch failed to initialize") from exc
 
     def _init_remote_quarantine(self) -> None:
         """Start quarantine polling when monitoring is enabled."""
@@ -405,6 +458,7 @@ class Shield:
             return
         try:
             from aegis.core.remote_quarantine import RemoteQuarantine
+
             self._remote_quarantine = RemoteQuarantine(
                 service_url=mon_cfg.service_url,
                 api_key=mon_cfg.api_key,
@@ -414,8 +468,10 @@ class Shield:
                 http_pool=self._http_pool,
             )
             self._remote_quarantine.start()
-        except Exception:
-            logger.debug("Remote quarantine init failed", exc_info=True)
+        except Exception as exc:
+            logger.exception("Remote quarantine init failed")
+            if self._mode == "enforce":
+                raise RuntimeError("Configured remote quarantine failed to initialize") from exc
 
     def _init_remote_threat_intel(self) -> None:
         """Start threat intelligence polling when monitoring is enabled."""
@@ -424,6 +480,7 @@ class Shield:
             return
         try:
             from aegis.core.remote_threat_intel import RemoteThreatIntel
+
             self._remote_threat_intel = RemoteThreatIntel(
                 service_url=mon_cfg.service_url,
                 api_key=mon_cfg.api_key,
@@ -431,8 +488,10 @@ class Shield:
                 http_pool=self._http_pool,
             )
             self._remote_threat_intel.start()
-        except Exception:
-            logger.debug("Remote threat intel init failed", exc_info=True)
+        except Exception as exc:
+            logger.exception("Remote threat intel init failed")
+            if self._mode == "enforce":
+                raise RuntimeError("Configured remote threat intel failed to initialize") from exc
 
     def _init_self_integrity(self) -> None:
         """Initialize self-integrity watcher if enabled."""
@@ -442,6 +501,7 @@ class Shield:
         try:
             import aegis
             from aegis.core.self_integrity import SelfIntegrityWatcher
+
             package_dir = Path(aegis.__file__).parent
             self._self_integrity = SelfIntegrityWatcher(
                 config=si_cfg,
@@ -450,13 +510,16 @@ class Shield:
                 on_tamper=self._on_self_tamper,
             )
             self._self_integrity.start()
-        except Exception:
-            logger.debug("Self-integrity watcher init failed", exc_info=True)
+        except Exception as exc:
+            logger.exception("Self-integrity watcher init failed")
+            if self._mode == "enforce":
+                raise RuntimeError("Enabled self-integrity watcher failed to initialize") from exc
 
     def _init_platform_detector(self) -> None:
         """Initialize platform auto-detection."""
         try:
             from aegis.core.platform_detection import PlatformDetector
+
             self._platform_detector = PlatformDetector(
                 on_activate=self._on_platform_activated,
                 explicit_profiles=set(self._config.profiles),
@@ -468,6 +531,7 @@ class Shield:
         """Callback when a platform is auto-detected at runtime."""
         try:
             from aegis.core.config import _deep_merge, _load_profile
+
             profile_data = _load_profile(platform)
             # Profile overlays defaults — since the operator didn't explicitly
             # list this profile, the profile's values should take effect
@@ -507,18 +571,18 @@ class Shield:
             return True
         if self._recovery_quarantine is not None and self._recovery_quarantine.is_escalated:
             return True
+        if self._state_store is not None and self._state_store.get_quarantine().escalated:
+            return True
         return False
 
     def check_killswitch(self) -> None:
-        """Raise InferenceBlockedError if remote killswitch, quarantine, or self-integrity block is active."""
+        """Block inference for killswitch, quarantine, or integrity failures."""
         if self._self_integrity_blocked:
             raise InferenceBlockedError("AEGIS files tampered — inference blocked")
         if self._killswitch is not None and self._killswitch.is_blocked():
             raise InferenceBlockedError(self._killswitch.block_reason)
         if self._remote_quarantine is not None and self._remote_quarantine.is_quarantined():
-            raise InferenceBlockedError(
-                f"Agent quarantined: {self._remote_quarantine.reason}"
-            )
+            raise InferenceBlockedError(f"Agent quarantined: {self._remote_quarantine.reason}")
         if self._broker is not None and self._broker.quarantine.is_escalated:
             raise InferenceBlockedError(
                 f"Quarantine escalated: {self._broker.quarantine.escalation_reason}"
@@ -527,6 +591,10 @@ class Shield:
             raise InferenceBlockedError(
                 f"Quarantine escalated: {self._recovery_quarantine.escalation_reason}"
             )
+        if self._state_store is not None:
+            persisted = self._state_store.get_quarantine()
+            if persisted.escalated:
+                raise InferenceBlockedError(f"Quarantine escalated: {persisted.escalation_reason}")
 
     def _on_compromise_reported(self, agent_id: str) -> None:
         """Callback from TrustManager.report_compromise()."""
@@ -605,6 +673,7 @@ class Shield:
         thread-pool executor so the event loop is not stalled.
         """
         import asyncio
+
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.close)
         await self._http_pool.aclose()
@@ -643,8 +712,7 @@ class Shield:
 
         # Capture whether recovery quarantine was already active before this scan
         _was_recovery_quarantined = (
-            self._recovery_quarantine is not None
-            and self._recovery_quarantine.is_quarantined()
+            self._recovery_quarantine is not None and self._recovery_quarantine.is_quarantined()
         )
 
         # Gather compromised hashes for intent-divergence detector
@@ -662,7 +730,9 @@ class Shield:
         # Step 1: Scanner
         if self._scanner is not None:
             scan_result = self._scanner.scan_input(
-                text, context=context, compromised_hashes=compromised_hashes,
+                text,
+                context=context,
+                compromised_hashes=compromised_hashes,
             )
             result.threat_score = scan_result.threat_score
             result.is_threat = scan_result.is_threat
@@ -699,6 +769,7 @@ class Shield:
         if self._nk_cell is not None:
             try:
                 from aegis.identity import AgentContext
+
                 context = AgentContext(
                     agent_id="self",
                     has_attestation=False,
@@ -728,10 +799,13 @@ class Shield:
             if nk_verdict:
                 try:
                     from aegis.identity import NKVerdict
+
                     verdict_obj = NKVerdict(
                         score=nk_verdict["score"],
                         verdict=nk_verdict["verdict"],
-                        recommended_action="quarantine" if nk_verdict["verdict"] == "hostile" else "none",
+                        recommended_action="quarantine"
+                        if nk_verdict["verdict"] == "hostile"
+                        else "none",
                     )
                     entered = self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
                     if entered and self._state_store is not None:
@@ -747,7 +821,9 @@ class Shield:
 
             # Trigger B: escalate if already quarantined before this scan detected a threat
             if _was_recovery_quarantined:
-                escalation_reason = f"Threat detected while already quarantined (score={result.threat_score})"
+                escalation_reason = (
+                    f"Threat detected while already quarantined (score={result.threat_score})"
+                )
                 self._recovery_quarantine.escalate(escalation_reason)
                 if self._state_store is not None:
                     try:
@@ -760,6 +836,7 @@ class Shield:
         if self._content_hash_tracker is not None:
             try:
                 import asyncio
+
                 try:
                     _loop = asyncio.get_running_loop()
                 except RuntimeError:
@@ -801,6 +878,7 @@ class Shield:
         if self._content_hash_tracker is not None:
             try:
                 import asyncio
+
                 try:
                     _loop = asyncio.get_running_loop()
                 except RuntimeError:
@@ -835,7 +913,8 @@ class Shield:
                     if check_hash:
                         threshold = self._config.monitoring.contagion_similarity_threshold
                         suspicious, sim_score = self._remote_threat_intel.check_hash(
-                            check_hash, threshold=threshold,
+                            check_hash,
+                            threshold=threshold,
                             model=hashes.get("embedding_model", ""),
                         )
                         if suspicious:
@@ -889,8 +968,7 @@ class Shield:
         result = ScanResult()
 
         _was_recovery_quarantined = (
-            self._recovery_quarantine is not None
-            and self._recovery_quarantine.is_quarantined()
+            self._recovery_quarantine is not None and self._recovery_quarantine.is_quarantined()
         )
 
         compromised_hashes: set[int] | None = None
@@ -907,7 +985,9 @@ class Shield:
         # Step 1: Scanner (async)
         if self._scanner is not None:
             scan_result = await self._scanner.ascan_input(
-                text, context=context, compromised_hashes=compromised_hashes,
+                text,
+                context=context,
+                compromised_hashes=compromised_hashes,
             )
             result.threat_score = scan_result.threat_score
             result.is_threat = scan_result.is_threat
@@ -944,6 +1024,7 @@ class Shield:
         if self._nk_cell is not None:
             try:
                 from aegis.identity import AgentContext
+
                 ctx = AgentContext(
                     agent_id="self",
                     has_attestation=False,
@@ -972,10 +1053,13 @@ class Shield:
             if nk_verdict:
                 try:
                     from aegis.identity import NKVerdict
+
                     verdict_obj = NKVerdict(
                         score=nk_verdict["score"],
                         verdict=nk_verdict["verdict"],
-                        recommended_action="quarantine" if nk_verdict["verdict"] == "hostile" else "none",
+                        recommended_action="quarantine"
+                        if nk_verdict["verdict"] == "hostile"
+                        else "none",
                     )
                     entered = self._recovery_quarantine.auto_quarantine(nk_verdict=verdict_obj)
                     if entered and self._state_store is not None:
@@ -990,7 +1074,9 @@ class Shield:
                     logger.debug("Recovery auto-quarantine failed", exc_info=True)
 
             if _was_recovery_quarantined:
-                escalation_reason = f"Threat detected while already quarantined (score={result.threat_score})"
+                escalation_reason = (
+                    f"Threat detected while already quarantined (score={result.threat_score})"
+                )
                 self._recovery_quarantine.escalate(escalation_reason)
                 if self._state_store is not None:
                     try:
@@ -1063,7 +1149,8 @@ class Shield:
                     if check_hash:
                         threshold = self._config.monitoring.contagion_similarity_threshold
                         suspicious, sim_score = self._remote_threat_intel.check_hash(
-                            check_hash, threshold=threshold,
+                            check_hash,
+                            threshold=threshold,
                             model=hashes.get("embedding_model", ""),
                         )
                         if suspicious:
@@ -1235,7 +1322,8 @@ class Shield:
         elif alert.danger_signal == DangerSignal.QUARANTINE_RECOMMENDED:
             logger.warning(
                 "DENDRITIC ALERT — QUARANTINE RECOMMENDED: agent '%s' (score=%.2f)",
-                alert.source_agent_id, alert.threat_score,
+                alert.source_agent_id,
+                alert.threat_score,
             )
             action = "quarantine_recommended"
             if self._trust_manager is not None:
@@ -1244,7 +1332,8 @@ class Shield:
         elif alert.danger_signal == DangerSignal.ELEVATED_SCRUTINY:
             logger.info(
                 "DENDRITIC ALERT — ELEVATED SCRUTINY: agent '%s' (score=%.2f)",
-                alert.source_agent_id, alert.threat_score,
+                alert.source_agent_id,
+                alert.threat_score,
             )
             action = "elevated_scrutiny"
             if self._trust_manager is not None:
@@ -1382,7 +1471,9 @@ class Shield:
             if anchor is not None and self._drift_detector is not None:
                 current_fp = self._behavior_tracker.get_fingerprint(agent_id)
                 drift_result = self._drift_detector.check_drift(
-                    current_fp, event, baseline=anchor,
+                    current_fp,
+                    event,
+                    baseline=anchor,
                 )
                 drift_sigma = drift_result.max_sigma
 
@@ -1390,7 +1481,8 @@ class Shield:
             message_drift_sigma = 0.0
             if self._message_drift_detector is not None and response_text:
                 message_drift_sigma = self._message_drift_detector.record_and_check(
-                    agent_id, response_text,
+                    agent_id,
+                    response_text,
                 )
                 drift_sigma = max(drift_sigma, message_drift_sigma)
 
@@ -1414,6 +1506,7 @@ class Shield:
             if self._nk_cell is not None and (drift_sigma > 0.0 or purpose_hash_changed):
                 try:
                     from aegis.identity import AgentContext
+
                     context = AgentContext(
                         agent_id=agent_id,
                         has_attestation=False,
@@ -1483,17 +1576,22 @@ class Shield:
         client_module = type(client).__module__ or ""
         if "anthropic" in client_module:
             from aegis.providers.anthropic import AnthropicWrapper
+
             wrapper = AnthropicWrapper(shield=self)
         elif "ollama" in client_module:
             from aegis.providers.ollama import OllamaWrapper
+
             wrapper = OllamaWrapper(shield=self)
         elif "vllm" in client_module:
             from aegis.providers.vllm import VLLMWrapper
+
             wrapper = VLLMWrapper(shield=self)
         elif "openai" in client_module:
             from aegis.providers.openai import OpenAIWrapper
+
             wrapper = OpenAIWrapper(shield=self)
         else:
             from aegis.providers.generic import GenericWrapper
+
             wrapper = GenericWrapper(shield=self)
         return wrapper.wrap(client, tools=tools)

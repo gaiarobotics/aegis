@@ -279,50 +279,6 @@
         <div class="footer">Gaia Robotics &middot; Agent Immune System</div>
     </div>
 
-    <script>
-    (function() {
-        var form = document.getElementById('login-form');
-        var input = document.getElementById('api-key');
-        var btn = document.getElementById('submit-btn');
-        var errorEl = document.getElementById('error-msg');
-
-        form.addEventListener('submit', function(e) {
-            e.preventDefault();
-            var key = input.value.trim();
-            if (!key) return;
-
-            btn.classList.add('loading');
-            btn.disabled = true;
-            errorEl.textContent = '';
-            input.classList.remove('error');
-
-            fetch('/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ api_key: key })
-            })
-            .then(function(resp) {
-                if (resp.ok) {
-                    // Session cookie is set — reload to get the dashboard
-                    window.location.reload();
-                    return;
-                }
-                return resp.json().then(function(data) {
-                    if (resp.status === 429) {
-                        throw new Error('Too many attempts. Wait a moment.');
-                    }
-                    throw new Error(data.detail || 'Authentication failed');
-                });
-            })
-            .catch(function(err) {
-                errorEl.textContent = err.message;
-                input.classList.add('error');
-                btn.classList.remove('loading');
-                btn.disabled = false;
-                input.select();
-            });
-        });
-    })();
-    </script>
+    <script src="/static/login.js"></script>
 </body>
 </html>

@@ -37,6 +37,7 @@ class ReportValidator:
         self._rate_counters: dict[str, list[float]] = {}
         # hash_int -> (set of reporter_ids, oldest_timestamp)
         self._pending_hashes: dict[int, tuple[set[str], float]] = {}
+        self._pending_targets: dict[str, tuple[set[str], float]] = {}
 
     def validate(
         self,
@@ -46,10 +47,6 @@ class ReportValidator:
         reporter_trust_tier: int,
         reporter_is_quarantined: bool,
     ) -> ValidationResult:
-        # Empty hash — skip all hash validation
-        if not hash_hex:
-            return ValidationResult(accepted=True, hash_confirmed=False)
-
         now = time.time()
 
         # Defense 1: Rate limiting
@@ -78,6 +75,23 @@ class ReportValidator:
                 accepted=True,
                 hash_confirmed=False,
                 rejection_reason="reporter_quarantined",
+            )
+
+        # Reports without an embedding hash still require independent quorum
+        # on the compromised target before they can mutate enforcement state.
+        if not hash_hex:
+            if self._quorum <= 1:
+                return ValidationResult(accepted=True, hash_confirmed=True)
+            reporters, oldest = self._pending_targets.get(compromised_id, (set(), now))
+            reporters.add(reporter_id)
+            if len(reporters) >= self._quorum:
+                self._pending_targets.pop(compromised_id, None)
+                return ValidationResult(accepted=True, hash_confirmed=True)
+            self._pending_targets[compromised_id] = (reporters, oldest)
+            return ValidationResult(
+                accepted=True,
+                hash_confirmed=False,
+                rejection_reason="pending_quorum",
             )
 
         # Defense 3: Cross-validation (quorum)
@@ -120,9 +134,11 @@ class ReportValidator:
     def _prune_pending(self, now: float) -> None:
         """Remove pending hashes older than 2 * rate_window."""
         max_age = 2 * self._rate_window
-        expired = [
-            h for h, (_, ts) in self._pending_hashes.items()
-            if now - ts > max_age
-        ]
+        expired = [h for h, (_, ts) in self._pending_hashes.items() if now - ts > max_age]
         for h in expired:
             del self._pending_hashes[h]
+        expired_targets = [
+            target for target, (_, ts) in self._pending_targets.items() if now - ts > max_age
+        ]
+        for target in expired_targets:
+            del self._pending_targets[target]

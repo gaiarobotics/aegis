@@ -14,7 +14,7 @@ class MockClient:
 class TestTopLevelAPI:
     def test_version_accessible(self):
         assert hasattr(aegis, "__version__")
-        assert aegis.__version__ == "0.1.0"
+        assert aegis.__version__ == "0.2.0"
 
     def test_shield_constructor(self):
         shield = aegis.Shield()

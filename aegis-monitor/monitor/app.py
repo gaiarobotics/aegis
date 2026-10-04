@@ -196,7 +196,7 @@ async def lifespan(app: FastAPI):  # noqa: C901
     recluster_task.cancel()
 
 
-app = FastAPI(title="AEGIS Monitor", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AEGIS Monitor", version="0.2.0", lifespan=lifespan)
 
 
 @app.middleware("http")

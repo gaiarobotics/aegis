@@ -3,7 +3,7 @@
 from aegis.integrity.monitor import ModelTamperedError
 from aegis.shield import Shield, ThreatBlockedError
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def wrap(client, **kwargs):
